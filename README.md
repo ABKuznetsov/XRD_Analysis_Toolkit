@@ -87,52 +87,60 @@ Phase ranking and identification
 # 🚀 Installation
 
 
-git clone https://github.com/ABKuznetsov/XRD_Analysis_Toolkit.git
-cd XRD_Analysis_Toolkit
-pip install -r requirements.txt
+1. Install Python 3.11 or newer.
+2. Double-click:
 
-Recommended Python version:
+```bat
+setup_env.bat
+```
 
-Python 3.10+
-▶️ How to run
-1. Start the application
-python main.py
+This creates `.venv` and installs the required packages.
 
-or launch the GUI version:
+## Run
 
-python run_gui.py
-2. Load XRD data
-Click “Import XRD”
-Select .xy or .dat file
-The diffraction pattern will be displayed in the main viewer
-3. Run Phase Finder
-Open Phase Finder module
-Select:
-COD search (online/offline)
-or local CIF database
-Click Run Search
+Double-click:
 
-The system will:
+```bat
+run_finder.bat
+```
 
-extract peaks
-search candidate phases
-simulate diffraction patterns
-compute similarity scores
-4. Analyze results
+Optional startup files:
 
-You will see:
+```bat
+run_finder.bat --pattern "path\to\pattern.txt" --cif "path\to\phase.cif"
+```
 
-list of candidate phases
-similarity score for each phase
-experimental vs calculated pattern overlay
-matched peaks visualization
-5. CIF structure analysis
-Open CIF file in Structure Viewer
-Inspect:
-unit cell parameters
-atomic positions
-symmetry group
-Generate theoretical XRD pattern
+## CLI
+
+```bat
+run_finder_cli.bat "path\to\pattern.txt" "path\to\phase.cif"
+```
+
+## Optional Materials Project Support
+
+Materials Project is not installed by default because it is a heavy optional dependency.
+
+To enable it:
+
+```bat
+.venv\Scripts\python.exe -m pip install -r requirements-optional.txt
+```
+
+Then add your Materials Project API key in the app settings.
+
+## Repository Contents
+
+```text
+xrd_manager/              application code
+requirements.txt          required dependencies
+requirements-optional.txt optional online database dependencies
+setup_env.bat             create Windows virtual environment
+run_finder.bat            launch GUI
+run_finder_cli.bat        launch CLI
+pyproject.toml            package metadata
+```
+
+Local downloaded databases and user caches are intentionally ignored by git.
 
 
 🏗️ Architecture
