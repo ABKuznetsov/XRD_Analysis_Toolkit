@@ -235,30 +235,6 @@ Implemented
 - ✔ Multi-phase profile calculation
 - ✔ Peak assignment framework
 
-Planned
-
-- Structure Viewer
-- Le Bail refinement
-- Thermal expansion analysis
-- Full XRD Manager ecosystem
-
----
-
-# Roadmap
-
-The XRD Analysis Toolkit is being developed as a collection of independent open-source tools for crystallography and powder diffraction.
-
-Current module:
-
-- XRD Phase Finder
-
-Future standalone applications:
-
-- Structure Viewer
-- Le Bail Refinement
-- Thermal Expansion Analyzer
-
-These applications will also become components of the future XRD Manager ecosystem.
 
 ---
 
