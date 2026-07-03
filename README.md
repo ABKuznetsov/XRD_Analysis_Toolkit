@@ -1,184 +1,286 @@
-# XRD Analysis Toolkit  
-### Open-source X-ray Diffraction Phase Identification & Structure Simulation Framework
+# XRD Analysis Toolkit
 
-XRD Analysis Toolkit is a Python-based open-source framework for analysis of powder X-ray diffraction (XRD) data, phase identification, and crystallographic structure simulation using open databases and CIF-based calculations.
+![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey.svg)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
+![Status](https://img.shields.io/badge/Status-Beta-orange.svg)
 
-The system implements a modular search–match–simulation pipeline combining experimental diffraction data with theoretical diffraction patterns derived from crystal structures.
+**XRD Analysis Toolkit** is an open-source, cross-platform application for **phase identification from powder X-ray diffraction (XRD) patterns** using open crystallographic databases and CIF-based diffraction simulation.
 
----
-
-# 🧭 Overview
-
-The toolkit allows users to:
-
-- Load experimental XRD patterns
-- Automatically detect diffraction peaks
-- Search for candidate phases in open crystallographic databases (COD)
-- Import and analyze CIF crystal structures
-- Simulate theoretical diffraction patterns from structure models
-- Compare experimental and calculated patterns
-- Rank candidate phases by similarity score
+The project is designed as a lightweight alternative to commercial search-match software and focuses on helping researchers interpret diffraction patterns by combining experimental data with theoretical diffraction profiles calculated directly from crystal structures.
 
 ---
 
-# 🔬 Core workflow
+# Screenshot
 
-The analysis pipeline is based on the following sequence:
+<img width="2048" height="1113" alt="image" src="https://github.com/user-attachments/assets/dc644ac3-2613-4110-9e08-4c8cf70d8dd4" />
 
 
-Experimental XRD pattern
-↓
-Preprocessing (background removal, smoothing)
-↓
-Peak extraction
-↓
-Phase search (COD / local database / CIF libraries)
-↓
-Structure-based diffraction simulation
-↓
-Pattern comparison
-↓
-Similarity scoring
-↓
-Phase ranking and identification
-
+**Main window of the XRD Phase Finder.**  
+The application displays the experimental diffraction pattern, calculated profile, theoretical peak positions of selected phases, and highlights diffraction peaks that remain unexplained by the current phase set.
 
 ---
 
-# ⚙️ Features
+# Features
 
-## 🧪 Phase identification
-- Search–match algorithm based on peak positions and intensity similarity
-- Support for multiphase systems
-- Ranking of candidate phases
-
-## 🧬 Structure simulation
-- CIF-based diffraction pattern generation
-- Structure factor calculation
-- Bragg law-based peak positioning
-
-## 📂 Database support
-- Crystallography Open Database (COD)
-- Local user-defined phase libraries
-- Cached structure storage (SQLite-based)
-
-## 📊 Visualization
-- XRD pattern plotting
-- Experimental vs calculated pattern comparison
-- Peak annotation and phase markers
+- Powder XRD pattern viewer
+- Automatic peak detection
+- Search using the Crystallography Open Database (COD)
+- Local CIF database support
+- CIF-based diffraction pattern simulation
+- Multi-phase profile calculation
+- Automatic profile scaling
+- Peak assignment framework
+- Identification of unexplained diffraction peaks
+- Cross-platform support (Windows and macOS)
 
 ---
 
-# 📦 Supported formats
+# Typical Workflow
 
-## Input:
-- `.xy` — 2-column XRD data (2θ, intensity)
-- `.txt` / `.dat` — generic diffraction patterns
-- `.cif` — crystallographic structure files
-
-## Output:
-- Ranked phase list
-- Simulated diffraction patterns
-- Matching scores
-- Structural metadata
+```text
+Load experimental XRD
+        │
+        ▼
+Peak detection
+        │
+        ▼
+Search candidate phases
+(COD / Local Database)
+        │
+        ▼
+Load crystal structures (CIF)
+        │
+        ▼
+Calculate theoretical diffraction patterns
+        │
+        ▼
+Compare experimental and calculated profiles
+        │
+        ▼
+Assign diffraction peaks
+        │
+        ▼
+Identify unexplained peaks
+```
 
 ---
 
-# 🚀 Installation
+# Installation
 
+## Requirements
 
-1. Install Python 3.11 or newer.
-2. Double-click:
+Python **3.11** or newer.
 
-```bat
+Download Python from the official website:
+
+https://www.python.org/downloads/
+
+---
+
+## Windows
+
+Run
+
+```text
 setup_env.bat
 ```
 
-This creates `.venv` and installs the required packages.
+The script automatically
 
-## Run
+- creates a virtual environment (`.venv`)
+- installs all required Python packages
 
-Double-click:
+Launch the graphical interface
 
-```bat
+```text
 run_finder.bat
 ```
 
-Optional startup files:
+Scientific interface
 
-```bat
-run_finder.bat --pattern "path\to\pattern.txt" --cif "path\to\phase.cif"
+```text
+run_finder_sci.bat
 ```
 
-## CLI
+Command line interface
 
-```bat
-run_finder_cli.bat "path\to\pattern.txt" "path\to\phase.cif"
+```text
+run_finder_cli.bat
 ```
 
-## Optional Materials Project Support
+---
 
-Materials Project is not installed by default because it is a heavy optional dependency.
+## macOS
 
-To enable it:
+Run
 
-```bat
+```text
+setup_env.command
+```
+
+Launch the application
+
+```text
+run_finder.command
+```
+
+Command line interface
+
+```text
+run_finder_cli.command
+```
+
+---
+
+# Opening Files from the Command Line
+
+GUI
+
+```text
+run_finder.bat --pattern "path\to\pattern.xy" --cif "path\to\phase.cif"
+```
+
+CLI
+
+```text
+run_finder_cli.bat "path\to\pattern.xy" "path\to\phase.cif"
+```
+
+---
+
+# Optional Materials Project Support
+
+Materials Project support is optional and is **not installed by default**.
+
+Install the optional dependencies
+
+```bash
+pip install -r requirements-optional.txt
+```
+
+or
+
+```bash
 .venv\Scripts\python.exe -m pip install -r requirements-optional.txt
 ```
 
-Then add your Materials Project API key in the app settings.
+Then enter your Materials Project API key in the application settings.
 
-## Repository Contents
+---
+
+# Repository Structure
 
 ```text
-xrd_manager/              application code
-requirements.txt          required dependencies
-requirements-optional.txt optional online database dependencies
-setup_env.bat             create Windows virtual environment
-run_finder.bat            launch GUI
-run_finder_cli.bat        launch CLI
-pyproject.toml            package metadata
+xrd_manager/
+    Main application source code
+
+requirements.txt
+    Required Python packages
+
+requirements-optional.txt
+    Optional online database support
+
+setup_env.bat
+setup_env.command
+    Create Python virtual environment
+
+run_finder.bat
+run_finder.command
+    Launch graphical interface
+
+run_finder_sci.bat
+    Scientific interface
+
+run_finder_cli.bat
+run_finder_cli.command
+    Command line interface
+
+pyproject.toml
+    Package metadata
 ```
 
-Local downloaded databases and user caches are intentionally ignored by git.
+Downloaded databases, user libraries and local caches are intentionally excluded from the repository.
 
+---
 
-🏗️ Architecture
+# Scientific Background
 
-The system is organized into modules:
+The software combines several standard crystallographic approaches:
 
-Core → physical models (XRD, CIF, phases)
-Finder Engine → phase identification logic
-Services → CIF simulation, database access
-IO Layer → file parsing (XRD, CIF)
-UI Layer → visualization and interaction
-Data Layer → caching and local database
-🌍 External integrations
-Crystallography Open Database (COD)
-Optional Materials Project API
-Local CIF repositories
-🔬 Use cases
-Phase identification in unknown materials
-Solid solution analysis
-Temperature-dependent structural evolution
-Powder diffraction research
-Educational crystallography
-⚠️ Status
+- Bragg diffraction
+- Structure-factor based diffraction simulation
+- CIF crystallographic models
+- Multi-phase profile fitting
+- Peak assignment
+- Open crystallographic databases
 
-This project is in active development (beta version).
+The current implementation is intended for **initial phase identification** and **visual interpretation** of powder diffraction patterns. It is **not** intended to replace full-profile refinement packages such as GSAS-II, FullProf or TOPAS.
 
-Some features are experimental and may change in future releases.
+---
 
-📜 License
+# Current Status
+
+Current development stage:
+
+**Beta**
+
+Implemented
+
+- ✔ Experimental XRD viewer
+- ✔ Phase Finder
+- ✔ COD search
+- ✔ CIF parser
+- ✔ Structure-based diffraction simulation
+- ✔ Multi-phase profile calculation
+- ✔ Peak assignment framework
+
+Planned
+
+- Structure Viewer
+- Le Bail refinement
+- Thermal expansion analysis
+- Full XRD Manager ecosystem
+
+---
+
+# Roadmap
+
+The XRD Analysis Toolkit is being developed as a collection of independent open-source tools for crystallography and powder diffraction.
+
+Current module:
+
+- XRD Phase Finder
+
+Future standalone applications:
+
+- Structure Viewer
+- Le Bail Refinement
+- Thermal Expansion Analyzer
+
+These applications will also become components of the future XRD Manager ecosystem.
+
+---
+
+# License
 
 MIT License
 
-👤 Author
+---
 
-Developed as part of an open crystallography and materials informatics toolkit for X-ray diffraction analysis.
+# Citation
 
-🚀 Citation (future use)
+If you use this software in scientific research, please cite this GitHub repository.
 
-If you use this software in research, please cite the repository:
+A dedicated software publication describing the Phase Finder algorithm is currently in preparation.
 
-XRD Analysis Toolkit, ABKuznetsov, GitHub repository
+---
+
+# Author
+
+**Artem B. Kuznetsov**
+
+Institute geology and mineralogy SB RAS
+
+GitHub:
+https://github.com/ABKuznetsov
