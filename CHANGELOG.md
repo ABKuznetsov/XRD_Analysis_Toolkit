@@ -6,7 +6,9 @@
 
 - Restored automatic plot fitting after adding phases to the working set when a single XRD pattern is displayed.
 - Kept candidate preview zoom preservation unchanged, so browsing candidate rows does not reset the user's zoom.
-- Removed the old `Standalone Finder Project` default name from the standalone Finder GUI.
+- Removed the old default project name from the XRD Finder GUI.
+- Moved XRD Finder into the `XRD_Finder/` application folder inside the shared `XRD_Analysis_Toolkit` repository layout.
+- Moved XRD Finder databases, caches and temporary working data to `XRD_Finder/data/` by default.
 - Replaced remaining public `XRD Manager` window labels with `XRD Analysis Toolkit` / `XRD Finder` names.
 - Clarified that setup scripts create a shared Toolkit `.venv` in the repository root.
 - Updated package metadata version to `1.0.1`.
@@ -35,7 +37,7 @@
 
 ### Added
 
-- Standalone Phase Finder UI for macOS and Windows launch scripts.
+- XRD Finder UI for macOS and Windows launch scripts.
 - Drag-and-drop import for XRD patterns and CIF structures.
 - Multi-pattern display with `One` / `All selected` modes.
 - Vertical offset slider for stacked XRD series.
@@ -64,6 +66,6 @@
 
 ### Known Limitations
 
-- `xrd_manager/ui/analysis_windows.py` is still large and should be split further before adding batch-processing workflows.
+- `XRD_Finder/xrd_finder/ui/analysis_windows.py` is still large and should be split further before adding batch-processing workflows.
 - Quantification and I/Ic values are practical estimates for phase identification, not a replacement for full-profile refinement.
 - Large COD/RRUFF databases are intentionally user-managed and are not bundled in the release.

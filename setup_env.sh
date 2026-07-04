@@ -32,8 +32,8 @@ echo "Upgrading pip..."
 ".venv/bin/python" -m pip install --upgrade pip
 
 echo "Installing XRD Toolkit requirements..."
-".venv/bin/python" -m pip install -r requirements.txt
+".venv/bin/python" -m pip install -r XRD_Finder/requirements.txt
 
 echo
 echo "Environment is ready."
-echo "Run the app with ./run_finder.sh"
+echo "Run the app with ./XRD_Finder/run_finder.sh"

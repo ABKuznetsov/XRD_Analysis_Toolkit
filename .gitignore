@@ -5,29 +5,23 @@ __MACOSX/
 .venv/
 venv/
 env/
-
 __pycache__/
 *.py[cod]
 *$py.class
-
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-
 *.log
-
 # Local developer launchers
 run_finder_sci.bat
-
 # Local databases, caches, and release artifacts
-xrd_manager_data/
+XRD_Finder/data/
 dist/
 build/
 *.egg-info/
 *.app/
 *.dmg
 *.zip
-
 # Local editor / OS metadata
 .idea/
 .vscode/

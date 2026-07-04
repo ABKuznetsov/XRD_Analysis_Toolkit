@@ -17,31 +17,31 @@ It is especially focused on practical laboratory workflows where the user needs 
 
 ## Phase Search Overview
 
-![Phase search overview](docs/screenshots/phase-search-overview.png)
+![Phase search overview](XRD_Finder/docs/screenshots/phase-search-overview.png)
 
 The main Phase Finder view combines an observed XRD pattern, selected candidate phases, calculated profiles, peak markers and element-based search controls.
 
 ## Candidate Preview
 
-![Candidate preview](docs/screenshots/candidate-preview.png)
+![Candidate preview](XRD_Finder/docs/screenshots/candidate-preview.png)
 
 Single-clicking a candidate previews its strongest reference or calculated peaks directly in the experimental pattern area. Double-clicking a structural candidate adds it to the selected phase set.
 
 ## Multi-pattern Comparison
 
-![Multi-pattern stack](docs/screenshots/multi-pattern-stack.png)
+![Multi-pattern stack](XRD_Finder/docs/screenshots/multi-pattern-stack.png)
 
 Several checked XRD patterns can be displayed together with a controlled vertical offset. The highlighted row in the project tree remains the active pattern for search and candidate preview.
 
 ## Compound Card
 
-![Compound card](docs/screenshots/compound-card.png)
+![Compound card](XRD_Finder/docs/screenshots/compound-card.png)
 
 The compound card shows phase metadata, formula, I/Ic estimate, publication/source links, space group, cell parameters, atom positions and diffraction lines when available.
 
 ## Database Management
 
-![Database panel](docs/screenshots/database-panel.png)
+![Database panel](XRD_Finder/docs/screenshots/database-panel.png)
 
 The Databases tab controls which sources participate in search and provides explicit update/clear actions for local caches.
 
@@ -176,13 +176,13 @@ The script automatically
 Launch the graphical interface
 
 ```text
-run_finder.bat
+XRD_Finder\run_finder.bat
 ```
 
 Command line interface
 
 ```text
-run_finder_cli.bat
+XRD_Finder\run_finder_cli.bat
 ```
 
 ---
@@ -198,20 +198,20 @@ setup_env.command
 Launch the application
 
 ```text
-run_finder.command
+XRD_Finder/run_finder.command
 ```
 
 Command line interface
 
 ```text
-run_finder_cli.command
+XRD_Finder/run_finder_cli.command
 ```
 
 If macOS blocks the scripts after copying or syncing the folder, run this once
 from Terminal inside the project directory:
 
 ```bash
-chmod +x *.command
+chmod +x setup_env.command XRD_Finder/*.command
 xattr -dr com.apple.quarantine .
 ```
 
@@ -222,20 +222,20 @@ xattr -dr com.apple.quarantine .
 Run
 
 ```bash
-chmod +x *.sh
+chmod +x setup_env.sh XRD_Finder/*.sh
 ./setup_env.sh
 ```
 
 Launch the application
 
 ```bash
-./run_finder.sh
+./XRD_Finder/run_finder.sh
 ```
 
 Command line interface
 
 ```bash
-./run_finder_cli.sh
+./XRD_Finder/run_finder_cli.sh
 ```
 
 On a minimal Linux installation you may also need Python venv/pip and Qt desktop
@@ -258,17 +258,17 @@ sudo dnf install python3 python3-pip xcb-util-cursor mesa-libEGL
 GUI
 
 ```text
-run_finder.bat --pattern "path\to\pattern.xy" --cif "path\to\phase.cif"
-./run_finder.command --pattern "path/to/pattern.xy" --cif "path/to/phase.cif"
-./run_finder.sh --pattern "path/to/pattern.xy" --cif "path/to/phase.cif"
+XRD_Finder\run_finder.bat --pattern "path\to\pattern.xy" --cif "path\to\phase.cif"
+./XRD_Finder/run_finder.command --pattern "path/to/pattern.xy" --cif "path/to/phase.cif"
+./XRD_Finder/run_finder.sh --pattern "path/to/pattern.xy" --cif "path/to/phase.cif"
 ```
 
 CLI
 
 ```text
-run_finder_cli.bat "path\to\pattern.xy" --cif "path\to\phase.cif"
-./run_finder_cli.command "path/to/pattern.xy" --cif "path/to/phase.cif"
-./run_finder_cli.sh "path/to/pattern.xy" --cif "path/to/phase.cif"
+XRD_Finder\run_finder_cli.bat "path\to\pattern.xy" --cif "path\to\phase.cif"
+./XRD_Finder/run_finder_cli.command "path/to/pattern.xy" --cif "path/to/phase.cif"
+./XRD_Finder/run_finder_cli.sh "path/to/pattern.xy" --cif "path/to/phase.cif"
 ```
 
 ---
@@ -280,13 +280,13 @@ Materials Project support is optional and is **not installed by default**.
 Install the optional dependencies
 
 ```bash
-pip install -r requirements-optional.txt
+pip install -r XRD_Finder/requirements-optional.txt
 ```
 
 or
 
 ```bash
-.venv\Scripts\python.exe -m pip install -r requirements-optional.txt
+.venv\Scripts\python.exe -m pip install -r XRD_Finder/requirements-optional.txt
 ```
 
 Then enter your Materials Project API key in the application settings.
@@ -320,6 +320,9 @@ PDF-2 entries are local reference cards. The software can read a local
 PDF-2 folder when available, but the PDF-2 database itself is not bundled
 or redistributed.
 
+See [Third-party Data Sources](THIRD_PARTY_DATA_SOURCES.md) for notes on COD,
+Materials Project, RRUFF and optional CCDC/CSD data usage and attribution.
+
 ---
 
 # Multi-pattern Figures
@@ -342,41 +345,38 @@ to return to the full view.
 # Repository Structure
 
 ```text
-xrd_manager/
-    Main application source code
+XRD_Analysis_Toolkit/
+    README.md
+    CHANGELOG.md
+    PROJECT_HEALTH.md
+    pyproject.toml
+    setup_env.bat
+    setup_env.command
+    setup_env.sh
+        Create the shared Toolkit virtual environment (.venv)
 
-requirements.txt
-    Required Python packages
-
-requirements-optional.txt
-    Optional online database support
-
-CHANGELOG.md
-    Release notes
-
-setup_env.bat
-setup_env.command
-setup_env.sh
-    Create Python virtual environment
-
-run_finder.bat
-run_finder.command
-run_finder.sh
-    Launch graphical interface
-
-run_finder_cli.bat
-run_finder_cli.command
-run_finder_cli.sh
-    Command line interface
-
-pyproject.toml
-    Package metadata
+    XRD_Finder/
+        xrd_finder/
+            XRD Finder application source code
+        docs/screenshots/
+            Screenshots used by the README
+        requirements.txt
+            Required Python packages for XRD Finder
+        requirements-optional.txt
+            Optional online database support
+        run_finder.bat
+        run_finder.command
+        run_finder.sh
+            Launch graphical interface
+        run_finder_cli.bat
+        run_finder_cli.command
+        run_finder_cli.sh
+            Command line interface
 ```
 
-Downloaded databases, user libraries and local caches are intentionally excluded from the repository.
-By default, new local cache data is stored outside the source tree in the user data directory
-(`%LOCALAPPDATA%\XRD Finder` on Windows, `~/Library/Application Support/XRD Finder` on macOS,
-and the XDG data directory on Linux). Set `XRD_MANAGER_DATA_DIR` to use a custom location.
+The root `XRD_Analysis_Toolkit` layout keeps the shared environment and project documentation separate from the `XRD_Finder` application folder. This is intentional: it keeps the repository ready for additional XRD-related modules later without changing the Finder app structure.
+
+Downloaded databases, user libraries, temporary files and local caches for XRD Finder are stored under `XRD_Finder/data/` by default. This folder is intentionally excluded from Git, so large database files and local working data stay with the Finder app without being committed. Set `XRD_FINDER_DATA_DIR` to use a custom location.
 
 ---
 

@@ -4,7 +4,7 @@ Snapshot for release `0.2.0`.
 
 ## Status
 
-Overall state: beta, suitable for GitHub publication as a standalone research tool.
+Overall state: stable, suitable for GitHub publication as a XRD Finder research tool.
 
 The core Phase Finder workflow is usable:
 
@@ -46,7 +46,7 @@ Do not commit local databases or generated caches.
 
 Protected by `.gitignore`:
 
-- `xrd_manager_data/`
+- `XRD_Finder/data/`
 - `__pycache__/`
 - `*.pyc`
 - `dist/`
@@ -56,7 +56,7 @@ Protected by `.gitignore`:
 
 ## Main Technical Risks
 
-- `xrd_manager/ui/analysis_windows.py` is still the largest module and should be split before adding batch-processing workflows.
+- `XRD_Finder/xrd_finder/ui/analysis_windows.py` is still the largest module and should be split before adding batch-processing workflows.
 - Finder logic should continue moving into focused services:
   - peak detection;
   - assignment building;

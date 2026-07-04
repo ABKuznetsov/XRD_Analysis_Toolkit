@@ -30,12 +30,12 @@ call ".venv\Scripts\python.exe" -m pip install --upgrade pip
 if errorlevel 1 goto failed
 
 echo Installing XRD Toolkit requirements...
-call ".venv\Scripts\python.exe" -m pip install -r requirements.txt
+call ".venv\Scripts\python.exe" -m pip install -r "XRD_Finder\requirements.txt"
 if errorlevel 1 goto failed
 
 echo.
 echo Environment is ready.
-echo Run the app with run_finder.bat
+echo Run the app with XRD_Finder\run_finder.bat
 pause
 exit /b 0
 

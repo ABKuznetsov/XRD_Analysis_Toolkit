@@ -1,5 +1,5 @@
 [project]
-name = "xrd-finder-standalone"
+name = "xrd-analysis-toolkit"
 version = "1.0.1"
 description = "Cross-platform XRD phase finder for powder diffraction search-match workflows."
 requires-python = ">=3.11"
@@ -12,8 +12,8 @@ dependencies = [
 ]
 
 [project.scripts]
-xrd-finder = "xrd_manager.apps.finder_cli:main"
-xrd-finder-gui = "xrd_manager.apps.finder_gui:main"
+xrd-finder = "xrd_finder.apps.finder_cli:main"
+xrd-finder-gui = "xrd_finder.apps.finder_gui:main"
 
 [tool.ruff]
 exclude = [
@@ -24,5 +24,15 @@ exclude = [
     ".venv",
     "build",
     "dist",
-    "xrd_manager_data",
+    "XRD_Finder/data",
 ]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "XRD_Finder"}
+
+[tool.setuptools.packages.find]
+where = ["XRD_Finder"]
