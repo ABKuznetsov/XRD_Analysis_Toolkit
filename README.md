@@ -9,7 +9,7 @@
 
 The project is designed as a lightweight research tool for search-match work: import one or many experimental diffraction patterns, select elemental constraints, search candidate phases, preview reference peaks, calculate CIF-based profiles and build an interpretable set of selected phases.
 
-It is especially focused on practical laboratory workflows where the user needs to compare experimental XRD data with COD/CIF structures, local phase libraries, RRUFF measured patterns, Materials Project structures, CCDC/CSD entries and optional PDF-2 cards from a local Match installation.
+It is especially focused on practical laboratory workflows where the user needs to compare experimental XRD data with COD/CIF structures, local phase libraries, RRUFF measured patterns, Materials Project structures, CCDC/CSD entries and optional PDF-2 cards.
 
 ---
 
