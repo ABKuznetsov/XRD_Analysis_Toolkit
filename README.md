@@ -1,7 +1,7 @@
 # XRD Analysis Toolkit
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey.svg)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 ![Status](https://img.shields.io/badge/Status-Beta-orange.svg)
 
@@ -36,7 +36,7 @@ The application displays the experimental diffraction pattern, calculated profil
 - Identification of unexplained diffraction peaks
 - Compound cards with cell parameters, atom positions and publication links
 - High-resolution plot export
-- Cross-platform support (Windows and macOS)
+- Cross-platform support (Windows, macOS and Linux)
 
 ---
 
@@ -139,6 +139,42 @@ xattr -dr com.apple.quarantine .
 
 ---
 
+## Linux
+
+Run
+
+```bash
+chmod +x *.sh
+./setup_env.sh
+```
+
+Launch the application
+
+```bash
+./run_finder.sh
+```
+
+Command line interface
+
+```bash
+./run_finder_cli.sh
+```
+
+On a minimal Linux installation you may also need Python venv/pip and Qt desktop
+libraries:
+
+```bash
+sudo apt install python3 python3-venv python3-pip libxcb-cursor0 libegl1
+```
+
+For Fedora:
+
+```bash
+sudo dnf install python3 python3-pip xcb-util-cursor mesa-libEGL
+```
+
+---
+
 # Opening Files from the Command Line
 
 GUI
@@ -146,6 +182,7 @@ GUI
 ```text
 run_finder.bat --pattern "path\to\pattern.xy" --cif "path\to\phase.cif"
 ./run_finder.command --pattern "path/to/pattern.xy" --cif "path/to/phase.cif"
+./run_finder.sh --pattern "path/to/pattern.xy" --cif "path/to/phase.cif"
 ```
 
 CLI
@@ -153,6 +190,7 @@ CLI
 ```text
 run_finder_cli.bat "path\to\pattern.xy" --cif "path\to\phase.cif"
 ./run_finder_cli.command "path/to/pattern.xy" --cif "path/to/phase.cif"
+./run_finder_cli.sh "path/to/pattern.xy" --cif "path/to/phase.cif"
 ```
 
 ---
@@ -235,14 +273,17 @@ CHANGELOG.md
 
 setup_env.bat
 setup_env.command
+setup_env.sh
     Create Python virtual environment
 
 run_finder.bat
 run_finder.command
+run_finder.sh
     Launch graphical interface
 
 run_finder_cli.bat
 run_finder_cli.command
+run_finder_cli.sh
     Command line interface
 
 pyproject.toml

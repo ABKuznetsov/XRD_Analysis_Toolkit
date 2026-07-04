@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Linux launch scripts: `setup_env.sh`, `run_finder.sh`, and `run_finder_cli.sh`.
+- Linux installation notes for Python venv/pip and Qt desktop packages.
+
 ## 0.2.0 - 2026-07-04
 
 ### Added
