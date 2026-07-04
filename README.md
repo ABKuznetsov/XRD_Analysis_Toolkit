@@ -13,7 +13,8 @@ The project is designed as a lightweight alternative to commercial search-match 
 
 # Screenshot
 
-<img width="2048" height="1113" alt="image" src="https://github.com/user-attachments/assets/dc644ac3-2613-4110-9e08-4c8cf70d8dd4" />
+<img width="3254" height="1747" alt="image" src="https://github.com/user-attachments/assets/ddbe0121-46c0-4555-9a4c-24e9d0673093" />
+
 
 
 **Main window of the XRD Phase Finder.**
