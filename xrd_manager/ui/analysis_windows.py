@@ -158,6 +158,7 @@ class AnalysisWindow(QDialog):
         sidebar_layout.setSpacing(6)
         import_button = QPushButton("Import XRD / CIF")
         import_button.setMinimumHeight(34)
+        import_button.setToolTip("Import XRD patterns and CIF structures. You can also drag files into the window.")
         import_button.setStyleSheet(_command_button_style("#e9328f", "#ff65b3"))
         import_button.clicked.connect(self._import_scientific_files)
         order_row = QHBoxLayout()
@@ -501,6 +502,11 @@ class PhaseFinderWindow(AnalysisWindow):
         self.compound_card = CompoundCardWidget()
         self.right_tabs.addTab(self.compound_card, "Card")
         self.right_tabs.addTab(self._database_tab(), "Databases")
+        help_button = QToolButton()
+        help_button.setText("?")
+        help_button.setToolTip("Open quick help")
+        help_button.clicked.connect(self._show_quick_help)
+        self.right_tabs.setCornerWidget(help_button, Qt.Corner.TopRightCorner)
         self._apply_default_phase_filter()
 
     def _smooth_active_pattern_plot(self) -> None:
@@ -885,10 +891,12 @@ class PhaseFinderWindow(AnalysisWindow):
         actions = QHBoxLayout()
         search_button = QPushButton("Find")
         search_button.setMinimumHeight(34)
+        search_button.setToolTip("Search candidate phases using the selected required/optional elements and enabled databases.")
         search_button.setStyleSheet(_command_button_style("#0b8043", "#35a96c"))
         search_button.clicked.connect(self._search_from_controls)
         reset_button = QPushButton("Reset table")
         reset_button.setMinimumHeight(34)
+        reset_button.setToolTip("Clear element filters and reset the candidate list.")
         reset_button.setStyleSheet(_command_button_style("#5f6368", "#8a8d91"))
         reset_button.clicked.connect(self._reset_selected_elements)
         actions.addWidget(search_button)
@@ -897,6 +905,38 @@ class PhaseFinderWindow(AnalysisWindow):
         outer_layout.addWidget(QLabel("Selected candidates"))
         outer_layout.addWidget(self.match_table, 1)
         return widget
+
+    def _show_quick_help(self) -> None:
+        QMessageBox.information(
+            self,
+            "XRD Finder Help",
+            (
+                "Quick help\n\n"
+                "Project tree\n"
+                "- Select an XRD row to make it active for search, preview and calculation.\n"
+                "- Checkboxes control which XRD patterns or CIF phases are visible.\n"
+                "- Double click an XRD row to show only that pattern.\n"
+                "- Use Order arrows to change plot and legend order.\n\n"
+                "Element table\n"
+                "- Left click: required element, shown in blue.\n"
+                "- Right click: optional element, shown in green.\n"
+                "- Click again to remove that element from the gate.\n\n"
+                "Candidate list\n"
+                "- Single click: preview candidate peaks and show the card.\n"
+                "- Double click: add the candidate to Selected candidates.\n"
+                "- Right click: add, calculate overlay, or export candidate CIF.\n\n"
+                "Selected candidates\n"
+                "- Single click: show that selected phase on the plot and card.\n"
+                "- Right click: change color, export CIF, remove phase, or clear the list.\n\n"
+                "Plot\n"
+                "- Mouse wheel or drag: zoom/pan.\n"
+                "- Reset view restores the full pattern.\n"
+                "- Right click the plot to export an image or show the full pattern.\n\n"
+                "Databases\n"
+                "- Databases are enabled with checkboxes.\n"
+                "- Large COD/RRUFF databases are downloaded and indexed only when you choose it."
+            ),
+        )
 
     def _on_candidate_row_clicked(self, row: int) -> None:
         candidate = self._candidate_row_values(row)

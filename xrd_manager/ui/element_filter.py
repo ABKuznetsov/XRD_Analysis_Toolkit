@@ -71,6 +71,12 @@ class ElementFilterButton(QPushButton):
     def __init__(self, symbol: str) -> None:
         super().__init__(symbol)
         self.symbol = symbol
+        self.setToolTip(
+            f"{symbol}\n"
+            "Left click: required element (blue).\n"
+            "Right click: optional element (green).\n"
+            "Click again to remove the filter."
+        )
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.RightButton:
@@ -90,6 +96,12 @@ class PeriodicTableWidget(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setToolTip(
+            "Element filter table\n"
+            "Left click marks an element as required.\n"
+            "Right click marks an element as optional.\n"
+            "Pink elements are excluded from the current search gate."
+        )
         self._widgets: list[QWidget] = []
         self._buttons: dict[str, ElementFilterButton] = {}
         self._build_ui()
@@ -163,7 +175,6 @@ class PeriodicTableWidget(QWidget):
         button = ElementFilterButton(symbol)
         button.setFixedSize(22, 18)
         button.setStyleSheet(element_state_style("excluded"))
-        button.setToolTip(symbol)
         button.leftClicked.connect(self.leftClicked)
         button.rightClicked.connect(self.rightClicked)
         self._buttons[symbol] = button

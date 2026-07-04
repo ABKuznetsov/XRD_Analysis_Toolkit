@@ -21,6 +21,12 @@ class CandidateTableWidget(QTableWidget):
 
     def __init__(self, rows: list[list[str]], parent=None) -> None:
         super().__init__(0, len(self.HEADERS), parent)
+        self.setToolTip(
+            "Candidate list\n"
+            "Single click: preview this candidate and show its card.\n"
+            "Double click: add this candidate to the selected phases.\n"
+            "Right click: add, calculate overlay, or export CIF."
+        )
         self.setHorizontalHeaderLabels(self.HEADERS)
         self.verticalHeader().setVisible(False)
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -33,6 +39,9 @@ class CandidateTableWidget(QTableWidget):
         self.cellClicked.connect(self._emit_row_clicked)
         self.cellDoubleClicked.connect(lambda _row, _column: self.addRequested.emit())
         self.set_rows(rows, lambda row: row)
+        self.horizontalHeader().setToolTip(
+            "Single click a row to preview. Double click a row to add it to selected phases."
+        )
 
     def set_rows(
         self,
@@ -105,6 +114,11 @@ class SelectedCandidatesTableWidget(QTableWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(0, len(self.HEADERS), parent)
+        self.setToolTip(
+            "Selected phases\n"
+            "Single click: show the calculated profile and markers for this phase.\n"
+            "Right click: change color, export CIF, remove phase, or clear the list."
+        )
         self.setHorizontalHeaderLabels(self.HEADERS)
         self.verticalHeader().setVisible(False)
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -116,6 +130,9 @@ class SelectedCandidatesTableWidget(QTableWidget):
         self.customContextMenuRequested.connect(self._emit_context_request)
         self.cellClicked.connect(self._emit_row_clicked)
         self._resize_columns()
+        self.horizontalHeader().setToolTip(
+            "Selected phases included in the calculated total profile."
+        )
 
     def set_rows(self, rows: list[list[str]]) -> None:
         self.setRowCount(len(rows))

@@ -14,6 +14,13 @@ class ProjectTree(QTreeWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setHeaderLabel("Data")
+        self.setToolTip(
+            "Project tree\n"
+            "Select a row to make that XRD pattern or CIF phase active.\n"
+            "Use checkboxes to show or hide patterns/phases on the plot.\n"
+            "Double click an XRD row to show only that pattern.\n"
+            "Double click a CIF row to show only that phase marker lane."
+        )
         self.setMinimumWidth(240)
         self._updating = False
         self._checked_pattern_ids: set[str] = set()
@@ -70,6 +77,13 @@ class ProjectTree(QTreeWidget):
                 if object_type == "pattern":
                     self._pattern_items[project_object.id] = child
                     self._pattern_names[project_object.id] = project_object.name
+                    child.setToolTip(
+                        0,
+                        "XRD pattern\n"
+                        "Select: make this pattern active for search and preview.\n"
+                        "Checkbox: show or hide it on the plot.\n"
+                        "Double click: show only this pattern.",
+                    )
                     child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                     state = (
                         Qt.CheckState.Checked
@@ -80,6 +94,13 @@ class ProjectTree(QTreeWidget):
                 elif object_type == "phase":
                     self._phase_items[project_object.id] = child
                     self._phase_names[project_object.id] = project_object.name
+                    child.setToolTip(
+                        0,
+                        "CIF structure\n"
+                        "Select: make this phase active.\n"
+                        "Checkbox: show or hide its marker lane.\n"
+                        "Double click: show only this phase marker lane.",
+                    )
                     child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                     state = (
                         Qt.CheckState.Checked

@@ -45,17 +45,24 @@ class FinderActionBar(QWidget):
         reset_data_button.clicked.connect(self.resetDataRequested)
 
         reset_button = QPushButton("Reset view")
+        reset_button.setToolTip("Show the full XRD range and reset plot zoom")
         reset_button.clicked.connect(self.resetViewRequested)
 
         self.pattern_display_mode.addItems(["One", "All selected"])
-        self.pattern_display_mode.setToolTip("Show one active XRD pattern or all checked patterns")
+        self.pattern_display_mode.setToolTip(
+            "One: show only the active XRD pattern.\n"
+            "All selected: show all checked XRD patterns from the project tree."
+        )
         self.pattern_display_mode.currentTextChanged.connect(self.patternDisplayModeChanged)
 
         self.pattern_offset_slider.setOrientation(Qt.Orientation.Horizontal)
         self.pattern_offset_slider.setRange(0, 150)
         self.pattern_offset_slider.setValue(10)
         self.pattern_offset_slider.setFixedWidth(150)
-        self.pattern_offset_slider.setToolTip("Vertical offset between selected XRD patterns, percent of previous pattern height")
+        self.pattern_offset_slider.setToolTip(
+            "Vertical offset between selected XRD patterns.\n"
+            "The value is a percent of the previous pattern height."
+        )
         self.pattern_offset_value.setMinimumWidth(38)
         self.pattern_offset_value.setText("10%")
         self.pattern_offset_slider.valueChanged.connect(self._set_offset_value)
