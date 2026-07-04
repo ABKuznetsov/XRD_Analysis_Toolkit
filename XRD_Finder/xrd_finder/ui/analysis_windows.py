@@ -5,7 +5,6 @@ import math
 import re
 import shutil
 import threading
-from urllib.request import urlopen
 from zipfile import ZipFile
 from types import SimpleNamespace
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal
@@ -62,6 +61,7 @@ from xrd_finder.services.candidate_search_service import (
 from xrd_finder.services.ccdc_service import CcdcService
 from xrd_finder.services.cod_online_service import CodOnlineService, formula_elements
 from xrd_finder.services.local_phase_cache import LocalPhaseCache
+from xrd_finder.services.network import open_url
 from xrd_finder.services.match_pdf2_service import MatchPdf2Service
 from xrd_finder.services.materials_project_service import MaterialsProjectService
 from xrd_finder.services.rruff_service import RRUFF_POWDER_XY_PROCESSED_URL, RruffService
@@ -3094,7 +3094,7 @@ class PhaseFinderWindow(AnalysisWindow):
             output_path = output_path.with_suffix(".zip")
         self.setCursor(Qt.CursorShape.WaitCursor)
         try:
-            with urlopen(url.strip(), timeout=300) as response:
+            with open_url(url.strip(), timeout=300) as response:
                 with output_path.open("wb") as handle:
                     shutil.copyfileobj(response, handle)
         except Exception as exc:

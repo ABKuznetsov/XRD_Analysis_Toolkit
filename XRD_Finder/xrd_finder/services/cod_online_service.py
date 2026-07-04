@@ -4,9 +4,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 import re
-import ssl
 from urllib.parse import urlencode
 from urllib.request import urlopen
+from xrd_finder.services.network import create_ssl_context
 
 
 COD_SEARCH_URL = "https://www.crystallography.net/cod/result"
@@ -105,13 +105,8 @@ class CodOnlineService:
             source=source,
         )
 
-    def _create_ssl_context(self) -> ssl.SSLContext:
-        try:
-            import certifi
-
-            return ssl.create_default_context(cafile=certifi.where())
-        except Exception:
-            return ssl.create_default_context()
+    def _create_ssl_context(self):
+        return create_ssl_context()
 
 
 def formula_elements(formula: str) -> set[str]:

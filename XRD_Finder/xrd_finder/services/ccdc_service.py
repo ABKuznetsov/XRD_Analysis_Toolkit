@@ -5,9 +5,9 @@ from dataclasses import dataclass
 import re
 from http.cookiejar import CookieJar
 from pathlib import Path
-import ssl
 from urllib.parse import quote, urlencode, urljoin
 from urllib.request import HTTPSHandler, HTTPCookieProcessor, Request, build_opener, urlopen
+from xrd_finder.services.network import create_ssl_context
 
 
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.IGNORECASE)
@@ -357,10 +357,5 @@ class CcdcService:
     def _safe_id(self, doi: str) -> str:
         return re.sub(r"[^A-Za-z0-9._-]+", "_", doi).strip("_") or "ccdc_doi"
 
-    def _create_ssl_context(self) -> ssl.SSLContext:
-        try:
-            import certifi
-
-            return ssl.create_default_context(cafile=certifi.where())
-        except Exception:
-            return ssl.create_default_context()
+    def _create_ssl_context(self):
+        return create_ssl_context()

@@ -5,9 +5,9 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
-import ssl
 import time
 from urllib.request import urlopen
+from xrd_finder.services.network import create_ssl_context
 from zipfile import ZipFile
 
 from xrd_finder.services.cod_online_service import formula_elements
@@ -283,10 +283,5 @@ class RruffService:
             ),
         )
 
-    def _create_ssl_context(self) -> ssl.SSLContext:
-        try:
-            import certifi
-
-            return ssl.create_default_context(cafile=certifi.where())
-        except Exception:
-            return ssl.create_default_context()
+    def _create_ssl_context(self):
+        return create_ssl_context()

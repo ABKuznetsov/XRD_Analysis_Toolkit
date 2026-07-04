@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Fixed HTTPS/SSL certificate handling for online COD, RRUFF, CCDC and manual COD archive downloads by installing `certifi` and using a shared SSL context.
 - Restored automatic plot fitting after adding phases to the working set when a single XRD pattern is displayed.
 - Kept candidate preview zoom preservation unchanged, so browsing candidate rows does not reset the user's zoom.
 - Removed the old default project name from the XRD Finder GUI.

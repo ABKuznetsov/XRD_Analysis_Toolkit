@@ -4,6 +4,7 @@ Patch release for XRD Finder.
 
 ## Fixed
 
+- Fixed HTTPS/SSL certificate handling for online COD, RRUFF, CCDC and manual COD archive downloads by installing `certifi` and using a shared SSL context.
 - Restored automatic plot fitting after adding one or more calculated phases when a single XRD pattern is displayed.
 - Candidate preview still preserves the current zoom while browsing the candidate table.
 - Removed the old default project name from the XRD Finder GUI.
