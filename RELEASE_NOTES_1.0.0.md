@@ -8,9 +8,13 @@ This release turns the prototype into a practical cross-platform search-match to
 
 ![Phase search overview](docs/screenshots/phase-search-overview.png)
 
+![Candidate preview](docs/screenshots/candidate-preview.png)
+
 ![Multi-pattern stack](docs/screenshots/multi-pattern-stack.png)
 
 ![Compound card](docs/screenshots/compound-card.png)
+
+![Database panel](docs/screenshots/database-panel.png)
 
 ## Highlights
 
