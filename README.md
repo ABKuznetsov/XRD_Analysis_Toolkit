@@ -83,10 +83,10 @@ The Databases tab controls which sources participate in search and provides expl
 - Element filters with required and optional elements
 - COD online search and local COD/CIF indexing
 - User CIF library indexing
-- Optional CCDC/CSD DOI/refcode lookup when the CCDC Python API is available
-- Optional Materials Project search with API key
-- Optional RRUFF measured powder-pattern overlays
-- Optional PDF-2 reference-card support 
+- CCDC/CSD DOI/refcode lookup when the user has the CCDC Python API and valid access rights
+- Materials Project search with user API key
+- RRUFF measured powder-pattern overlays
+- PDF-2 reference-card support from user-provided local data
 - Candidate ranking by estimated peak-match probability for locally available structures
 
 ## Visualization
@@ -318,40 +318,28 @@ XRD_Finder\run_finder_cli.bat "path\to\pattern.xy" --cif "path\to\phase.cif"
 
 ---
 
-# Optional Materials Project Support
+# Reference Data Sources
 
-Materials Project support is optional and is **not installed by default**.
+The **Databases** tab controls which data sources participate in phase search. The user decides which sources are active for a particular search and which local libraries should be indexed or cleared.
 
-Install the optional dependencies
+Open or publicly accessible sources:
 
-```bash
-pip install -r XRD_Finder/requirements-optional.txt
-```
+- User phase library from imported CIF files
+- COD online search
+- COD local folder/archive indexed by the user
+- RRUFF measured powder-pattern data
+- Materials Project search with the user's own API key
+- AFLOW and OQMD structure services when enabled in the application workflow
 
-or
+Restricted or license-controlled sources, available only when the user has the right to use them:
 
-```bash
-.venv\Scripts\python.exe -m pip install -r XRD_Finder/requirements-optional.txt
-```
+- PDF-2 reference-card data from a local user-provided installation or folder
+- CCDC/CSD data through the user's own CCDC Python API installation and valid license/access rights
+- other local commercial, institutional or private databases supplied by the user
 
-Then enter your Materials Project API key in the application settings.
+Large databases are never bundled with the application and are not downloaded automatically. Use the controls in **Databases** to download, index, update or clear local data explicitly.
 
----
-
-# Optional Reference Databases
-
-The **Databases** tab controls which sources participate in phase search.
-Use the checkboxes to enable only the databases you want:
-
-- User library
-- COD local
-- COD online
-- RRUFF
-- PDF-2
-- Materials Project
-
-Large databases are never downloaded automatically. Use the buttons in
-**Databases** to download or index them explicitly:
+Common database actions include:
 
 - `Index COD CIF folder` for an unpacked local COD CIF collection
 - `Index COD ZIP archive` for a downloaded COD archive
@@ -366,7 +354,7 @@ PDF-2 folder when available, but the PDF-2 database itself is not bundled
 or redistributed.
 
 See [Third-party Data Sources](THIRD_PARTY_DATA_SOURCES.md) for notes on COD,
-Materials Project, RRUFF and optional CCDC/CSD data usage and attribution.
+Materials Project, RRUFF and restricted CCDC/CSD data usage and attribution.
 
 ---
 
@@ -394,13 +382,29 @@ XRD_Analysis_Toolkit/
     README.md
     CHANGELOG.md
     PROJECT_HEALTH.md
+    THIRD_PARTY_DATA_SOURCES.md
+        Project documentation, release history and data-source notes
+
     pyproject.toml
+        Python package metadata
+
     setup_env.bat
     setup_env.command
     setup_env.sh
-        Create the shared Toolkit virtual environment (.venv)
+        Manual source-checkout setup scripts for Windows, macOS and Linux
+
+    toolkit/
+        manifest.json
+            Toolkit and application version metadata
+        updates/xrd_finder.json
+            Machine-readable update metadata for release checks
+        setup_xrd_toolkit_env.bat
+        launch_xrd_finder_preview.ps1
+            Windows runtime setup and startup/update preview support
 
     XRD_Finder/
+        app.json
+            XRD Phase Finder application metadata
         xrd_finder/
             XRD Phase Finder application source code
         docs/screenshots/
@@ -408,20 +412,22 @@ XRD_Analysis_Toolkit/
         requirements.txt
             Required Python packages for XRD Phase Finder
         requirements-optional.txt
-            Optional online database support
+            Reserved for integrations that may require extra user-installed packages
         run_finder.bat
         run_finder.command
         run_finder.sh
-            Launch graphical interface
+            Source-checkout graphical launchers
         run_finder_cli.bat
         run_finder_cli.command
         run_finder_cli.sh
-            Command line interface
+            Source-checkout command-line launchers
 ```
 
-The root `XRD_Analysis_Toolkit` layout keeps the shared environment and project documentation separate from the `XRD_Finder` application folder. This is intentional: it keeps the repository ready for additional XRD-related modules later without changing the Finder app structure.
+The repository contains source code, documentation, runtime setup scripts and update metadata. Generated Windows installer files such as `XRD_Phase_Finder_Setup_1.0.2.exe` are **not committed to the repository**; they are published separately as GitHub Release assets after testing.
 
-Downloaded databases, user libraries, temporary files and local caches for XRD Phase Finder are stored under `XRD_Finder/data/` by default. This folder is intentionally excluded from Git, so large database files and local working data stay with the Finder app without being committed. Set `XRD_FINDER_DATA_DIR` to use a custom location.
+The root `XRD_Analysis_Toolkit` layout keeps shared toolkit files separate from the `XRD_Finder` application folder. This leaves room for additional XRD-related applications later while preserving a clear application boundary.
+
+Downloaded databases, user libraries, temporary files and local caches are intentionally kept outside Git. The installed Windows application uses the per-user `XRD_Toolkit` location in AppData. Source-checkout users can set `XRD_FINDER_DATA_DIR` to use a custom data/cache location.
 
 ---
 
@@ -472,5 +478,4 @@ Institute geology and mineralogy SB RAS
 
 GitHub:
 https://github.com/ABKuznetsov
-
 
