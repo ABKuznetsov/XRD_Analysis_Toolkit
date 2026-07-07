@@ -11,21 +11,33 @@ Welcome to the **XRD Analysis Toolkit** project. Its first application, **XRD Ph
 
 XRD Phase Finder is designed for everyday search-match work: import one or many experimental XRD patterns, restrict the chemistry with required or optional elements, search local and online phase sources, compare candidates against the observed pattern, inspect compound cards and build an interpretable set of selected phases.
 
-The project is possible because of the open scientific software and database ecosystem around crystallography and diffraction. In particular, XRD Phase Finder can work with or build on:
+The project is possible because of the scientific software and crystallographic-data ecosystem around powder diffraction.
+
+Open or publicly accessible data sources and services that XRD Phase Finder can work with include:
 
 - COD (Crystallography Open Database)
-- Materials Project (MP)
+- Materials Project (MP), when the user provides their own API key
 - AFLOW Database
 - OQMD (Open Quantum Materials Database)
 - RRUFF Project measured powder patterns
-- PDF-2 reference-card data provided by the user
-- CCDC/CSD access when the user has the appropriate CCDC Python API/license
+- user-provided CIF folders and local phase libraries
+
+Restricted, proprietary or license-controlled sources can also be used only when the user already has the legal right to access them:
+
+- PDF-2 reference-card data from a user-provided local PDF-2 installation or folder
+- CCDC/CSD data through the user's own CCDC Python API installation and valid license/access rights
+- any other local commercial, institutional or private crystallographic database supplied by the user
+
+The developers of XRD Phase Finder **do not distribute closed, proprietary or license-controlled databases**. The program only provides optional connectors, import/indexing tools and local search workflows. Users are responsible for ensuring that they have the right to access and process any restricted database, and for following the license terms, attribution rules and citation requirements of each data source.
+
+XRD Phase Finder also builds on the open-source Python scientific stack, including:
+
 - pymatgen
 - NumPy, SciPy and pandas
 - matplotlib
 - PySide6 / Qt
 
-Large third-party databases are **not bundled** with this repository or installer. XRD Phase Finder uses official online access, user-provided local folders, user API keys or optional local imports where available. Users remain responsible for following the license terms and citation requirements of each external data source.
+Large third-party databases are **not bundled** with this repository or installer. XRD Phase Finder uses official online access, user-provided local folders, user API keys or optional local imports where available.
 
 The main mechanism behind XRD Phase Finder is intentionally pragmatic: it first helps the user find chemically plausible candidates, then compares each candidate's own strongest calculated or measured peaks against the active experimental pattern. This is meant for phase identification and pre-refinement screening, not as a replacement for full Rietveld refinement.
 
