@@ -164,6 +164,8 @@ function Show-OwnedQuestion {
 function Download-And-RunUpdate {
     param([string]$Url, [string]$ExpectedSha256, [string]$LatestVersion)
     if (-not $Url) { throw "Update installer URL is not available." }
+    Set-Step 3 "Downloading" "The update installer can take a few minutes on a slow connection." "Blue"
+    [System.Windows.Forms.Application]::DoEvents()
     Ensure-Folder $updateRoot
     $fileName = [System.IO.Path]::GetFileName(([System.Uri]$Url).AbsolutePath)
     if (-not $fileName) { $fileName = "XRD_Phase_Finder_Setup_$LatestVersion.exe" }
@@ -187,6 +189,30 @@ function Download-And-RunUpdate {
     Set-ProgressText 80 "Starting update installer"
     [System.Windows.Forms.Application]::DoEvents()
     Start-Process -FilePath $targetPath | Out-Null
+}
+function Wait-ApplicationMainWindow {
+    param(
+        [System.Diagnostics.Process]$Process,
+        [int]$TimeoutSeconds = 120
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $tick = 0
+    while ((Get-Date) -lt $deadline) {
+        if ($Process.HasExited) {
+            throw "XRD Phase Finder closed during startup. Exit code: $($Process.ExitCode)"
+        }
+        $Process.Refresh()
+        if ($Process.MainWindowHandle -ne [IntPtr]::Zero) {
+            return $true
+        }
+        $dots = "." * (($tick % 4) + 1)
+        Set-Step 4 "Starting$dots" "Waiting for the main application window" "Blue"
+        Set-ProgressText 96 "Starting XRD Phase Finder$dots"
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 500
+        $tick++
+    }
+    throw "XRD Phase Finder is running, but the main window did not appear within $TimeoutSeconds seconds."
 }
 function Add-StepRow {
     param(
@@ -346,7 +372,8 @@ try {
     Set-ProgressText 28 "Preparing runtime"
     Set-Step 1 "Checking..." "Looking for XRD_Toolkit runtime" "Blue"
     if (-not (Test-Path -LiteralPath $pythonw)) {
-        Set-Step 1 "Installing..." "Creating shared Python environment" "Blue"
+        Set-ProgressText 28 "First launch can take several minutes"
+        Set-Step 1 "Installing..." "First launch: downloading and configuring Python packages. Later starts will be faster." "Blue"
         if (-not (Test-Path -LiteralPath $setupBat)) {
             throw "Setup script was not found: $setupBat"
         }
@@ -478,11 +505,12 @@ try {
     } else {
         $env:PYTHONPATH = $appPackageRoot
     }
-    Start-Process -FilePath $pythonw -ArgumentList @("-m", $entryModule) -WorkingDirectory $appRoot | Out-Null
-    Set-Step 4 "OK" "XRD Phase Finder started" "Green"
-    Pause-PreviewStep
-    Set-ProgressText 100 "Starting"
-    Start-Sleep -Milliseconds 2000
+    $appProcess = Start-Process -FilePath $pythonw -ArgumentList @("-m", $entryModule) -WorkingDirectory $appRoot -PassThru
+    Wait-ApplicationMainWindow $appProcess 120 | Out-Null
+    Set-Step 4 "OK" "XRD Phase Finder window is ready" "Green"
+    Set-ProgressText 100 "Ready"
+    [System.Windows.Forms.Application]::DoEvents()
+    Start-Sleep -Milliseconds 400
 } catch {
     Set-ProgressText 100 "Failed"
     if ($script:StepStatusLabels.Count -gt 0) {
