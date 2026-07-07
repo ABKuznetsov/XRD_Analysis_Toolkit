@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
 
@@ -12,7 +12,11 @@ class Pattern(ProjectObject):
     y_unit: str = "intensity"
     wavelength: float | None = None
     linked_phase_ids: list[str] = field(default_factory=list)
+    processed_points: list[list[float]] = field(default_factory=list)
+    processed_label: str = ""
+    processed_background_removed: bool = False
 
     @classmethod
     def create(cls, name: str, source_path: str = "") -> "Pattern":
         return cls(name=name, id=new_id("pattern"), source_path=source_path)
+

@@ -30,6 +30,9 @@ if not exist "%XRD_FINDER_USER_ROOT%" mkdir "%XRD_FINDER_USER_ROOT%"
 set "PYTHONDONTWRITEBYTECODE=1"
 set "XRD_FINDER_DATA_DIR=%XRD_FINDER_USER_ROOT%\data"
 set "MPLCONFIGDIR=%XRD_FINDER_USER_ROOT%\matplotlib"
+set "QT_OPENGL=software"
+set "QT_QUICK_BACKEND=software"
+set "QT_ANGLE_PLATFORM=warp"
 set "PYTHONPATH=%APP_ROOT%\XRD_Finder;%PYTHONPATH%"
 
 echo Starting XRD Phase Finder with console diagnostics...

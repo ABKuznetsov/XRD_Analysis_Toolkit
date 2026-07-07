@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import html as html_lib
 from dataclasses import dataclass
@@ -215,7 +215,7 @@ class CcdcService:
             )
 
     def _read_url(self, url: str, timeout: float, opener=None, data: bytes | None = None) -> bytes:
-        headers = {"User-Agent": "XRD Phase Finder/1.0.2"}
+        headers = {"User-Agent": "XRD Phase Finder/1.0.3"}
         if data is not None:
             headers["Content-Type"] = "application/x-www-form-urlencoded"
         request = Request(url, data=data, headers=headers)
@@ -359,4 +359,5 @@ class CcdcService:
 
     def _create_ssl_context(self):
         return create_ssl_context()
+
 

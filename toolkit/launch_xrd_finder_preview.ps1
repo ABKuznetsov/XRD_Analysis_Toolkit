@@ -526,6 +526,9 @@ try {
     $env:PYTHONDONTWRITEBYTECODE = "1"
     $env:XRD_FINDER_DATA_DIR = $dataRoot
     $env:MPLCONFIGDIR = Join-Path $finderRoot "matplotlib"
+    $env:QT_OPENGL = "software"
+    $env:QT_QUICK_BACKEND = "software"
+    $env:QT_ANGLE_PLATFORM = "warp"
     if ($env:PYTHONPATH) {
         $env:PYTHONPATH = "$appPackageRoot;$env:PYTHONPATH"
     } else {
@@ -541,6 +544,13 @@ try {
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    $startInfo.EnvironmentVariables["PYTHONDONTWRITEBYTECODE"] = "1"
+    $startInfo.EnvironmentVariables["XRD_FINDER_DATA_DIR"] = $dataRoot
+    $startInfo.EnvironmentVariables["MPLCONFIGDIR"] = Join-Path $finderRoot "matplotlib"
+    $startInfo.EnvironmentVariables["PYTHONPATH"] = $env:PYTHONPATH
+    $startInfo.EnvironmentVariables["QT_OPENGL"] = "software"
+    $startInfo.EnvironmentVariables["QT_QUICK_BACKEND"] = "software"
+    $startInfo.EnvironmentVariables["QT_ANGLE_PLATFORM"] = "warp"
     $appProcess = New-Object System.Diagnostics.Process
     $appProcess.StartInfo = $startInfo
     Register-ObjectEvent -InputObject $appProcess -EventName OutputDataReceived -Action { if ($EventArgs.Data) { Add-Content -LiteralPath $Event.MessageData -Value $EventArgs.Data } } -MessageData $startupLog | Out-Null

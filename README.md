@@ -1,4 +1,4 @@
-# XRD Analysis Toolkit
+﻿# XRD Analysis Toolkit
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
@@ -199,7 +199,7 @@ Large external crystallographic databases are user-managed. COD, RRUFF, PDF-2, M
 The recommended Windows installation method is the release installer:
 
 ```text
-XRD_Phase_Finder_Setup_1.0.2.exe
+XRD_Phase_Finder_Setup_1.0.3.exe
 ```
 
 Download it from the GitHub Releases page and run it. The installer:
@@ -436,7 +436,7 @@ XRD_Analysis_Toolkit/
             Source-checkout command-line launchers
 ```
 
-The repository contains source code, documentation, runtime setup scripts and update metadata. Generated Windows installer files such as `XRD_Phase_Finder_Setup_1.0.2.exe` are **not committed to the repository**; they are published separately as GitHub Release assets after testing.
+The repository contains source code, documentation, runtime setup scripts and update metadata. Generated Windows installer files such as `XRD_Phase_Finder_Setup_1.0.3.exe` are **not committed to the repository**; they are published separately as GitHub Release assets after testing.
 
 The root `XRD_Analysis_Toolkit` layout keeps shared toolkit files separate from the `XRD_Finder` application folder. This leaves room for additional XRD-related applications later while preserving a clear application boundary.
 
@@ -491,4 +491,5 @@ Institute geology and mineralogy SB RAS
 
 GitHub:
 https://github.com/ABKuznetsov
+
 

@@ -109,6 +109,9 @@ exit /b 0
 > "%XRD_TOOLKIT_BIN%\xrd-finder.cmd" echo @echo off
 >> "%XRD_TOOLKIT_BIN%\xrd-finder.cmd" echo set "APP_ROOT=%APP_ROOT%"
 >> "%XRD_TOOLKIT_BIN%\xrd-finder.cmd" echo set "PYTHONPATH=%%APP_ROOT%%\XRD_Finder;%%PYTHONPATH%%"
+>> "%XRD_TOOLKIT_BIN%\xrd-finder.cmd" echo set "QT_OPENGL=software"
+>> "%XRD_TOOLKIT_BIN%\xrd-finder.cmd" echo set "QT_QUICK_BACKEND=software"
+>> "%XRD_TOOLKIT_BIN%\xrd-finder.cmd" echo set "QT_ANGLE_PLATFORM=warp"
 >> "%XRD_TOOLKIT_BIN%\xrd-finder.cmd" echo "%XRD_TOOLKIT_ENV%\Scripts\python.exe" -m xrd_finder.apps.finder_gui %%*
 > "%XRD_TOOLKIT_BIN%\xrd-python.cmd" echo @echo off
 >> "%XRD_TOOLKIT_BIN%\xrd-python.cmd" echo "%XRD_TOOLKIT_ENV%\Scripts\python.exe" %%*

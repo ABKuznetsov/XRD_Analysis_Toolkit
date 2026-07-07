@@ -48,6 +48,7 @@ from xrd_finder.core.structure import AtomSite, CellParameters, Structure
 from xrd_finder.finder import FinderCandidateInput, FinderInput, FinderService
 from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.io.xy_loader import load_xy
+from xrd_finder.io.project_io import save_project_manifest
 from xrd_finder.services.calculated_pattern_service import (
     CU_KA1_WAVELENGTH,
     CalculatedPatternService,
@@ -176,8 +177,14 @@ class AnalysisWindow(QDialog):
         new_project_button.setToolTip("Clear the current XRD patterns, structures, candidates, and calculated overlays.")
         new_project_button.setStyleSheet(_command_button_style("#5f6368", "#8a8d91"))
         new_project_button.clicked.connect(self._new_project)
+        save_project_button = QPushButton("Save project")
+        save_project_button.setMinimumHeight(34)
+        save_project_button.setToolTip("Save the current project manifest, including processed XRD curves.")
+        save_project_button.setStyleSheet(_command_button_style("#2367a5", "#5a9bd8"))
+        save_project_button.clicked.connect(self._save_project)
         import_row.addWidget(import_button, 2)
         import_row.addWidget(new_project_button, 1)
+        import_row.addWidget(save_project_button, 1)
         order_row = QHBoxLayout()
         order_row.setContentsMargins(0, 0, 0, 0)
         order_row.setSpacing(4)
@@ -271,6 +278,24 @@ class AnalysisWindow(QDialog):
         self.tree.set_project(self.project)
         self._after_new_project()
         self.project_changed.emit()
+    def _save_project(self) -> None:
+        default_path = self.project.root_path or str(Path(self._last_directory()) / f"{self.project.name}.xrd-project.json")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save XRD project",
+            default_path,
+            "XRD project (*.xrd-project.json *.json);;JSON files (*.json);;All files (*.*)",
+        )
+        if not path:
+            return
+        try:
+            self.project.root_path = path
+            self.project.touch()
+            save_project_manifest(self.project, path)
+        except Exception as exc:
+            QMessageBox.warning(self, "Save project failed", str(exc))
+            return
+        QMessageBox.information(self, "Project saved", f"Project saved to:\n{path}")
 
     def _after_new_project(self) -> None:
         self._on_project_tree_selection_changed()
@@ -505,8 +530,6 @@ class PhaseFinderWindow(AnalysisWindow):
         self.match_zero_shifts: dict[str, float] = {}
         self.match_cell_scales: dict[str, float] = {}
         self.match_alignment_scores: dict[str, str] = {}
-        self.preprocessed_observed_data: np.ndarray | None = None
-        self.preprocessing_background_removed = False
         self._observed_probability_cache: tuple[tuple[object, ...], np.ndarray, np.ndarray, list[tuple[float, float]]] | None = None
         self._candidate_peak_cache: dict[tuple[str, float, float, float], list] = {}
         self._candidate_probability_cache: dict[tuple[object, ...], float] = {}
@@ -579,8 +602,6 @@ class PhaseFinderWindow(AnalysisWindow):
         self._apply_default_phase_filter()
 
     def _after_new_project(self) -> None:
-        self.preprocessed_observed_data = None
-        self.preprocessing_background_removed = False
         self._clear_probability_caches()
         self.match_candidates.clear()
         self.match_structures.clear()
@@ -709,8 +730,12 @@ class PhaseFinderWindow(AnalysisWindow):
             return
         x = np.asarray(data[:, 0], dtype=float)
         y = np.asarray(data[:, 1], dtype=float)
-        original_preprocessed = None if self.preprocessed_observed_data is None else np.array(self.preprocessed_observed_data, copy=True)
-        original_background_removed = self.preprocessing_background_removed
+        pattern = self._active_pattern()
+        if pattern is None:
+            return
+        original_processed_points = [list(point) for point in pattern.processed_points]
+        original_processed_label = pattern.processed_label
+        original_background_removed = pattern.processed_background_removed
         auto_window = max(5, min(21, len(y) // 180 * 2 + 1))
         panel = SmoothPanel(auto_window, self)
 
@@ -730,12 +755,13 @@ class PhaseFinderWindow(AnalysisWindow):
                 x,
                 smooth_y,
                 f"Observed smoothed ({label_method}, window {window}, {panel.passes()} {pass_text})",
-                self.preprocessing_background_removed,
+                pattern.processed_background_removed,
             )
 
         def cancel_smoothing() -> None:
-            self.preprocessed_observed_data = original_preprocessed
-            self.preprocessing_background_removed = original_background_removed
+            pattern.processed_points = original_processed_points
+            pattern.processed_label = original_processed_label
+            pattern.processed_background_removed = original_background_removed
             self._clear_probability_caches()
             self._refresh_observed_pattern_plot()
             self._rerun_active_calculation()
@@ -788,8 +814,12 @@ class PhaseFinderWindow(AnalysisWindow):
             return
         x = np.asarray(data[:, 0], dtype=float)
         y = np.asarray(data[:, 1], dtype=float)
-        original_preprocessed = None if self.preprocessed_observed_data is None else np.array(self.preprocessed_observed_data, copy=True)
-        original_background_removed = self.preprocessing_background_removed
+        pattern = self._active_pattern()
+        if pattern is None:
+            return
+        original_processed_points = [list(point) for point in pattern.processed_points]
+        original_processed_label = pattern.processed_label
+        original_background_removed = pattern.processed_background_removed
         panel = BackgroundRemovalPanel(parent=self)
 
         def preview_background_removal() -> None:
@@ -804,8 +834,9 @@ class PhaseFinderWindow(AnalysisWindow):
             self._set_preprocessed_observed_curve(x, corrected, label, True)
 
         def cancel_background_removal() -> None:
-            self.preprocessed_observed_data = original_preprocessed
-            self.preprocessing_background_removed = original_background_removed
+            pattern.processed_points = original_processed_points
+            pattern.processed_label = original_processed_label
+            pattern.processed_background_removed = original_background_removed
             self._clear_probability_caches()
             self._refresh_observed_pattern_plot()
             self._rerun_active_calculation()
@@ -819,8 +850,13 @@ class PhaseFinderWindow(AnalysisWindow):
         )
 
     def _reset_observed_preprocessing(self) -> None:
-        self.preprocessed_observed_data = None
-        self.preprocessing_background_removed = False
+        pattern = self._active_pattern()
+        if pattern is not None:
+            pattern.processed_points.clear()
+            pattern.processed_label = ""
+            pattern.processed_background_removed = False
+            self.project.touch()
+            self.project_changed.emit()
         self._clear_probability_caches()
         self._refresh_observed_pattern_plot()
         self._rerun_active_calculation()
@@ -832,8 +868,15 @@ class PhaseFinderWindow(AnalysisWindow):
         name: str,
         background_removed: bool,
     ) -> None:
-        self.preprocessed_observed_data = np.column_stack([x, y])
-        self.preprocessing_background_removed = background_removed
+        pattern = self._active_pattern()
+        if pattern is None:
+            return
+        processed = np.column_stack([x, y])
+        pattern.processed_points = processed.astype(float).tolist()
+        pattern.processed_label = name
+        pattern.processed_background_removed = background_removed
+        self.project.touch()
+        self.project_changed.emit()
         self._clear_probability_caches()
         self._replace_observed_curve(x, y, name)
         self._rerun_active_calculation()
@@ -958,20 +1001,34 @@ class PhaseFinderWindow(AnalysisWindow):
             self._refresh_observed_pattern_plot()
             self._rerun_active_calculation()
 
+    def _pattern_processed_observed_data(self, pattern: Pattern | None) -> np.ndarray | None:
+        if pattern is None or not pattern.processed_points:
+            return None
+        data = np.asarray(pattern.processed_points, dtype=float)
+        if data.ndim != 2 or data.shape[1] < 2 or len(data) == 0:
+            return None
+        return data[:, :2]
+
+    def _active_processed_observed_data(self) -> np.ndarray | None:
+        return self._pattern_processed_observed_data(self._active_pattern())
+
+    def _active_background_removed(self) -> bool:
+        pattern = self._active_pattern()
+        return bool(pattern is not None and pattern.processed_background_removed)
+
     def _active_observed_data(self):
-        if self.preprocessed_observed_data is not None:
-            return self.preprocessed_observed_data
         pattern = self._active_pattern()
         if pattern is None:
             return None
+        processed = self._pattern_processed_observed_data(pattern)
+        if processed is not None:
+            return processed
         try:
             return load_xy(pattern.source_path)
         except Exception:
             return None
 
     def _refresh_observed_pattern_plot(self) -> None:
-        self.preprocessed_observed_data = None
-        self.preprocessing_background_removed = False
         self._draw_observed_patterns()
 
     def _patterns_to_display(self):
@@ -1005,8 +1062,13 @@ class PhaseFinderWindow(AnalysisWindow):
                     data = np.asarray(active_override[1], dtype=float)
                     name = active_override[2]
                 else:
-                    data = load_xy(pattern.source_path)
-                    name = f"Observed: {pattern.name}"
+                    processed = self._pattern_processed_observed_data(pattern)
+                    if processed is not None:
+                        data = processed
+                        name = pattern.processed_label or f"Observed processed: {pattern.name}"
+                    else:
+                        data = load_xy(pattern.source_path)
+                        name = f"Observed: {pattern.name}"
             except Exception:
                 continue
             if data is None or len(data) == 0:
@@ -2175,17 +2237,16 @@ class PhaseFinderWindow(AnalysisWindow):
             self._update_match_table()
             return
 
+        processed_observed = self._active_processed_observed_data()
         try:
             result = self.finder_service.run(
                 FinderInput(
                     pattern_path=pattern.source_path,
                     candidates=finder_candidates,
                     wavelength=pattern.wavelength,
-                    observed_x=self.preprocessed_observed_data[:, 0].tolist()
-                    if self.preprocessed_observed_data is not None else None,
-                    observed_y=self.preprocessed_observed_data[:, 1].tolist()
-                    if self.preprocessed_observed_data is not None else None,
-                    subtract_background=not self.preprocessing_background_removed,
+                    observed_x=processed_observed[:, 0].tolist() if processed_observed is not None else None,
+                    observed_y=processed_observed[:, 1].tolist() if processed_observed is not None else None,
+                    subtract_background=not self._active_background_removed(),
                 )
             )
         except Exception as exc:
@@ -2717,8 +2778,9 @@ class PhaseFinderWindow(AnalysisWindow):
         pattern_id = getattr(pattern, "id", "") if pattern is not None else ""
         source_path = getattr(pattern, "source_path", "") if pattern is not None else ""
         wavelength = round(float(getattr(pattern, "wavelength", None) or CU_KA1_WAVELENGTH), 6)
-        data_len = int(len(self.preprocessed_observed_data)) if self.preprocessed_observed_data is not None else -1
-        return (pattern_id, source_path, wavelength, self.preprocessing_background_removed, data_len)
+        processed = self._active_processed_observed_data()
+        data_len = int(len(processed)) if processed is not None else -1
+        return (pattern_id, source_path, wavelength, self._active_background_removed(), data_len)
 
     def _probability_observed_data(self) -> tuple[np.ndarray, np.ndarray, list[tuple[float, float]]] | None:
         observed = self._active_observed_data()

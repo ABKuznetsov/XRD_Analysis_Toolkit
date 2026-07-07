@@ -1,4 +1,5 @@
-"""XRD Phase Finder package."""
+﻿"""XRD Phase Finder package."""
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
+
 
