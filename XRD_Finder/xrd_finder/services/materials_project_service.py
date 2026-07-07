@@ -35,11 +35,11 @@ class MaterialsProjectService:
         client_kind = self._client_kind()
         client_available = bool(client_kind)
         if not self.api_key:
-            label = "API key not configured"
+            label = "API key is not configured"
         elif not client_available:
             label = "mp-api or pymatgen Materials Project client not installed"
         else:
-            label = f"ready ({client_kind})"
+            label = f"Ready ({client_kind})"
         return MaterialsProjectStatus(
             configured=bool(self.api_key) and client_available,
             client_available=client_available,

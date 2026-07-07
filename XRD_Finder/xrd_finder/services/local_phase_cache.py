@@ -52,8 +52,8 @@ class LocalPhaseCache:
         size = sum(path.stat().st_size for path in self.cif_dir.glob("*.cif") if path.is_file())
         return [
             "Local phase cache",
-            "yes",
-            f"{cached} cached CIF",
+            "Ready",
+            f"{cached} cached CIF files",
             str(cached),
             f"{size / (1024 * 1024):.1f}",
             "sqlite+cif",
@@ -113,6 +113,22 @@ class LocalPhaseCache:
                         name=entry.name or entry.formula,
                         spacegroup=entry.spacegroup,
                         source_text=entry.energy_above_hull,
+                    ),
+                    keep_cif=True,
+                )
+
+    def upsert_computational_entries(self, entries) -> None:
+        with self._connect() as connection:
+            for entry in entries:
+                self._upsert(
+                    connection,
+                    CachedPhaseEntry(
+                        source=entry.source,
+                        entry_id=entry.entry_id,
+                        formula=entry.formula,
+                        name=entry.name or entry.formula,
+                        spacegroup=entry.spacegroup,
+                        source_text=entry.note,
                     ),
                     keep_cif=True,
                 )
@@ -255,6 +271,14 @@ class LocalPhaseCache:
     def clear_materials_project_cache(self) -> None:
         self._clear_sources(["MP"])
         self._remove_cache_dirs(["materials_project_cif"])
+
+    def clear_aflow_cache(self) -> None:
+        self._clear_sources(["AFLOW"])
+        self._remove_cache_dirs(["aflow_cif"])
+
+    def clear_oqmd_cache(self) -> None:
+        self._clear_sources(["OQMD"])
+        self._remove_cache_dirs(["oqmd_cif"])
 
     def index_cif_folder(self, folder: str | Path, source: str = "COD") -> int:
         root = Path(folder)

@@ -214,7 +214,7 @@ class ContextViewer(QWidget):
                         ("First X range", f"{first_data[:, 0].min():.4g} .. {first_data[:, 0].max():.4g}"),
                     ])
                 if errors:
-                    rows.append(("Skipped patterns", str(len(errors))))
+                    rows.append(("Ignored patterns", str(len(errors))))
             else:
                 self.visual_stack.setCurrentWidget(self.visual_area)
                 self.visual_area.setText("Pattern import exists, but plotting failed")

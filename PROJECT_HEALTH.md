@@ -4,7 +4,7 @@ Snapshot for release `0.2.0`.
 
 ## Status
 
-Overall state: stable, suitable for GitHub publication as a XRD Finder research tool.
+Overall state: stable, suitable for GitHub publication as an XRD Phase Finder research tool.
 
 The core Phase Finder workflow is usable:
 
@@ -72,3 +72,4 @@ Protected by `.gitignore`:
 2. Extract graph overlay/state logic from `analysis_windows.py`.
 3. Add small automated tests for CIF parsing, local cache indexing and candidate table behavior.
 4. Add packaged app build instructions for macOS and Windows.
+

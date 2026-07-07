@@ -1,0 +1,26 @@
+{
+    "app_id":  "xrd_finder",
+    "name":  "XRD Phase Finder",
+    "version":  "1.0.2",
+    "channel":  "stable",
+    "minimum_windows":  "10.0",
+    "published_at":  "2026-07-07",
+    "release_url":  "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.0.2",
+    "release_notes_url":  "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/XRD_Finder/RELEASE_NOTES_1.0.2.md",
+    "assets":  [
+                   {
+                       "name":  "XRD_Phase_Finder_Setup_1.0.2.exe",
+                       "sha256":  "92596b1c56e9b18e79104dbe3ad9f2d0d5d536fe227c4e8644005ea3ab502a53",
+                       "type":  "installer",
+                       "size_bytes":  5827173,
+                       "platform":  "windows-x64",
+                       "url":  "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.0.2/XRD_Phase_Finder_Setup_1.0.2.exe"
+                   }
+               ],
+    "summary":  [
+                    "Windows installer with shared XRD_Toolkit environment.",
+                    "Startup preview now checks updates and can open the new release.",
+                    "Improved RRUFF/PDF-2/user CIF workflows and candidate ranking.",
+                    "Fixed Windows 10 Python setup fallback."
+                ]
+}

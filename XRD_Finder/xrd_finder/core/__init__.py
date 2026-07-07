@@ -1,1 +1,1 @@
-"""Core domain entities for XRD Finder."""
+"""Core domain entities for XRD Phase Finder."""

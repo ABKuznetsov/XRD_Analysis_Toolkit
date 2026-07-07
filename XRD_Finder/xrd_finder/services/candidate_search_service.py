@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+import itertools
+import queue
 import re
 import threading
 
 from xrd_finder.services.ccdc_service import CcdcService, extract_doi
 from xrd_finder.services.cod_online_service import CodEntry, CodOnlineService, formula_elements
+from xrd_finder.services.computational_database_service import AflowService, OqmdService
 from xrd_finder.services.local_phase_cache import LocalPhaseCache
 from xrd_finder.services.match_pdf2_service import MatchPdf2Service
 from xrd_finder.services.materials_project_service import MaterialsProjectService
@@ -22,6 +24,8 @@ class CandidateSearchOptions:
     rruff_enabled: bool
     match_pdf2_enabled: bool
     materials_project_enabled: bool
+    aflow_enabled: bool
+    oqmd_enabled: bool
     structural_data_enabled: bool
     reference_patterns_enabled: bool
     material_class_allowed: Callable[[str], bool]
@@ -36,6 +40,8 @@ class CandidateSearchService:
         rruff: RruffService,
         match_pdf2: MatchPdf2Service,
         materials_project: MaterialsProjectService,
+        aflow: AflowService | None = None,
+        oqmd: OqmdService | None = None,
     ) -> None:
         self.local_phase_cache = local_phase_cache
         self.cod_online = cod_online
@@ -43,9 +49,19 @@ class CandidateSearchService:
         self.rruff = rruff
         self.match_pdf2 = match_pdf2
         self.materials_project = materials_project
-        self._download_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="xrd-cache")
+        self.aflow = aflow or AflowService()
+        self.oqmd = oqmd or OqmdService()
         self._download_lock = threading.Lock()
         self._queued_downloads: set[tuple[str, str]] = set()
+        self._download_counter = itertools.count()
+        self._download_queue: queue.PriorityQueue = queue.PriorityQueue()
+        self._download_shutdown = False
+        self._download_thread = threading.Thread(
+            target=self._run_download_queue,
+            name="xrd-cache-priority",
+            daemon=True,
+        )
+        self._download_thread.start()
 
     def search_text(self, query: str, options: CandidateSearchOptions) -> list[list[str]]:
         query = query.strip()
@@ -154,6 +170,32 @@ class CandidateSearchService:
                     if not rows:
                         rows.append(["MP", "", "", "Materials Project search failed", "", str(exc)])
 
+        if options.aflow_enabled and options.structural_data_enabled:
+            aflow_key = self.search_cache_key("text", query)
+            if not self.local_phase_cache.search_is_fresh("AFLOW", aflow_key):
+                try:
+                    aflow_entries = self.aflow.search_text(query=query, limit=80)
+                    self.local_phase_cache.upsert_computational_entries(aflow_entries)
+                    self.local_phase_cache.mark_search("AFLOW", aflow_key)
+                    self.queue_background_aflow_downloads(aflow_entries)
+                    rows = self.dedupe_candidate_rows(rows + self.computational_rows(aflow_entries))
+                except Exception as exc:
+                    if not rows:
+                        rows.append(["AFLOW", "", "", "AFLOW search failed", "", str(exc)])
+
+        if options.oqmd_enabled and options.structural_data_enabled:
+            oqmd_key = self.search_cache_key("text", query)
+            if not self.local_phase_cache.search_is_fresh("OQMD", oqmd_key):
+                try:
+                    oqmd_entries = self.oqmd.search_text(query=query, limit=80)
+                    self.local_phase_cache.upsert_computational_entries(oqmd_entries)
+                    self.local_phase_cache.mark_search("OQMD", oqmd_key)
+                    self.queue_background_oqmd_downloads(oqmd_entries)
+                    rows = self.dedupe_candidate_rows(rows + self.computational_rows(oqmd_entries))
+                except Exception as exc:
+                    if not rows:
+                        rows.append(["OQMD", "", "", "OQMD search failed", "", str(exc)])
+
         return self.dedupe_candidate_rows(self.filter_candidate_rows_by_excluded_elements(rows, options))
 
     def search_elements(self, elements: list[str], options: CandidateSearchOptions) -> list[list[str]]:
@@ -205,6 +247,28 @@ class CandidateSearchService:
                     rows = self.dedupe_candidate_rows(rows + self.mp_rows(mp_entries))
                 except Exception as exc:
                     rows.append(["MP", "", "", "Materials Project search failed", "", str(exc)])
+        if options.aflow_enabled and options.structural_data_enabled:
+            aflow_key = self.search_cache_key("elements", elements)
+            if not self.local_phase_cache.search_is_fresh("AFLOW", aflow_key):
+                try:
+                    aflow_entries = self.aflow.search_elements(elements, limit=80)
+                    self.local_phase_cache.upsert_computational_entries(aflow_entries)
+                    self.local_phase_cache.mark_search("AFLOW", aflow_key)
+                    self.queue_background_aflow_downloads(aflow_entries)
+                    rows = self.dedupe_candidate_rows(rows + self.computational_rows(aflow_entries))
+                except Exception as exc:
+                    rows.append(["AFLOW", "", "", "AFLOW search failed", "", str(exc)])
+        if options.oqmd_enabled and options.structural_data_enabled:
+            oqmd_key = self.search_cache_key("elements", elements)
+            if not self.local_phase_cache.search_is_fresh("OQMD", oqmd_key):
+                try:
+                    oqmd_entries = self.oqmd.search_elements(elements, limit=80)
+                    self.local_phase_cache.upsert_computational_entries(oqmd_entries)
+                    self.local_phase_cache.mark_search("OQMD", oqmd_key)
+                    self.queue_background_oqmd_downloads(oqmd_entries)
+                    rows = self.dedupe_candidate_rows(rows + self.computational_rows(oqmd_entries))
+                except Exception as exc:
+                    rows.append(["OQMD", "", "", "OQMD search failed", "", str(exc)])
         return self.dedupe_candidate_rows(self.filter_candidate_rows_by_excluded_elements(rows, options))
 
     def search_local_cache(
@@ -266,25 +330,97 @@ class CandidateSearchService:
         cif_path = self.materials_project.download_cif(entry.material_id, target_dir)
         self.local_phase_cache.index_cif(cif_path, source="MP", entry_id=entry.material_id)
 
-    def _queue_background_download(self, key: tuple[str, str], task: Callable[[], object]) -> None:
+    def queue_background_aflow_downloads(self, entries) -> None:
+        target_dir = self.local_phase_cache.root / "aflow_cif"
+        for entry in entries:
+            if not entry.entry_id:
+                continue
+            self._queue_background_download(
+                ("AFLOW", entry.entry_id),
+                lambda entry=entry: self._download_aflow_entry_to_cache(entry, target_dir),
+            )
+
+    def _download_aflow_entry_to_cache(self, entry, target_dir) -> None:
+        cif_path = self.aflow.download_cif(entry.entry_id, target_dir, url_hint=entry.url_hint)
+        self.local_phase_cache.index_cif(cif_path, source="AFLOW", entry_id=entry.entry_id)
+
+    def queue_background_oqmd_downloads(self, entries) -> None:
+        target_dir = self.local_phase_cache.root / "oqmd_cif"
+        for entry in entries:
+            if not entry.entry_id:
+                continue
+            self._queue_background_download(
+                ("OQMD", entry.entry_id),
+                lambda entry=entry: self._download_oqmd_entry_to_cache(entry, target_dir),
+            )
+
+    def _download_oqmd_entry_to_cache(self, entry, target_dir) -> None:
+        cif_path = self.oqmd.download_cif(entry.entry_id, target_dir, url_hint=entry.url_hint, formula_hint=entry.formula)
+        self.local_phase_cache.index_cif(cif_path, source="OQMD", entry_id=entry.entry_id)
+
+    def _queue_background_download(
+        self,
+        key: tuple[str, str],
+        task: Callable[[], object],
+        priority: int = 100,
+        allow_duplicate: bool = False,
+        completion: threading.Event | None = None,
+        result_box: dict | None = None,
+    ) -> None:
+        if self.local_phase_cache.cif_path(key[0], key[1]) is not None:
+            if completion is not None:
+                result_box = result_box if result_box is not None else {}
+                result_box["result"] = self.local_phase_cache.cif_path(key[0], key[1])
+                completion.set()
+            return
         with self._download_lock:
-            if key in self._queued_downloads:
-                return
-            if self.local_phase_cache.cif_path(key[0], key[1]) is not None:
-                self._queued_downloads.add(key)
+            if key in self._queued_downloads and not allow_duplicate:
                 return
             self._queued_downloads.add(key)
-        self._download_executor.submit(self._run_background_download, key, task)
+        self._download_queue.put((priority, next(self._download_counter), key, task, completion, result_box))
 
-    def _run_background_download(self, key: tuple[str, str], task: Callable[[], object]) -> None:
-        try:
-            task()
-        except Exception:
-            with self._download_lock:
-                self._queued_downloads.discard(key)
+    def download_with_priority(self, key: tuple[str, str], task: Callable[[], object]) -> object:
+        completion = threading.Event()
+        result_box: dict = {}
+        self._queue_background_download(
+            key,
+            task,
+            priority=0,
+            allow_duplicate=True,
+            completion=completion,
+            result_box=result_box,
+        )
+        completion.wait()
+        if "error" in result_box:
+            raise result_box["error"]
+        return result_box.get("result")
+
+    def _run_download_queue(self) -> None:
+        while True:
+            priority, sequence, key, task, completion, result_box = self._download_queue.get()
+            try:
+                if self._download_shutdown:
+                    return
+                cached_path = self.local_phase_cache.cif_path(key[0], key[1])
+                if cached_path is not None:
+                    result = cached_path
+                else:
+                    result = task()
+                if result_box is not None:
+                    result_box["result"] = result
+            except Exception as exc:
+                if result_box is not None:
+                    result_box["error"] = exc
+            finally:
+                with self._download_lock:
+                    self._queued_downloads.discard(key)
+                if completion is not None:
+                    completion.set()
+                self._download_queue.task_done()
 
     def shutdown_background_downloads(self) -> None:
-        self._download_executor.shutdown(wait=False, cancel_futures=True)
+        self._download_shutdown = True
+        self._download_queue.put((999999, next(self._download_counter), ("", ""), lambda: None, None, None))
 
     def download_ccdc_doi_to_cache(self, doi: str):
         target_dir = self.local_phase_cache.root / "ccdc_cif"
@@ -350,6 +486,20 @@ class CandidateSearchService:
                 entry.name or self.display_formula(entry.formula),
                 "",
                 " ".join(part for part in [entry.spacegroup, entry.energy_above_hull] if part),
+            ]
+            for entry in entries
+        ]
+
+    def computational_rows(self, entries) -> list[list[str]]:
+        return [
+            [
+                entry.source,
+                entry.entry_id,
+                self.display_formula(entry.formula),
+                entry.name or self.display_formula(entry.formula),
+                "",
+                entry.note,
+                entry.url_hint or entry.note,
             ]
             for entry in entries
         ]

@@ -1,6 +1,6 @@
 [project]
 name = "xrd-analysis-toolkit"
-version = "1.0.1"
+version = "1.0.2"
 description = "Cross-platform XRD phase finder for powder diffraction search-match workflows."
 requires-python = ">=3.11"
 dependencies = [
@@ -36,3 +36,4 @@ package-dir = {"" = "XRD_Finder"}
 
 [tool.setuptools.packages.find]
 where = ["XRD_Finder"]
+

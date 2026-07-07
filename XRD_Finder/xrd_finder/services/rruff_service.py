@@ -41,7 +41,7 @@ class RruffService:
         data_size = sum(path.stat().st_size for path in self.powder_dir.rglob("*") if path.is_file()) if self.powder_dir.exists() else 0
         return [
             "RRUFF powder",
-            "yes" if count else "not indexed",
+            "Ready" if count else "Not indexed",
             f"{count} reference patterns",
             str(count),
             f"{(archive_size + data_size) / (1024 * 1024):.1f}",

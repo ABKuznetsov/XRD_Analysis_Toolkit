@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QWidget
@@ -42,15 +42,15 @@ class FinderActionBar(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        smooth_button = QPushButton("Smooth")
-        smooth_button.setToolTip("Smooth observed XRD curve")
-        smooth_button.setStyleSheet(_action_button_style("#2367a5", "#5a9bd8"))
-        smooth_button.clicked.connect(self.smoothRequested)
+        self.smooth_button = QPushButton("Smooth")
+        self.smooth_button.setToolTip("Smooth observed XRD curve")
+        self.smooth_button.setStyleSheet(_action_button_style("#2367a5", "#5a9bd8"))
+        self.smooth_button.clicked.connect(self.smoothRequested)
 
-        background_button = QPushButton("Remove background")
-        background_button.setToolTip("Estimate and subtract background")
-        background_button.setStyleSheet(_action_button_style("#8a5a16", "#c68a2e"))
-        background_button.clicked.connect(self.subtractBackgroundRequested)
+        self.background_button = QPushButton("Remove background")
+        self.background_button.setToolTip("Estimate and subtract background")
+        self.background_button.setStyleSheet(_action_button_style("#8a5a16", "#c68a2e"))
+        self.background_button.clicked.connect(self.subtractBackgroundRequested)
 
         reset_data_button = QPushButton("Reset data")
         reset_data_button.setToolTip("Restore the original observed pattern")
@@ -82,8 +82,8 @@ class FinderActionBar(QWidget):
         self.pattern_offset_slider.valueChanged.connect(self._set_offset_value)
         self.pattern_offset_slider.valueChanged.connect(self.patternOffsetPercentChanged)
 
-        layout.addWidget(smooth_button)
-        layout.addWidget(background_button)
+        layout.addWidget(self.smooth_button)
+        layout.addWidget(self.background_button)
         layout.addWidget(reset_data_button)
         layout.addWidget(QLabel("Show"))
         layout.addWidget(self.pattern_display_mode)
@@ -102,3 +102,4 @@ class FinderActionBar(QWidget):
 
     def _set_offset_value(self, value: int) -> None:
         self.pattern_offset_value.setText(f"{value}%")
+

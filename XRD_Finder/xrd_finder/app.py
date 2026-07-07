@@ -14,14 +14,14 @@ from xrd_finder.ui.main_window import MainWindow
 
 def main() -> int:
     app = QApplication(sys.argv)
-    app.setApplicationName("XRD Analysis Toolkit")
+    app.setApplicationName("XRD Phase Finder")
     app.setOrganizationName("Sci")
     icon_path = Path(__file__).resolve().parents[1] / "icon.png"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
     project_service = ProjectService()
-    project = Project(name="XRD Finder Project")
+    project = Project(name="XRD Phase Finder Project")
 
     window = MainWindow(project_service=project_service)
     if icon_path.exists():

@@ -25,3 +25,7 @@ build/
 # Local editor / OS metadata
 .idea/
 .vscode/
+installer/output/
+*.exe
+installer/
+

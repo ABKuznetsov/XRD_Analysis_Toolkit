@@ -1,1 +1,1 @@
-"""PySide6 user interface for XRD Finder."""
+"""PySide6 user interface for XRD Phase Finder."""

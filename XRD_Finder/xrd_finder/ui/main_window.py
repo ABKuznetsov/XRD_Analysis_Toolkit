@@ -27,7 +27,7 @@ class MainWindow(QMainWindow):
         self.project_file_path: Path | None = None
         self.analysis_windows: list[object] = []
 
-        self.setWindowTitle("XRD Analysis Toolkit")
+        self.setWindowTitle("XRD Phase Finder")
 
         self.project_tree = ProjectTree()
         self.context_viewer = ContextViewer()
@@ -55,7 +55,7 @@ class MainWindow(QMainWindow):
         self.context_viewer.show_project_overview(project)
         self.right_panel.set_project(project)
         self.right_panel.set_notes(project.notes)
-        self.setWindowTitle(f"XRD Analysis Toolkit - {project.name}")
+        self.setWindowTitle(f"XRD Phase Finder - {project.name}")
         self._apply_pattern_display()
 
     def _build_menu(self) -> None:

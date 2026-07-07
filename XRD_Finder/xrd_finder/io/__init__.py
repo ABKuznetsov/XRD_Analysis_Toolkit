@@ -1,1 +1,1 @@
-"""Input/output adapters for XRD Finder."""
+"""Input/output adapters for XRD Phase Finder."""

@@ -17,6 +17,10 @@ class XrdViewBox(pg.ViewBox):
         self.scaleBy(x=factor, y=1.0, center=center)
         event.accept()
 
+    def mouseDoubleClickEvent(self, event) -> None:
+        self.autoRange(padding=0.02)
+        event.accept()
+
 
 def create_xrd_plot_widget() -> pg.PlotWidget:
     plot = pg.PlotWidget(viewBox=XrdViewBox())

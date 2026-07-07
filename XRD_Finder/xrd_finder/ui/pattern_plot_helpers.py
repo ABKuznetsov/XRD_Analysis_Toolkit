@@ -60,13 +60,16 @@ def scale_profile_to_reference(y, reference_max: float) -> np.ndarray:
     return y / max_y * max(reference_max, 1.0)
 
 
-def estimate_background(x, y, degree: int = 10) -> np.ndarray:
+def estimate_background(x, y, degree: int = 10, method: str = "auto") -> np.ndarray:
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     if len(y) < 15:
         return np.full_like(y, float(np.nanpercentile(y, 5)))
     try:
-        background = _local_envelope_background(x, y)
+        if method == "polynomial":
+            background = _chebyshev_background(x, y, degree=degree)
+        else:
+            background = _local_envelope_background(x, y)
     except Exception:
         try:
             background = _chebyshev_background(x, y, degree=degree)

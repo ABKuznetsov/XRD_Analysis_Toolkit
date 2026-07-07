@@ -88,27 +88,27 @@ The Databases tab controls which sources participate in search and provides expl
 
 ```text
 Load experimental XRD
-        │
-        ▼
+        ???
+        ???
 Peak detection
-        │
-        ▼
+        ???
+        ???
 Search candidate phases
 (COD / local CIF / RRUFF / PDF-2 / CCDC / Materials Project)
-        │
-        ▼
+        ???
+        ???
 Load crystal structures (CIF)
-        │
-        ▼
+        ???
+        ???
 Calculate theoretical diffraction patterns
-        │
-        ▼
+        ???
+        ???
 Compare experimental and calculated profiles
-        │
-        ▼
+        ???
+        ???
 Assign diffraction peaks
-        │
-        ▼
+        ???
+        ???
 Identify unexplained peaks
 ```
 
@@ -146,7 +146,7 @@ The `?` button in the application opens a compact in-app helper with the same co
 Python **3.11** or newer.
 
 The setup scripts create one shared virtual environment named `.venv` in the
-repository root. XRD Finder launch scripts use this shared Toolkit environment.
+repository root. XRD Phase Finder launch scripts use this shared Toolkit environment.
 
 Download Python from the official website:
 
@@ -357,11 +357,11 @@ XRD_Analysis_Toolkit/
 
     XRD_Finder/
         xrd_finder/
-            XRD Finder application source code
+            XRD Phase Finder application source code
         docs/screenshots/
             Screenshots used by the README
         requirements.txt
-            Required Python packages for XRD Finder
+            Required Python packages for XRD Phase Finder
         requirements-optional.txt
             Optional online database support
         run_finder.bat
@@ -376,7 +376,7 @@ XRD_Analysis_Toolkit/
 
 The root `XRD_Analysis_Toolkit` layout keeps the shared environment and project documentation separate from the `XRD_Finder` application folder. This is intentional: it keeps the repository ready for additional XRD-related modules later without changing the Finder app structure.
 
-Downloaded databases, user libraries, temporary files and local caches for XRD Finder are stored under `XRD_Finder/data/` by default. This folder is intentionally excluded from Git, so large database files and local working data stay with the Finder app without being committed. Set `XRD_FINDER_DATA_DIR` to use a custom location.
+Downloaded databases, user libraries, temporary files and local caches for XRD Phase Finder are stored under `XRD_Finder/data/` by default. This folder is intentionally excluded from Git, so large database files and local working data stay with the Finder app without being committed. Set `XRD_FINDER_DATA_DIR` to use a custom location.
 
 ---
 
@@ -427,3 +427,4 @@ Institute geology and mineralogy SB RAS
 
 GitHub:
 https://github.com/ABKuznetsov
+

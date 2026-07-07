@@ -32,6 +32,8 @@ class DatabasePanelWidget(QWidget):
     refreshMatchPdf2Requested = Signal()
     clearMatchPdf2Requested = Signal()
     clearMaterialsProjectRequested = Signal()
+    clearAflowRequested = Signal()
+    clearOqmdRequested = Signal()
 
     def __init__(
         self,
@@ -107,7 +109,7 @@ class DatabasePanelWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
-        self.database_table = self._table(["Source", "State", "Details"], rows)
+        self.database_table = self._table(["Database", "Status", "Details"], rows)
         self.database_table.setMinimumHeight(220)
         self.database_table.setMaximumHeight(300)
         self.database_table.setWordWrap(True)
@@ -119,7 +121,7 @@ class DatabasePanelWidget(QWidget):
         self.database_table.setColumnWidth(2, 340)
         layout.addWidget(self.database_table)
 
-        layout.addWidget(self._section_title("Available databases"))
+        layout.addWidget(self._section_title("Databases used for search"))
         source_box = QWidget()
         source_layout = QGridLayout(source_box)
         source_layout.setContentsMargins(0, 0, 0, 0)
@@ -129,6 +131,8 @@ class DatabasePanelWidget(QWidget):
             ("COD online", "sources/cod_online", 1, 0),
             ("RRUFF", "sources/rruff", 1, 1),
             ("PDF-2", "sources/match_pdf2", 2, 0),
+            ("AFLOW", "sources/aflow", 2, 1),
+            ("OQMD", "sources/oqmd", 3, 0),
         ]:
             checkbox = QCheckBox(label)
             checkbox.setChecked(bool(source_states.get(key, False)))
@@ -201,6 +205,22 @@ class DatabasePanelWidget(QWidget):
         )
         layout.addWidget(
             self._management_row(
+                "AFLOW",
+                [
+                    ("Clear", self.clearAflowRequested),
+                ],
+            )
+        )
+        layout.addWidget(
+            self._management_row(
+                "OQMD",
+                [
+                    ("Clear", self.clearOqmdRequested),
+                ],
+            )
+        )
+        layout.addWidget(
+            self._management_row(
                 "Materials Project",
                 [
                     ("Update settings", self.saveMaterialsProjectRequested),
@@ -210,7 +230,7 @@ class DatabasePanelWidget(QWidget):
         )
 
         help_label = QLabel(
-            "Clear actions permanently remove local cached data for the selected database."
+            "Clear permanently deletes the selected local cache. This cannot be undone."
         )
         help_label.setWordWrap(True)
         layout.addWidget(help_label)

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMenuBar,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QSplitter,
     QSizePolicy,
@@ -38,7 +39,7 @@ from PySide6.QtWidgets import (
 )
 import numpy as np
 import pyqtgraph as pg
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, savgol_filter, savgol_filter
 from pathlib import Path
 
 from xrd_finder.core.pattern import Pattern
@@ -60,11 +61,13 @@ from xrd_finder.services.candidate_search_service import (
 )
 from xrd_finder.services.ccdc_service import CcdcService
 from xrd_finder.services.cod_online_service import CodOnlineService, formula_elements
+from xrd_finder.services.computational_database_service import AflowService, OqmdService
 from xrd_finder.services.local_phase_cache import LocalPhaseCache
 from xrd_finder.services.network import open_url
 from xrd_finder.services.match_pdf2_service import MatchPdf2Service
 from xrd_finder.services.materials_project_service import MaterialsProjectService
 from xrd_finder.services.rruff_service import RRUFF_POWDER_XY_PROCESSED_URL, RruffService
+from xrd_finder.ui.preprocessing_dialogs import BackgroundRemovalPanel, SmoothPanel
 from xrd_finder.ui.pattern_plot_helpers import (
     add_hkl_labels,
     calculate_profile_for_structure,
@@ -78,6 +81,7 @@ from xrd_finder.ui.pattern_plot_helpers import (
     plot_profile,
     scale_profile_to_reference,
 )
+from xrd_finder.ui.background_task import BackgroundTaskHandle
 from xrd_finder.ui.candidate_tables import CandidateTableWidget, SelectedCandidatesTableWidget
 from xrd_finder.ui.compound_card import CompoundCardWidget
 from xrd_finder.ui.database_panel import DatabasePanelWidget
@@ -159,27 +163,37 @@ class AnalysisWindow(QDialog):
         sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         sidebar_layout.setSpacing(6)
+        import_row = QHBoxLayout()
+        import_row.setContentsMargins(0, 0, 0, 0)
+        import_row.setSpacing(6)
         import_button = QPushButton("Import XRD / CIF")
         import_button.setMinimumHeight(34)
         import_button.setToolTip("Import XRD patterns and CIF structures. You can also drag files into the window.")
         import_button.setStyleSheet(_command_button_style("#e9328f", "#ff65b3"))
         import_button.clicked.connect(self._import_scientific_files)
+        new_project_button = QPushButton("New project")
+        new_project_button.setMinimumHeight(34)
+        new_project_button.setToolTip("Clear the current XRD patterns, structures, candidates, and calculated overlays.")
+        new_project_button.setStyleSheet(_command_button_style("#5f6368", "#8a8d91"))
+        new_project_button.clicked.connect(self._new_project)
+        import_row.addWidget(import_button, 2)
+        import_row.addWidget(new_project_button, 1)
         order_row = QHBoxLayout()
         order_row.setContentsMargins(0, 0, 0, 0)
         order_row.setSpacing(4)
         order_row.addWidget(QLabel("Order"))
         move_up_button = QToolButton()
-        move_up_button.setText("↑")
+        move_up_button.setText("Up")
         move_up_button.setToolTip("Move selected XRD or CIF up")
         move_up_button.clicked.connect(lambda: self._move_current_tree_object(-1))
         move_down_button = QToolButton()
-        move_down_button.setText("↓")
+        move_down_button.setText("Down")
         move_down_button.setToolTip("Move selected XRD or CIF down")
         move_down_button.clicked.connect(lambda: self._move_current_tree_object(1))
         order_row.addWidget(move_up_button)
         order_row.addWidget(move_down_button)
         order_row.addStretch(1)
-        sidebar_layout.addWidget(import_button)
+        sidebar_layout.addLayout(import_row)
         sidebar_layout.addLayout(order_row)
         sidebar_layout.addWidget(self.tree, 1)
 
@@ -236,6 +250,31 @@ class AnalysisWindow(QDialog):
             )
         )
 
+    def _new_project(self) -> None:
+        if self.project.patterns or self.project.phases or self.project.structures:
+            response = QMessageBox.warning(
+                self,
+                "New project",
+                "Clear all imported XRD patterns, CIF structures, candidates, and calculated overlays?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if response != QMessageBox.StandardButton.Yes:
+                return
+        self.project.patterns.clear()
+        self.project.phases.clear()
+        self.project.structures.clear()
+        self.project.refinements.clear()
+        self.project.analyses.clear()
+        self.project.series.clear()
+        self.project.touch()
+        self.tree.set_project(self.project)
+        self._after_new_project()
+        self.project_changed.emit()
+
+    def _after_new_project(self) -> None:
+        self._on_project_tree_selection_changed()
+
     def _import_scientific_files(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
             self,
@@ -262,6 +301,7 @@ class AnalysisWindow(QDialog):
             try:
                 if suffix == ".cif":
                     phase, structure = create_phase_from_cif(path)
+                    self._after_cif_import(path, phase, structure)
                     self.project.phases.append(phase)
                     self.project.structures.append(structure)
                 else:
@@ -344,6 +384,9 @@ class AnalysisWindow(QDialog):
         if directory.exists():
             QSettings("Xrdfinder", "Standalone").setValue("files/last_directory", str(directory))
 
+    def _after_cif_import(self, _path: Path, _phase, _structure) -> None:
+        pass
+
     def _on_project_tree_selection_changed(self) -> None:
         pass
 
@@ -400,6 +443,8 @@ class PhaseFinderWindow(AnalysisWindow):
         self.materials_project = MaterialsProjectService(
             str(self.settings.value("materials_project/api_key", "", type=str) or "")
         )
+        self.aflow = AflowService()
+        self.oqmd = OqmdService()
         self.calculated_pattern_service = CalculatedPatternService()
         self.finder_service = FinderService(self.calculated_pattern_service)
         self.candidate_search_service = CandidateSearchService(
@@ -409,7 +454,10 @@ class PhaseFinderWindow(AnalysisWindow):
             self.rruff,
             self.match_pdf2,
             self.materials_project,
+            self.aflow,
+            self.oqmd,
         )
+        self._background_tasks: set[BackgroundTaskHandle] = set()
         self._start_match_pdf2_preload()
         self.finder_action_bar: FinderActionBar | None = None
         self.search_input: QLineEdit | None = None
@@ -530,9 +578,130 @@ class PhaseFinderWindow(AnalysisWindow):
         self.right_tabs.setCornerWidget(help_button, Qt.Corner.TopRightCorner)
         self._apply_default_phase_filter()
 
+    def _after_new_project(self) -> None:
+        self.preprocessed_observed_data = None
+        self.preprocessing_background_removed = False
+        self._clear_probability_caches()
+        self.match_candidates.clear()
+        self.match_structures.clear()
+        self.match_scales.clear()
+        self.match_quantities.clear()
+        self.match_iic.clear()
+        self.match_zero_shifts.clear()
+        self.match_cell_scales.clear()
+        self.match_alignment_scores.clear()
+        self.active_overlay_entry_id = None
+        self.observed_pattern_plot_context.clear()
+        self.match_plot_view_initialized = False
+        for layer, items in list(self.plot_layers.items()):
+            for item in items:
+                try:
+                    self.match_plot.removeItem(item)
+                except Exception:
+                    pass
+            self.plot_layers[layer] = []
+        if self.legend_item is not None:
+            self.legend_item = ensure_right_legend(self.match_plot, clear=True)
+        self.match_plot.setTitle("Phase Finder: pattern and candidate phase markers", color="#111111", size="13pt")
+        self.match_plot.setXRange(0, 1, padding=0.02)
+        self.match_plot.setYRange(0, 1, padding=0.02)
+        self._reset_selected_elements()
+        self._set_candidate_rows([["", "", "", "No phases yet", "", ""]])
+        self._update_match_table()
+        if self.compound_card is not None:
+            self.compound_card.set_candidate(None)
+
     def closeEvent(self, event) -> None:
         self.candidate_search_service.shutdown_background_downloads()
         super().closeEvent(event)
+
+    def _run_background_task(self, title: str, label: str, task, on_success, on_error=None) -> None:
+        dialog = QProgressDialog(label, "", 0, 0, self)
+        dialog.setWindowTitle(title)
+        dialog.setCancelButton(None)
+        dialog.setMinimumDuration(0)
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.show()
+
+        handle = BackgroundTaskHandle(task, self)
+        self._background_tasks.add(handle)
+
+        def cleanup() -> None:
+            dialog.close()
+            self._background_tasks.discard(handle)
+
+        def finish(result) -> None:
+            cleanup()
+            on_success(result)
+
+        def fail(message: str, details: str) -> None:
+            cleanup()
+            if on_error is not None:
+                on_error(message, details)
+            else:
+                QMessageBox.warning(self, title, message or details)
+
+        handle.finished.connect(finish)
+        handle.failed.connect(fail)
+        handle.start()
+
+    def _close_preprocessing_panel(self) -> None:
+        panel = getattr(self, "_preprocessing_panel", None)
+        if panel is not None:
+            panel.hide()
+            panel.deleteLater()
+        self._preprocessing_panel = None
+        self._preprocessing_panel_key = None
+
+    def _show_preprocessing_panel(
+        self,
+        key: str,
+        button: QWidget,
+        panel: QWidget,
+        preview_callback,
+        cancel_callback,
+    ) -> None:
+        if getattr(self, "_preprocessing_panel", None) is not None:
+            if getattr(self, "_preprocessing_panel_key", None) == key:
+                self._close_preprocessing_panel()
+                return
+            self._close_preprocessing_panel()
+
+        panel.setParent(self)
+        panel.setWindowFlags(Qt.WindowType.Widget)
+        panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        panel.setAutoFillBackground(True)
+        panel.setStyleSheet(
+            "QWidget#preprocessingPanel { background-color: #202124; border: 1px solid #4a5057; border-radius: 6px; }"
+            "QLabel { color: #f1f3f4; }"
+            "QComboBox { background: #2b2f34; color: #f1f3f4; border: 1px solid #4a5057; padding: 3px; }"
+            "QPushButton { background: #33383e; color: #f1f3f4; border: 1px solid #555d66; border-radius: 4px; padding: 5px 12px; }"
+            "QPushButton:hover { border-color: #4aa3df; }"
+            "QSlider::groove:horizontal { height: 5px; background: #4a5057; border-radius: 2px; }"
+            "QSlider::handle:horizontal { width: 15px; margin: -5px 0; border-radius: 7px; background: #4aa3df; }"
+            "QSlider::tick:horizontal { background: #8c96a3; width: 1px; }"
+        )
+        panel.adjustSize()
+        position = button.mapTo(self, button.rect().bottomLeft())
+        max_x = max(0, self.width() - panel.width() - 8)
+        max_y = max(0, self.height() - panel.height() - 8)
+        panel.move(min(max(position.x(), 8), max_x), min(max(position.y() + 4, 8), max_y))
+        panel.raise_()
+
+        def accept_panel() -> None:
+            preview_callback()
+            self._close_preprocessing_panel()
+
+        def cancel_panel() -> None:
+            cancel_callback()
+            self._close_preprocessing_panel()
+
+        panel.previewRequested.connect(preview_callback)
+        panel.applyRequested.connect(accept_panel)
+        panel.cancelRequested.connect(cancel_panel)
+        self._preprocessing_panel = panel
+        self._preprocessing_panel_key = key
+        panel.show()
 
     def _smooth_active_pattern_plot(self) -> None:
         data = self._active_observed_data()
@@ -540,9 +709,78 @@ class PhaseFinderWindow(AnalysisWindow):
             return
         x = np.asarray(data[:, 0], dtype=float)
         y = np.asarray(data[:, 1], dtype=float)
-        window = max(5, min(31, len(y) // 80 * 2 + 1))
-        smooth_y = self.finder_service._smooth_y(y, window)
-        self._set_preprocessed_observed_curve(x, smooth_y, "Observed smoothed", self.preprocessing_background_removed)
+        original_preprocessed = None if self.preprocessed_observed_data is None else np.array(self.preprocessed_observed_data, copy=True)
+        original_background_removed = self.preprocessing_background_removed
+        auto_window = max(5, min(21, len(y) // 180 * 2 + 1))
+        panel = SmoothPanel(auto_window, self)
+
+        def preview_smoothing() -> None:
+            window = panel.window_size()
+            method = panel.method()
+            smooth_y = np.asarray(y, dtype=float)
+            for _ in range(panel.passes()):
+                smooth_y = self._smooth_observed_curve(smooth_y, method, window, panel.polyorder(), panel.gaussian_sigma())
+            label_method = {
+                "savgol": "Savitzky-Golay",
+                "moving": "moving average",
+                "gaussian": "Gaussian",
+            }.get(method, method)
+            pass_text = "pass" if panel.passes() == 1 else "passes"
+            self._set_preprocessed_observed_curve(
+                x,
+                smooth_y,
+                f"Observed smoothed ({label_method}, window {window}, {panel.passes()} {pass_text})",
+                self.preprocessing_background_removed,
+            )
+
+        def cancel_smoothing() -> None:
+            self.preprocessed_observed_data = original_preprocessed
+            self.preprocessing_background_removed = original_background_removed
+            self._clear_probability_caches()
+            self._refresh_observed_pattern_plot()
+            self._rerun_active_calculation()
+
+        self._show_preprocessing_panel(
+            "smooth",
+            self.finder_action_bar.smooth_button,
+            panel,
+            preview_smoothing,
+            cancel_smoothing,
+        )
+
+    def _smooth_observed_curve(
+        self,
+        y: np.ndarray,
+        method: str,
+        window: int,
+        polyorder: int = 2,
+        gaussian_sigma: float = 0.2,
+    ) -> np.ndarray:
+        if window <= 2 or len(y) < 5:
+            return np.asarray(y, dtype=float)
+        window = min(int(window), len(y) - 1 if len(y) % 2 == 0 else len(y))
+        if window % 2 == 0:
+            window -= 1
+        if window < 3:
+            return np.asarray(y, dtype=float)
+        values = np.asarray(y, dtype=float)
+        if method == "moving":
+            kernel = np.ones(window, dtype=float) / float(window)
+            return np.convolve(values, kernel, mode="same")
+        if method == "gaussian":
+            sigma = max(0.1, float(gaussian_sigma))
+            radius = max(1, int(round(sigma * 4)))
+            grid = np.arange(-radius, radius + 1, dtype=float)
+            kernel = np.exp(-0.5 * (grid / sigma) ** 2)
+            kernel /= float(np.sum(kernel))
+            padded = np.pad(values, (radius, radius), mode="edge")
+            return np.convolve(padded, kernel, mode="same")[radius:-radius]
+        order = max(1, min(int(polyorder), window - 2))
+        try:
+            return np.asarray(savgol_filter(values, window_length=window, polyorder=order, mode="interp"), dtype=float)
+        except Exception:
+            kernel = np.ones(window, dtype=float) / float(window)
+            return np.convolve(values, kernel, mode="same")
 
     def _subtract_active_background_plot(self) -> None:
         data = self._active_observed_data()
@@ -550,9 +788,35 @@ class PhaseFinderWindow(AnalysisWindow):
             return
         x = np.asarray(data[:, 0], dtype=float)
         y = np.asarray(data[:, 1], dtype=float)
-        background = self._estimate_background(x, y)
-        corrected = np.clip(y - background, 0.0, None)
-        self._set_preprocessed_observed_curve(x, corrected, "Observed - background", True)
+        original_preprocessed = None if self.preprocessed_observed_data is None else np.array(self.preprocessed_observed_data, copy=True)
+        original_background_removed = self.preprocessing_background_removed
+        panel = BackgroundRemovalPanel(parent=self)
+
+        def preview_background_removal() -> None:
+            method = panel.method()
+            if method == "constant":
+                background = np.full_like(y, float(np.nanpercentile(y, panel.floor_percentile())))
+                label = f"Observed - background constant floor {panel.floor_percentile()}%"
+            else:
+                background = self._estimate_background(x, y, degree=panel.degree(), method=method)
+                label = "Observed - background envelope" if method == "auto" else f"Observed - background polynomial {panel.degree()}"
+            corrected = np.clip(y - background, 0.0, None)
+            self._set_preprocessed_observed_curve(x, corrected, label, True)
+
+        def cancel_background_removal() -> None:
+            self.preprocessed_observed_data = original_preprocessed
+            self.preprocessing_background_removed = original_background_removed
+            self._clear_probability_caches()
+            self._refresh_observed_pattern_plot()
+            self._rerun_active_calculation()
+
+        self._show_preprocessing_panel(
+            "background",
+            self.finder_action_bar.background_button,
+            panel,
+            preview_background_removal,
+            cancel_background_removal,
+        )
 
     def _reset_observed_preprocessing(self) -> None:
         self.preprocessed_observed_data = None
@@ -589,11 +853,72 @@ class PhaseFinderWindow(AnalysisWindow):
             active_override=(pattern.id if pattern is not None else "", np.column_stack([x, y]), name)
         )
 
+
+    def _after_cif_import(self, path: Path, phase, structure) -> None:
+        try:
+            entry = self.local_phase_cache.add_user_cif(path)
+        except Exception:
+            return
+        if entry.cif_path:
+            phase.source_path = entry.cif_path
+            structure.source_path = entry.cif_path
+
+    def _project_phase_user_entry(self, phase) -> str:
+        if not phase.source_path:
+            return phase.id
+        path = Path(phase.source_path)
+        entry_id = path.stem
+        cached_path = self.local_phase_cache.cif_path("USER", entry_id)
+        if cached_path is not None:
+            return entry_id
+        try:
+            entry = self.local_phase_cache.add_user_cif(path)
+        except Exception:
+            return phase.id
+        if entry.cif_path:
+            phase.source_path = entry.cif_path
+            structure = self._structure_for_phase(phase.id)
+            if structure is not None:
+                structure.source_path = entry.cif_path
+        return entry.entry_id or phase.id
+
+    def _structure_for_phase(self, phase_id: str):
+        phase = next((item for item in self.project.phases if item.id == phase_id), None)
+        if phase is None:
+            return None
+        if phase.structure_id:
+            structure = next((item for item in self.project.structures if item.id == phase.structure_id), None)
+            if structure is not None:
+                return structure
+        return next((item for item in self.project.structures if item.phase_id == phase_id), None)
+
+    def _current_tree_phase_structure(self):
+        current = self.tree.current_object()
+        if current is None:
+            return None
+        object_type, object_id = current
+        if object_type != "phase":
+            return None
+        structure = self._structure_for_phase(object_id)
+        if structure is not None:
+            return structure
+        phase = next((item for item in self.project.phases if item.id == object_id), None)
+        if phase is None or not phase.source_path:
+            return None
+        try:
+            _phase, structure = create_phase_from_cif(phase.source_path)
+            structure.name = phase.name or structure.name
+            structure.formula = phase.formula or structure.formula
+            structure.phase_id = phase.id
+            structure.id = phase.structure_id or structure.id
+            return structure
+        except Exception:
+            return None
     def _refresh_project_phase_candidates(self) -> None:
         if not hasattr(self, "candidate_table"):
             return
         rows = [
-            ["USER", phase.id, phase.formula, phase.name, "", "loaded structure"]
+            ["USER", self._project_phase_user_entry(phase), phase.formula, phase.name, "", "loaded structure"]
             for phase in self.project.phases
         ]
         if not rows:
@@ -607,7 +932,12 @@ class PhaseFinderWindow(AnalysisWindow):
         view_range = self._plot_view_range() if self.show_all_selected_patterns else None
         try:
             self._refresh_observed_pattern_plot()
-            if self.match_candidates:
+            tree_structure = self._current_tree_phase_structure()
+            if tree_structure is not None:
+                self.active_overlay_entry_id = None
+                self._clear_preview_overlay()
+                self._calculate_structure_overlay(tree_structure, preview=False)
+            elif self.match_candidates:
                 self._recalculate_match_profile()
             elif self.active_overlay_entry_id:
                 candidate = self._selected_candidate_row()
@@ -955,7 +1285,7 @@ class PhaseFinderWindow(AnalysisWindow):
     def _show_quick_help(self) -> None:
         QMessageBox.information(
             self,
-            "XRD Finder Help",
+            "XRD Phase Finder Help",
             (
                 "Quick help\n\n"
                 "Project tree\n"
@@ -1011,7 +1341,7 @@ class PhaseFinderWindow(AnalysisWindow):
         if self._candidate_source(candidate) == "PDF2" and candidate.get("Entry"):
             self._enrich_candidate_with_pdf2_info(candidate)
             return
-        if self._candidate_source(candidate) not in {"COD", "USER", "MP", "CCDC"} or not candidate.get("Entry"):
+        if self._candidate_source(candidate) not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"} or not candidate.get("Entry"):
             return
         try:
             cif_path = self._candidate_cif_path(candidate)
@@ -1208,17 +1538,30 @@ class PhaseFinderWindow(AnalysisWindow):
         self._recalculate_match_profile()
 
     def _show_candidate_context_menu(self, global_point) -> None:
+        candidate = self._selected_candidate_row()
+        has_structure = self._candidate_has_structure(candidate)
         menu = QMenu(self)
         menu.addAction("Add to working set", self._add_selected_candidate_to_match_list)
-        menu.addAction("Calculate pattern overlay", self._calculate_selected_cif_overlay)
-        menu.addAction("Export candidate CIF...", self._export_candidate_table_cif)
+        calculate_action = menu.addAction("Calculate pattern overlay", self._calculate_selected_cif_overlay)
+        export_action = menu.addAction("Export candidate CIF...", self._export_candidate_table_cif)
+        for action in (calculate_action, export_action):
+            action.setEnabled(has_structure)
+            if not has_structure:
+                action.setToolTip("This candidate is a reference pattern; no CIF structure is available.")
         menu.exec(global_point)
 
     def _show_match_context_menu(self, global_point) -> None:
+        row = self.match_table.currentRow()
+        candidate = self.match_candidates[row] if 0 <= row < len(self.match_candidates) else None
+        has_structure = self._candidate_has_structure(candidate)
         menu = QMenu(self)
-        menu.addAction("Recalculate selected profile", self._recalculate_match_profile)
+        recalculate_action = menu.addAction("Recalculate selected profile", self._recalculate_match_profile)
         menu.addAction("Change color...", self._change_selected_match_color)
-        menu.addAction("Export phase CIF...", self._export_match_table_cif)
+        export_action = menu.addAction("Export phase CIF...", self._export_match_table_cif)
+        for action in (recalculate_action, export_action):
+            action.setEnabled(has_structure)
+            if not has_structure:
+                action.setToolTip("This selected item is a reference pattern; no CIF structure is available.")
         menu.addAction("Remove selected phase", self._remove_selected_match_candidate)
         menu.addAction("Clear working set", self._clear_match_list)
         menu.exec(global_point)
@@ -1437,7 +1780,7 @@ class PhaseFinderWindow(AnalysisWindow):
     def _candidate_rows(self) -> list[dict[str, str]]:
         rows = []
         for candidate in self.candidate_table.all_row_values():
-            if candidate.get("Entry") and self._candidate_source(candidate) in {"COD", "USER", "MP", "CCDC"}:
+            if candidate.get("Entry") and self._candidate_source(candidate) in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"}:
                 rows.append(candidate)
         return rows
 
@@ -1449,9 +1792,13 @@ class PhaseFinderWindow(AnalysisWindow):
         if self._candidate_source(candidate) == "PDF2" and candidate.get("Entry"):
             self._preview_pdf2_reference(candidate, show_errors=False)
             return
-        if self._candidate_source(candidate) not in {"COD", "USER", "MP", "CCDC"} or not candidate.get("Entry"):
+        if self._candidate_source(candidate) not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"} or not candidate.get("Entry"):
             return
-        self._calculate_candidate_overlay(candidate, show_errors=False)
+        self._with_candidate_cif_ready(
+            candidate,
+            "Preview structure",
+            lambda ready_candidate: self._calculate_candidate_overlay(ready_candidate, show_errors=False),
+        )
 
     def _candidate_source(self, candidate: dict[str, str]) -> str:
         return candidate.get("Source", "") or candidate.get("Qual.", "")
@@ -1466,6 +1813,10 @@ class PhaseFinderWindow(AnalysisWindow):
             cached_path = self.local_phase_cache.cif_path(source, entry_id)
             if cached_path is not None:
                 return cached_path
+            if source == "USER":
+                project_path = self._candidate_local_cif_path(candidate)
+                if project_path is not None:
+                    return project_path
             raise ValueError("CIF is not in the user phase library. Save or import it first.")
         if source == "COD" and entry_id:
             cached_path = self.local_phase_cache.cif_path("COD", entry_id)
@@ -1481,7 +1832,46 @@ class PhaseFinderWindow(AnalysisWindow):
             cif_path = self.materials_project.download_cif(entry_id, target_dir)
             self.local_phase_cache.index_cif(cif_path, source="MP", entry_id=entry_id)
             return cif_path
-        raise ValueError("Select a saved COD, CCDC, USER, or Materials Project row with an entry id.")
+        if source == "AFLOW" and entry_id:
+            cached_path = self.local_phase_cache.cif_path("AFLOW", entry_id)
+            if cached_path is not None:
+                return cached_path
+            target_dir = self.local_phase_cache.root / "aflow_cif"
+            cif_path = self.aflow.download_cif(entry_id, target_dir, url_hint=candidate.get("Notes", ""))
+            self.local_phase_cache.index_cif(cif_path, source="AFLOW", entry_id=entry_id)
+            return cif_path
+        if source == "OQMD" and entry_id:
+            cached_path = self.local_phase_cache.cif_path("OQMD", entry_id)
+            if cached_path is not None:
+                return cached_path
+            target_dir = self.local_phase_cache.root / "oqmd_cif"
+            cif_path = self.oqmd.download_cif(entry_id, target_dir, url_hint=candidate.get("Notes", ""), formula_hint=candidate.get("Formula", ""))
+            self.local_phase_cache.index_cif(cif_path, source="OQMD", entry_id=entry_id)
+            return cif_path
+        raise ValueError("Select a saved COD, CCDC, USER, Materials Project, AFLOW, or OQMD row with an entry id.")
+
+    def _candidate_needs_remote_cif(self, candidate: dict[str, str]) -> bool:
+        source = self._candidate_source(candidate)
+        entry_id = candidate.get("Entry", "")
+        return bool(entry_id and source in {"COD", "MP", "AFLOW", "OQMD"} and self.local_phase_cache.cif_path(source, entry_id) is None)
+
+    def _with_candidate_cif_ready(self, candidate: dict[str, str], title: str, on_ready) -> None:
+        if not self._candidate_needs_remote_cif(candidate):
+            on_ready(candidate)
+            return
+        source = self._candidate_source(candidate)
+        entry_id = candidate.get("Entry", "")
+
+        self._run_background_task(
+            title,
+            f"Downloading {source} structure {entry_id}...",
+            lambda: self.candidate_search_service.download_with_priority(
+                (source, entry_id),
+                lambda: self._candidate_cif_path(candidate),
+            ),
+            lambda _path: (self._refresh_database_rows(), on_ready(candidate)),
+            lambda message, _details: QMessageBox.warning(self, f"{title} failed", message),
+        )
 
     def _candidate_local_cif_path(self, candidate: dict[str, str]) -> Path | None:
         source = self._candidate_source(candidate)
@@ -1489,13 +1879,21 @@ class PhaseFinderWindow(AnalysisWindow):
         if not entry_id:
             return None
         if source == "USER":
+            cached_path = self.local_phase_cache.cif_path("USER", entry_id)
+            if cached_path is not None:
+                return cached_path
             phase = next((item for item in self.project.phases if item.id == entry_id), None)
             if phase is not None and phase.source_path:
                 path = Path(phase.source_path)
                 if path.exists():
                     return path
-            return self.local_phase_cache.cif_path("USER", entry_id)
-        if source in {"COD", "CCDC", "MP"}:
+            for phase in self.project.phases:
+                if Path(phase.source_path or "").stem == entry_id:
+                    path = Path(phase.source_path)
+                    if path.exists():
+                        return path
+            return None
+        if source in {"COD", "CCDC", "MP", "AFLOW", "OQMD"}:
             return self.local_phase_cache.cif_path(source, entry_id)
         return None
 
@@ -1504,15 +1902,18 @@ class PhaseFinderWindow(AnalysisWindow):
         if candidate is None:
             QMessageBox.information(self, "Add CIF", "Select a structure source row first.")
             return
-        try:
-            phase, structure = self._add_candidate_to_project(candidate)
-            self.tree.set_project(self.project)
-            self.project_changed.emit()
-            if structure is not None:
-                self._calculate_structure_overlay(structure)
-            QMessageBox.information(self, "Add CIF", f"Added {phase.name} to project.")
-        except Exception as exc:
-            QMessageBox.warning(self, "Add CIF failed", str(exc))
+        def add_ready(ready_candidate) -> None:
+            try:
+                phase, structure = self._add_candidate_to_project(ready_candidate)
+                self.tree.set_project(self.project)
+                self.project_changed.emit()
+                if structure is not None:
+                    self._calculate_structure_overlay(structure)
+                QMessageBox.information(self, "Add CIF", f"Added {phase.name} to project.")
+            except Exception as exc:
+                QMessageBox.warning(self, "Add CIF failed", str(exc))
+
+        self._with_candidate_cif_ready(candidate, "Add CIF", add_ready)
 
     def _calculate_selected_cif_overlay(self) -> None:
         candidate = self._selected_candidate_row()
@@ -1525,7 +1926,11 @@ class PhaseFinderWindow(AnalysisWindow):
         if self._candidate_source(candidate) == "PDF2":
             self._preview_pdf2_reference(candidate, show_errors=True)
             return
-        self._calculate_candidate_overlay(candidate, show_errors=True)
+        self._with_candidate_cif_ready(
+            candidate,
+            "Calculate pattern",
+            lambda ready_candidate: self._calculate_candidate_overlay(ready_candidate, show_errors=True),
+        )
 
     def _download_selected_candidate_to_cache(self) -> None:
         candidate = self._selected_candidate_row()
@@ -1539,27 +1944,25 @@ class PhaseFinderWindow(AnalysisWindow):
         if source not in {"COD", "MP"} or not candidate.get("Entry"):
             QMessageBox.information(self, "Download CIF", "Only COD online or Materials Project rows can be saved to the user phase library.")
             return
-        try:
-            if source == "COD":
-                saved_id = candidate.get("Entry", "")
-                cached_path = self.local_phase_cache.cif_path("COD", saved_id)
-                if cached_path is not None:
-                    cif_path = cached_path
-                else:
-                    entry = self._candidate_to_cod_entry(candidate)
-                    cif_path = self.local_phase_cache.download_cod_entry(entry, self.cod_online)
-            else:
-                saved_id = candidate.get("Entry", "")
-                target_dir = self.local_phase_cache.root / "materials_project_cif"
-                cif_path = self.materials_project.download_cif(saved_id, target_dir)
-                self.local_phase_cache.index_cif(cif_path, source="MP", entry_id=saved_id)
-        except Exception as exc:
-            QMessageBox.warning(self, "Download CIF failed", str(exc))
-            return
-        row = self.candidate_table.currentRow()
-        if row >= 0:
-            self.candidate_table.setItem(row, 0, QTableWidgetItem(source))
-        QMessageBox.information(self, "Download CIF", f"Saved {saved_id}:\n{cif_path}")
+        saved_id = candidate.get("Entry", "")
+
+        def success(path) -> None:
+            row = self.candidate_table.currentRow()
+            if row >= 0:
+                self.candidate_table.setItem(row, 0, QTableWidgetItem(source))
+            self._refresh_database_rows()
+            QMessageBox.information(self, "Download CIF", f"Saved {saved_id}:\n{path}")
+
+        self._run_background_task(
+            "Download CIF",
+            f"Downloading {source} structure {saved_id}...",
+            lambda: self.candidate_search_service.download_with_priority(
+                (source, saved_id),
+                lambda: self._candidate_cif_path(candidate),
+            ),
+            success,
+            lambda message, _details: QMessageBox.warning(self, "Download CIF failed", message),
+        )
 
     def _candidate_to_cod_entry(self, candidate: dict[str, str]) -> object:
         from xrd_finder.services.cod_online_service import CodEntry
@@ -1574,6 +1977,11 @@ class PhaseFinderWindow(AnalysisWindow):
 
     def _candidate_key(self, candidate: dict[str, str]) -> str:
         return f"{self._candidate_source(candidate)}:{candidate.get('Entry', '')}"
+
+    def _candidate_has_structure(self, candidate: dict[str, str] | None) -> bool:
+        if not candidate:
+            return False
+        return self._candidate_source(candidate) in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"} and bool(candidate.get("Entry"))
 
     def _add_candidate_to_project(self, candidate: dict[str, str]):
         cif_path = self._candidate_cif_path(candidate)
@@ -1605,7 +2013,7 @@ class PhaseFinderWindow(AnalysisWindow):
             QMessageBox.information(
                 self,
                 "RRUFF reference",
-                "RRUFF entries are measured reference patterns. They can be previewed as overlays, but not used as calculated CIF phases.",
+                "RRUFF entries are measured reference patterns. They can be previewed as overlays, but cannot be used as calculated CIF phases.",
             )
             return
         if self._candidate_source(candidate) == "PDF2":
@@ -1613,13 +2021,17 @@ class PhaseFinderWindow(AnalysisWindow):
             QMessageBox.information(
                 self,
                 "PDF-2 reference",
-                "PDF-2 entries are reference cards. They can be previewed as peak overlays, but not used as calculated CIF phases.",
+                "PDF-2 entries are reference cards. They can be previewed as peak overlays, but cannot be used as calculated CIF phases.",
             )
             return
-        if self._candidate_source(candidate) not in {"COD", "USER", "MP", "CCDC"} or not candidate.get("Entry"):
+        if self._candidate_source(candidate) not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"} or not candidate.get("Entry"):
             QMessageBox.information(self, "Working set", "Only saved COD, CCDC, user, or Materials Project structures can be calculated from CIF for now.")
             return
-        self._add_candidate_to_match_list(candidate, show_errors=True, recalculate=True)
+        self._with_candidate_cif_ready(
+            candidate,
+            "Working set",
+            lambda ready_candidate: self._add_candidate_to_match_list(ready_candidate, show_errors=True, recalculate=True),
+        )
 
     def _add_candidate_to_match_list(
         self,
@@ -2356,7 +2768,7 @@ class PhaseFinderWindow(AnalysisWindow):
             "Formula": row[2] if len(row) > 2 else "",
             "Phase": row[3] if len(row) > 3 else "",
         }
-        if self._candidate_source(candidate) not in {"COD", "USER", "MP", "CCDC"}:
+        if self._candidate_source(candidate) not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"}:
             return 0.0
         cif_path = self._candidate_local_cif_path(candidate)
         if cif_path is None:
@@ -2439,8 +2851,8 @@ class PhaseFinderWindow(AnalysisWindow):
     def _shift_overlay_peaks(self, peaks, zero_shift: float):
         return [replace(peak, two_theta=float(peak.two_theta) + zero_shift) for peak in peaks]
 
-    def _estimate_background(self, x, y) -> np.ndarray:
-        return estimate_background(x, y)
+    def _estimate_background(self, x, y, degree: int = 10, method: str = "auto") -> np.ndarray:
+        return estimate_background(x, y, degree=degree, method=method)
 
     def _estimate_theoretical_iic(self, profile: np.ndarray) -> float:
         profile = np.asarray(profile, dtype=float)
@@ -2841,29 +3253,41 @@ class PhaseFinderWindow(AnalysisWindow):
             self._database_summary_row(self._user_phase_library_status_row()),
             [
                 "COD online",
-                "optional",
-                "download CIF to user library",
+                "Available",
+                "Download CIF files to the user library",
                 "crystallography.net/cod",
             ],
             [
                 "COD local/bulk",
-                "optional",
-                "index downloaded COD CIF folder/archive",
+                "Available",
+                "Index a downloaded COD CIF folder or ZIP archive",
                 str(self.local_phase_cache.root),
             ],
             self._database_summary_row(rruff_row),
             match_pdf2_row,
             [
                 "CCDC / CSD",
-                "yes" if ccdc_status.configured else "not configured",
+                "Ready" if ccdc_status.configured else "Not configured",
                 ccdc_status.label,
                 "CSD Python API / ccdc.cam.ac.uk",
+            ],
+            [
+                "AFLOW",
+                "Available",
+                self.aflow.status().label,
+                "aflow.org",
+            ],
+            [
+                "OQMD",
+                "Available",
+                self.oqmd.status().label,
+                "oqmd.org",
             ],
         ]
         rows.append(
             [
                 "Materials Project",
-                "yes" if mp_status.configured else "not configured",
+                "Ready" if mp_status.configured else "Not configured",
                 mp_status.label,
                 "user API key",
             ]
@@ -2876,6 +3300,8 @@ class PhaseFinderWindow(AnalysisWindow):
             "sources/match_pdf2": bool(
                 self.settings.value("sources/match_pdf2", self.match_pdf2.is_configured(), type=bool)
             ),
+            "sources/aflow": bool(self.settings.value("sources/aflow", False, type=bool)),
+            "sources/oqmd": bool(self.settings.value("sources/oqmd", False, type=bool)),
         }
         self.database_panel = DatabasePanelWidget(
             rows,
@@ -2898,6 +3324,8 @@ class PhaseFinderWindow(AnalysisWindow):
         self.database_panel.chooseMatchPdf2FolderRequested.connect(self._choose_match_pdf2_folder)
         self.database_panel.refreshMatchPdf2Requested.connect(self._refresh_match_pdf2_database)
         self.database_panel.clearMatchPdf2Requested.connect(self._clear_match_pdf2_database)
+        self.database_panel.clearAflowRequested.connect(self._clear_aflow_cache)
+        self.database_panel.clearOqmdRequested.connect(self._clear_oqmd_cache)
         self.database_panel.clearMaterialsProjectRequested.connect(self._clear_materials_project_cache)
         return self.database_panel
 
@@ -2958,7 +3386,7 @@ class PhaseFinderWindow(AnalysisWindow):
             "Materials Project",
             [
                 "Materials Project",
-                "yes" if status.configured else "not configured",
+                "Ready" if status.configured else "Not configured",
                 status.label,
                 "user API key",
             ],
@@ -3005,19 +3433,24 @@ class PhaseFinderWindow(AnalysisWindow):
         status = self.match_pdf2.status()
         return [
             "PDF-2",
-            "yes" if status.configured else "not configured",
+            "Ready" if status.configured else "Not configured",
             status.label,
             str(status.root),
         ]
 
     def _build_local_phase_cache_index(self) -> None:
-        try:
-            count = self.local_phase_cache.build_index()
-        except Exception as exc:
-            QMessageBox.warning(self, "Build local index failed", str(exc))
-            return
-        self._refresh_database_rows()
-        QMessageBox.information(self, "Build local index", f"Indexed {count} saved CIF files.")
+        def success(result) -> None:
+            count = int(result or 0)
+            self._refresh_database_rows()
+            QMessageBox.information(self, "Build local index", f"Indexed {count} saved CIF files.")
+
+        self._run_background_task(
+            "Build local index",
+            "Indexing saved CIF files...",
+            self.local_phase_cache.build_index,
+            success,
+            lambda message, _details: QMessageBox.warning(self, "Build local index failed", message),
+        )
 
     def _confirm_clear_database(self, title: str, database_name: str) -> bool:
         response = QMessageBox.warning(
@@ -3047,16 +3480,19 @@ class PhaseFinderWindow(AnalysisWindow):
         folder = QFileDialog.getExistingDirectory(self, "Select COD CIF folder", str(Path.home()))
         if not folder:
             return
-        self.setCursor(Qt.CursorShape.WaitCursor)
-        try:
-            count = self.local_phase_cache.index_cif_folder(folder, source="COD")
-        except Exception as exc:
-            QMessageBox.warning(self, "Index COD folder failed", str(exc))
-            return
-        finally:
-            self.unsetCursor()
-        self._refresh_database_rows()
-        QMessageBox.information(self, "Index COD folder", f"Indexed {count} COD CIF files.")
+
+        def success(result) -> None:
+            count = int(result or 0)
+            self._refresh_database_rows()
+            QMessageBox.information(self, "Index COD folder", f"Indexed {count} COD CIF files.")
+
+        self._run_background_task(
+            "Index COD folder",
+            "Indexing COD CIF folder...",
+            lambda: self.local_phase_cache.index_cif_folder(folder, source="COD"),
+            success,
+            lambda message, _details: QMessageBox.warning(self, "Index COD folder failed", message),
+        )
 
     def _index_cod_zip_archive(self) -> None:
         archive_path, _selected_filter = QFileDialog.getOpenFileName(
@@ -3067,17 +3503,21 @@ class PhaseFinderWindow(AnalysisWindow):
         )
         if not archive_path:
             return
+        archive = Path(archive_path)
         target_root = self.local_phase_cache.root / "cod_bulk_cif"
-        self.setCursor(Qt.CursorShape.WaitCursor)
-        try:
-            count = self._extract_and_index_cif_zip(Path(archive_path), target_root, source="COD")
-        except Exception as exc:
-            QMessageBox.warning(self, "Index COD ZIP failed", str(exc))
-            return
-        finally:
-            self.unsetCursor()
-        self._refresh_database_rows()
-        QMessageBox.information(self, "Index COD ZIP", f"Indexed {count} COD CIF files.")
+
+        def success(result) -> None:
+            count = int(result or 0)
+            self._refresh_database_rows()
+            QMessageBox.information(self, "Index COD ZIP", f"Indexed {count} COD CIF files.")
+
+        self._run_background_task(
+            "Index COD ZIP",
+            "Extracting and indexing COD CIF archive...",
+            lambda: self._extract_and_index_cif_zip(archive, target_root, source="COD"),
+            success,
+            lambda message, _details: QMessageBox.warning(self, "Index COD ZIP failed", message),
+        )
 
     def _download_cod_archive_from_url(self) -> None:
         url, ok = QInputDialog.getText(
@@ -3087,22 +3527,26 @@ class PhaseFinderWindow(AnalysisWindow):
         )
         if not ok or not url.strip():
             return
+        url = url.strip()
         output_dir = self.local_phase_cache.root / "downloads"
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / Path(url.strip().rstrip("/")).name
+        output_path = output_dir / Path(url.rstrip("/")).name
         if output_path.suffix.lower() != ".zip":
             output_path = output_path.with_suffix(".zip")
-        self.setCursor(Qt.CursorShape.WaitCursor)
-        try:
-            with open_url(url.strip(), timeout=300) as response:
+
+        def task() -> Path:
+            with open_url(url, timeout=300) as response:
                 with output_path.open("wb") as handle:
                     shutil.copyfileobj(response, handle)
-        except Exception as exc:
-            QMessageBox.warning(self, "Download COD archive failed", str(exc))
-            return
-        finally:
-            self.unsetCursor()
-        QMessageBox.information(self, "Download COD archive", f"Saved archive:\n{output_path}")
+            return output_path
+
+        self._run_background_task(
+            "Download COD archive",
+            "Downloading COD ZIP archive...",
+            task,
+            lambda path: QMessageBox.information(self, "Download COD archive", f"Saved archive:\n{path}"),
+            lambda message, _details: QMessageBox.warning(self, "Download COD archive failed", message),
+        )
 
     def _clear_cod_cache(self) -> None:
         if not self._confirm_clear_database("Clear COD local/bulk", "COD local/bulk"):
@@ -3139,19 +3583,24 @@ class PhaseFinderWindow(AnalysisWindow):
         return count
 
     def _update_rruff_database(self) -> None:
-        self.setCursor(Qt.CursorShape.WaitCursor)
-        try:
-            count = self.rruff.update_powder_database(RRUFF_POWDER_XY_PROCESSED_URL, remove_archive=True)
+        def task() -> int:
+            return self.rruff.update_powder_database(RRUFF_POWDER_XY_PROCESSED_URL, remove_archive=True)
+
+        def success(result) -> None:
+            count = int(result or 0)
             self.settings.setValue("sources/rruff", True)
             if self.database_panel is not None:
                 self.database_panel.set_source_checked("sources/rruff", True)
-        except Exception as exc:
-            QMessageBox.warning(self, "Update RRUFF failed", str(exc))
-            return
-        finally:
-            self.unsetCursor()
-        self._refresh_database_rows()
-        QMessageBox.information(self, "Update RRUFF", f"Updated and indexed {count} RRUFF reference patterns.")
+            self._refresh_database_rows()
+            QMessageBox.information(self, "Update RRUFF", f"Updated and indexed {count} RRUFF reference patterns.")
+
+        self._run_background_task(
+            "Update RRUFF",
+            "Downloading and indexing RRUFF powder patterns...",
+            task,
+            success,
+            lambda message, _details: QMessageBox.warning(self, "Update RRUFF failed", message),
+        )
 
     def _clear_rruff_database(self) -> None:
         if not self._confirm_clear_database("Clear RRUFF", "RRUFF"):
@@ -3232,6 +3681,34 @@ class PhaseFinderWindow(AnalysisWindow):
         self._refresh_database_rows()
         QMessageBox.information(self, "Clear PDF-2", "PDF-2 was cleared from memory and disabled for search.")
 
+    def _clear_aflow_cache(self) -> None:
+        if not self._confirm_clear_database("Clear AFLOW", "AFLOW cached structures"):
+            return
+        try:
+            self.local_phase_cache.clear_aflow_cache()
+            self.settings.setValue("sources/aflow", False)
+            if self.database_panel is not None:
+                self.database_panel.set_source_checked("sources/aflow", False)
+        except Exception as exc:
+            QMessageBox.warning(self, "Clear AFLOW failed", str(exc))
+            return
+        self._refresh_database_rows()
+        QMessageBox.information(self, "Clear AFLOW", "AFLOW local cache was cleared and disabled for search.")
+
+    def _clear_oqmd_cache(self) -> None:
+        if not self._confirm_clear_database("Clear OQMD", "OQMD cached structures"):
+            return
+        try:
+            self.local_phase_cache.clear_oqmd_cache()
+            self.settings.setValue("sources/oqmd", False)
+            if self.database_panel is not None:
+                self.database_panel.set_source_checked("sources/oqmd", False)
+        except Exception as exc:
+            QMessageBox.warning(self, "Clear OQMD failed", str(exc))
+            return
+        self._refresh_database_rows()
+        QMessageBox.information(self, "Clear OQMD", "OQMD local cache was cleared and disabled for search.")
+
     def _clear_materials_project_cache(self) -> None:
         if not self._confirm_clear_database("Clear Materials Project", "Materials Project cached structures"):
             return
@@ -3254,18 +3731,23 @@ class PhaseFinderWindow(AnalysisWindow):
         if not query and self.formula_sum_input is not None:
             query = self.formula_sum_input.text().strip()
         if not query:
-            self._set_candidate_rows([["", "", "", "Enter name, formula, DOI, or entry id", "", ""]])
+            self._set_candidate_rows([["", "", "", "Enter a phase name, formula, DOI, or entry ID", "", ""]])
             return
-        self.setCursor(Qt.CursorShape.WaitCursor)
-        try:
-            rows = self.candidate_search_service.search_text(query, self._candidate_search_options())
-        finally:
-            self.unsetCursor()
-        if rows:
-            self._set_candidate_rows(rows)
-            return
+        options = self._candidate_search_options()
 
-        self._set_candidate_rows([["", "", "", f"No saved/COD/CCDC/MP entries found for: {query}", "", ""]])
+        def success(result) -> None:
+            rows = result or []
+            if rows:
+                self._set_candidate_rows(rows)
+            else:
+                self._set_candidate_rows([["", "", "", f"No entries found in the selected phase databases for: {query}", "", ""]])
+
+        self._run_background_task(
+            "Find candidates",
+            f"Searching phase databases for {query}...",
+            lambda: self.candidate_search_service.search_text(query, options),
+            success,
+        )
 
     def _search_from_controls(self) -> None:
         ccdc_query = self.ccdc_doi_input.text().strip() if self.ccdc_doi_input is not None else ""
@@ -3277,20 +3759,25 @@ class PhaseFinderWindow(AnalysisWindow):
         if not self.selected_elements:
             self._search_pdf2_text()
             return
-        self.setCursor(Qt.CursorShape.WaitCursor)
-        try:
-            rows = self.candidate_search_service.search_elements(
-                list(self.selected_element_order),
-                self._candidate_search_options(),
-            )
-        finally:
-            self.unsetCursor()
-        if self.search_input is not None and self.formula_sum_input is not None:
-            self.search_input.setText(self.formula_sum_input.text().strip())
-        if not rows:
-            self._set_candidate_rows([["", "", "", "No entries for selected elements", "", ""]])
-            return
-        self._set_candidate_rows(rows)
+        elements = list(self.selected_element_order)
+        options = self._candidate_search_options()
+        search_label = self.formula_sum_input.text().strip() if self.formula_sum_input is not None else " ".join(elements)
+
+        def success(result) -> None:
+            rows = result or []
+            if self.search_input is not None and self.formula_sum_input is not None:
+                self.search_input.setText(self.formula_sum_input.text().strip())
+            if not rows:
+                self._set_candidate_rows([["", "", "", "No entries found for the selected elements", "", ""]])
+                return
+            self._set_candidate_rows(rows)
+
+        self._run_background_task(
+            "Find candidates",
+            f"Searching phase databases for {search_label}...",
+            lambda: self.candidate_search_service.search_elements(elements, options),
+            success,
+        )
 
     def _candidate_search_options(self) -> CandidateSearchOptions:
         return CandidateSearchOptions(
@@ -3300,6 +3787,8 @@ class PhaseFinderWindow(AnalysisWindow):
             rruff_enabled=self._rruff_enabled(),
             match_pdf2_enabled=self._match_pdf2_enabled(),
             materials_project_enabled=self._materials_project_enabled(),
+            aflow_enabled=self._aflow_enabled(),
+            oqmd_enabled=self._oqmd_enabled(),
             structural_data_enabled=self._structural_data_enabled(),
             reference_patterns_enabled=self._reference_patterns_enabled(),
             material_class_allowed=self._material_class_allowed,
@@ -3320,7 +3809,17 @@ class PhaseFinderWindow(AnalysisWindow):
             sources.append("COD")
         if self._materials_project_enabled():
             sources.append("MP")
+        if self._aflow_enabled():
+            sources.append("AFLOW")
+        if self._oqmd_enabled():
+            sources.append("OQMD")
         return list(dict.fromkeys(sources))
+
+    def _aflow_enabled(self) -> bool:
+        return self._structural_data_enabled() and self._source_enabled("sources/aflow", False)
+
+    def _oqmd_enabled(self) -> bool:
+        return self._structural_data_enabled() and self._source_enabled("sources/oqmd", False)
 
     def _cod_online_enabled(self) -> bool:
         return self._structural_data_enabled() and self._source_enabled("sources/cod_online", True)
@@ -3688,3 +4187,12 @@ class ThermalWindow(AnalysisWindow):
         layout.addRow("Variable", variable)
         layout.addRow("Polynomial degree", degree)
         return widget
+
+
+
+
+
+
+
+
+
