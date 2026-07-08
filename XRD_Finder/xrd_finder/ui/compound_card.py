@@ -37,7 +37,8 @@ class CompoundCardWidget(QWidget):
             "Mineral Name": data.get("Phase", ""),
             "Sample Name": data.get("Entry", ""),
             "Quality": self._quality_text(data),
-            "Publication": data.get("Notes", ""),
+            "Publication": self._publication_text(data),
+            "Remarks": self._remarks_text(data),
             "Source of entry": data.get("Source", "") or data.get("Qual.", ""),
             "Link to orig. entry": data.get("Entry", ""),
             "Crystal system": data.get("Crystal system", ""),
@@ -95,6 +96,7 @@ class CompoundCardWidget(QWidget):
             self._field_grid(
                 [
                     ("Publication", "Publication"),
+                    ("Remarks", "Remarks / conditions"),
                     ("Source of entry", "Source of entry"),
                     ("Link to orig. entry", "Link to orig. entry"),
                 ]
@@ -120,13 +122,13 @@ class CompoundCardWidget(QWidget):
             )
         )
 
-        self.atom_table = self._table(["Site", "El", "x", "y", "z", "Occ.", "B"])
+        self.atom_table = self._table(["Site", "El", "x", "y", "z", "Occ.", "B"], stretch_columns={0, 6})
         self.atom_table.setMinimumHeight(170)
         self.atom_table.setMaximumHeight(310)
         layout.addWidget(self.atom_table)
 
         layout.addWidget(self._section_title("Diffraction data"))
-        self.diffraction_table = self._table(["d [A]", "2theta", "Int.", "h", "k", "l", "Mult."])
+        self.diffraction_table = self._table(["d [A]", "2theta", "Int.", "h", "k", "l", "Mult."], stretch_columns={2, 6})
         self.diffraction_table.setMinimumHeight(160)
         self.diffraction_table.setMaximumHeight(300)
         layout.addWidget(self.diffraction_table)
@@ -166,17 +168,19 @@ class CompoundCardWidget(QWidget):
             "color: #f1f3f4; font-weight: 700; padding: 5px 7px;"
         )
 
-    def _table(self, headers: list[str]) -> QTableWidget:
+    def _table(self, headers: list[str], stretch_columns: set[int] | None = None) -> QTableWidget:
         table = QTableWidget(0, len(headers))
         table.setHorizontalHeaderLabels(headers)
         table.verticalHeader().setVisible(False)
         table.setAlternatingRowColors(True)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        table.horizontalHeader().setStretchLastSection(True)
+        header = table.horizontalHeader()
+        header.setMinimumSectionSize(44)
+        header.setStretchLastSection(False)
+        self._apply_table_column_modes(table, stretch_columns)
         colors = self._theme_colors()
         table.setStyleSheet(
             f"QTableWidget {{ background: {colors['panel']}; alternate-background-color: {colors['alt']}; color: {colors['text']}; gridline-color: {colors['border']}; }}"
@@ -185,6 +189,14 @@ class CompoundCardWidget(QWidget):
             "QHeaderView::section { background: #33383e; color: #f1f3f4; padding: 4px; }"
         )
         return table
+
+    def _apply_table_column_modes(self, table: QTableWidget, stretch_columns: set[int] | None = None) -> None:
+        columns = table.columnCount()
+        stretch = set(stretch_columns or {columns - 1})
+        header = table.horizontalHeader()
+        for column in range(columns):
+            mode = QHeaderView.ResizeMode.Stretch if column in stretch else QHeaderView.ResizeMode.ResizeToContents
+            header.setSectionResizeMode(column, mode)
 
     def _theme_colors(self) -> dict[str, str]:
         dark = self.palette().color(QPalette.ColorRole.Window).lightness() < 128
@@ -217,8 +229,10 @@ class CompoundCardWidget(QWidget):
             values = row if isinstance(row, (list, tuple)) else []
             for col_index, value in enumerate(values[: table.columnCount()]):
                 table.setItem(row_index, col_index, QTableWidgetItem(str(value)))
-        table.resizeColumnsToContents()
-        table.horizontalHeader().setStretchLastSection(True)
+        header = table.horizontalHeader()
+        for column in range(table.columnCount()):
+            if header.sectionResizeMode(column) == QHeaderView.ResizeMode.ResizeToContents:
+                table.resizeColumnToContents(column)
 
     def _quality_text(self, candidate: Mapping[str, object]) -> str:
         source = str(candidate.get("Source", "") or candidate.get("Qual.", "") or "")
@@ -227,6 +241,35 @@ class CompoundCardWidget(QWidget):
         if source:
             return f"{source} entry"
         return ""
+
+    def _split_notes(self, candidate: Mapping[str, object]) -> tuple[str, str]:
+        notes = str(candidate.get("Notes", "") or "").strip()
+        if not notes:
+            return "", ""
+        normalized = notes.replace("\r", "\n")
+        lines = [line.strip() for line in normalized.split("\n") if line.strip()]
+        remarks: list[str] = []
+        publication: list[str] = []
+        remark_markers = ("sample", "temperature", "pressure", "condition", "measured", "anneal", "synthesis")
+        for line in lines:
+            clean = line.strip(" ;")
+            lower = clean.lower()
+            is_remark = line.startswith(";") or any(marker in lower for marker in remark_markers)
+            if is_remark and not publication:
+                remarks.append(clean)
+            else:
+                publication.append(clean)
+        if not publication and remarks:
+            return "", "\n".join(remarks)
+        return "\n".join(publication), "\n".join(remarks)
+
+    def _publication_text(self, candidate: Mapping[str, object]) -> str:
+        publication, _remarks = self._split_notes(candidate)
+        return publication
+
+    def _remarks_text(self, candidate: Mapping[str, object]) -> str:
+        _publication, remarks = self._split_notes(candidate)
+        return remarks
 
     def _links_html(self, candidate: Mapping[str, object]) -> str:
         links = []

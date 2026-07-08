@@ -544,6 +544,10 @@ class PhaseFinderWindow(
         }
         self.grid_visible = True
         self.show_hkl_labels = False
+        self.cursor_position_enabled = False
+        self.cursor_position_line = None
+        self.cursor_position_label = None
+        self.cursor_position_proxy = None
         self.legend_item = None
         self.active_overlay_entry_id: str | None = None
         self.match_candidates: list[dict[str, str]] = []
@@ -1305,8 +1309,13 @@ class PhaseFinderWindow(
         try:
             cif_path = self._candidate_cif_path(candidate)
             _phase, structure = create_phase_from_cif(cif_path)
+            observed = self._active_observed_data()
             self._calculate_structure_overlay(structure, preview=True)
-            self._restore_plot_view_range(view_range)
+            if observed is None:
+                self.match_plot.autoRange(padding=0.02)
+                self.match_plot_view_initialized = True
+            else:
+                self._restore_plot_view_range(view_range)
             self.active_overlay_entry_id = entry_id or None
         except Exception as exc:
             if show_errors:
@@ -1331,6 +1340,9 @@ class PhaseFinderWindow(
                 observed=observed,
                 label=label,
             )
+            if observed is None:
+                self.match_plot.autoRange(padding=0.02)
+                self.match_plot_view_initialized = True
             self.active_overlay_entry_id = entry_id
         except Exception as exc:
             if show_errors:
@@ -1357,7 +1369,11 @@ class PhaseFinderWindow(
                 label=label,
                 show_hkl_labels=self.show_hkl_labels,
             )
-            self._restore_plot_view_range(view_range)
+            if observed is None:
+                self.match_plot.autoRange(padding=0.02)
+                self.match_plot_view_initialized = True
+            else:
+                self._restore_plot_view_range(view_range)
             self.active_overlay_entry_id = entry_id
         except Exception as exc:
             if show_errors:
