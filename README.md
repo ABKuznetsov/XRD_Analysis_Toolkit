@@ -1,21 +1,22 @@
-﻿# XRD Analysis Toolkit
+# XRD Analysis Toolkit
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 ![Status](https://img.shields.io/badge/Status-Stable-green.svg)
 
+# Download XRD Phase Finder
+
+**Windows 10/11:** [Download `XRD_Phase_Finder_Setup_1.1.0.exe`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.0/XRD_Phase_Finder_Setup_1.1.0.exe) and run the installer.
+
+**macOS:** [Download `XRD_Phase_Finder_macOS_1.1.0.zip`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.0/XRD_Phase_Finder_macOS_1.1.0.zip), extract it and run `install_macos.command`.
+
+More detailed installation notes are below in [Installation](#installation).
 
 # XRD Phase Finder 1.1.0
 
 Feature release focused on Phase Finder maintainability, background correction and cross-platform setup improvements.
 
-## Download
-
-- Windows: [XRD_Phase_Finder_Setup_1.1.0.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.0/XRD_Phase_Finder_Setup_1.1.0.exe)
-- macOS: [XRD_Phase_Finder_macOS_1.1.0.zip](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.0/XRD_Phase_Finder_macOS_1.1.0.zip)
-
-- 
 # Introduction
 
 Welcome to the **XRD Analysis Toolkit** project. Its first application, **XRD Phase Finder**, is an open-source Python tool for phase identification from powder X-ray diffraction (XRD) data. It combines experimental pattern handling, element-constrained database search, reference-pattern preview, CIF-based diffraction simulation and practical candidate ranking in one desktop workflow.
@@ -188,182 +189,110 @@ The `?` button in the application opens a compact in-app helper with the same co
 
 # Installation
 
-## Minimum Requirements
+## Download
 
-### Windows installer
+Latest release assets:
+
+- Windows 10/11: [XRD_Phase_Finder_Setup_1.1.0.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.0/XRD_Phase_Finder_Setup_1.1.0.exe)
+- macOS: [XRD_Phase_Finder_macOS_1.1.0.zip](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.0/XRD_Phase_Finder_macOS_1.1.0.zip)
+- All releases: [GitHub Releases](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases)
+
+Large crystallographic databases are user-managed. COD, RRUFF, PDF-2, Materials Project and CCDC/CSD data are not redistributed with the installer.
+
+## Requirements
+
+Windows installer:
 
 - Windows 10 or Windows 11, 64-bit recommended.
-- Internet access for first-time setup, because the installer may need to download Python and Python packages.
-- Permission to install the application. The installer requests administrator rights for installation into `Program Files`.
-- Approximately 1 GB of free disk space is recommended for the shared Python environment and scientific packages.
+- Administrator rights for installation into the selected application folder.
+- Internet access during first setup, because Python or Python packages may need to be downloaded.
+- About 1 GB of free disk space for the shared scientific Python environment.
 
-### Manual setup from source
+Source checkout / macOS / Linux:
 
-- Python **3.11** or newer.
+- Python 3.11 or newer.
 - `pip` and Python virtual environment support.
 - Internet access for installing Python packages.
-- macOS or Linux users should install from source using the setup scripts in the repository root.
 
-XRD Phase Finder creates a shared per-user environment named `XRD_Toolkit` under the user's application-data folder on Windows. Future XRD applications from the same toolkit can reuse this environment.
-
-Large external crystallographic databases are user-managed. COD, RRUFF, PDF-2, Materials Project and CCDC/CSD data are not redistributed with the installer.
-
----
+XRD Phase Finder uses a shared per-user environment named `XRD_Toolkit`. Future XRD applications from the same toolkit can reuse it.
 
 ## Windows
 
-The recommended Windows installation method is the release installer:
+Download and run:
 
 ```text
 XRD_Phase_Finder_Setup_1.1.0.exe
 ```
 
-Download it from the GitHub Releases page and run it. The installer:
+The installer:
 
 - installs XRD Phase Finder into the selected application folder
 - creates Start Menu and optional Desktop shortcuts
 - creates or reuses the shared `XRD_Toolkit` Python environment in user AppData
-- installs the required Python packages
+- installs required Python packages
 - adds an uninstall entry to Windows
 - checks for updates when XRD Phase Finder starts
 
 If Python 3.11 is not already available, the setup script first tries `winget` and then falls back to the official Python 3.11.9 installer from python.org.
 
-### Windows manual setup
-
-Developers or users running directly from a source checkout can still use:
-
-```text
-setup_env.bat
-```
-
-Launch the graphical interface:
-
-```text
-XRD_Finder\run_finder.bat
-```
-
-Command line interface:
-
-```text
-XRD_Finder\run_finder_cli.bat
-```
-
----
 ## macOS
 
-Recommended release installer:
+Download and extract:
 
 ```text
-XRD_Phase_Finder_macOS_1.1.0.dmg
+XRD_Phase_Finder_macOS_1.1.0.zip
 ```
 
-Open the DMG and run:
+Then run:
 
 ```text
 install_macos.command
 ```
 
-This creates or reuses the shared `XRD_Toolkit` Python environment under:
+The installer creates or reuses:
 
 ```text
 ~/Library/Application Support/XRD_Toolkit
 ```
 
-and installs a macOS application bundle:
+and installs the application bundle to `/Applications/XRD Phase Finder.app` when possible, otherwise to `~/Applications/XRD Phase Finder.app`.
 
-```text
-/Applications/XRD Phase Finder.app
-```
-
-If `/Applications` is not writable, the installer falls back to:
-
-```text
-~/Applications/XRD Phase Finder.app
-```
-
-The installed app is registered with macOS Launch Services, so it can be
-launched from Applications, Launchpad, Spotlight, or Finder.
-
-The DMG installer copies the application payload to:
-
-```text
-~/Library/Application Support/XRD_Toolkit/app
-```
-
-so the installed `.app` continues to work after the DMG is ejected. The app
-writes startup logs to the shared toolkit folder and performs a quiet
-fast-forward Git update check when launched from a Git checkout.
-
-Preview launch with visible setup/update/startup diagnostics:
-
-```text
-toolkit/launch_xrd_finder_preview.command
-```
-
-Manual GitHub update:
-
-```text
-update_macos.command
-```
-
-Developer/manual setup is still available:
-
-```text
-setup_env.command
-```
-
-Launch the source-checkout application:
-
-```text
-XRD_Finder/run_finder.command
-```
-
-Command line interface
-
-```text
-XRD_Finder/run_finder_cli.command
-```
-
-If macOS blocks the scripts after copying or syncing the folder, run this once
-from Terminal inside the project directory:
+If macOS blocks the scripts after download or sync, run this once from Terminal inside the extracted folder:
 
 ```bash
 chmod +x install_macos.command update_macos.command setup_env.command toolkit/*.command XRD_Finder/*.command
 xattr -dr com.apple.quarantine .
 ```
 
-Build the release DMG on macOS:
+Manual update from a source checkout:
+
+```text
+update_macos.command
+```
+
+Optional maintainer-only DMG build on macOS:
 
 ```text
 scripts/build_macos_dmg.command
 ```
 
----
-
 ## Linux
 
-Run
+Linux is currently source-checkout based:
 
 ```bash
 chmod +x setup_env.sh XRD_Finder/*.sh
 ./setup_env.sh
-```
-
-Launch the application
-
-```bash
 ./XRD_Finder/run_finder.sh
 ```
 
-Command line interface
+Command line interface:
 
 ```bash
 ./XRD_Finder/run_finder_cli.sh
 ```
 
-On a minimal Linux installation you may also need Python venv/pip and Qt desktop
-libraries:
+On a minimal Linux installation you may also need Python venv/pip and Qt desktop libraries:
 
 ```bash
 sudo apt install python3 python3-venv python3-pip libxcb-cursor0 libegl1
@@ -375,11 +304,17 @@ For Fedora:
 sudo dnf install python3 python3-pip xcb-util-cursor mesa-libEGL
 ```
 
----
+## Source Checkout Commands
 
-# Source Checkout Launching
+These commands are mainly for developers or users running directly from a source checkout.
 
-Most Windows users should install and launch XRD Phase Finder through the Windows installer and Start Menu shortcut. The commands below are mainly for developers or users running directly from a source checkout.
+Setup:
+
+```text
+setup_env.bat          # Windows
+setup_env.command      # macOS
+./setup_env.sh         # Linux
+```
 
 Graphical launchers:
 
@@ -397,7 +332,7 @@ XRD_Finder\run_finder_cli.bat
 ./XRD_Finder/run_finder_cli.sh
 ```
 
-The graphical launcher can also receive initial files when started from a source checkout:
+The graphical launcher can receive initial files:
 
 ```text
 XRD_Finder\run_finder.bat --pattern "path\to\pattern.xy" --cif "path\to\phase.cif"
@@ -489,8 +424,10 @@ XRD_Analysis_Toolkit/
         updates/xrd_finder.json
             Machine-readable update metadata for release checks
         setup_xrd_toolkit_env.bat
+        setup_xrd_toolkit_env.command
         launch_xrd_finder_preview.ps1
-            Windows runtime setup and startup/update preview support
+        launch_xrd_finder_preview.command
+            Shared runtime setup and startup/update preview support
 
     XRD_Finder/
         app.json
@@ -513,7 +450,7 @@ XRD_Analysis_Toolkit/
             Source-checkout command-line launchers
 ```
 
-The repository contains source code, documentation, runtime setup scripts and update metadata. Generated Windows installer files such as `XRD_Phase_Finder_Setup_1.1.0.exe` are **not committed to the repository**; they are published separately as GitHub Release assets after testing.
+The repository contains source code, documentation, runtime setup scripts and update metadata. Generated installer files such as `XRD_Phase_Finder_Setup_1.1.0.exe` and `XRD_Phase_Finder_macOS_1.1.0.zip` are **not committed to the repository**; they are published separately as GitHub Release assets.
 
 The root `XRD_Analysis_Toolkit` layout keeps shared toolkit files separate from the `XRD_Finder` application folder. This leaves room for additional XRD-related applications later while preserving a clear application boundary.
 
