@@ -13,16 +13,16 @@
       "type": "installer",
       "platform": "windows-x64",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.1/XRD_Phase_Finder_Setup_1.1.1.exe",
-      "sha256": "515a8dd766e730c3204f93dc793d7a3e90c7180c525b29cdc0f3f2b993e72722",
-      "size_bytes": 6612126
+      "sha256": "a01016e694e9c55ab93c9ad6e3511aa1318e4be62cc8a5e6b002ab2b3287d4ed",
+      "size_bytes": 6612298
     },
     {
       "name": "XRD_Phase_Finder_macOS_1.1.1.zip",
       "type": "installer-archive",
       "platform": "macos",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.1/XRD_Phase_Finder_macOS_1.1.1.zip",
-      "sha256": "926f91569ce4f841250e3d105755d16b96b85974d7bc677460723f5020c5fb47",
-      "size_bytes": 4507917
+      "sha256": "3c71920ab4fcea6241edbbacf20606f91100503a28e1af68d4aa262b689dd5ed",
+      "size_bytes": 4508169
     }
   ],
   "summary": [
@@ -32,5 +32,5 @@
     "Build calculated Finder profiles explicitly with Cu K-alpha1/K-alpha2 doublet lines."
   ],
   "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.1/XRD_Phase_Finder_Setup_1.1.1.exe",
-  "installer_sha256": "515a8dd766e730c3204f93dc793d7a3e90c7180c525b29cdc0f3f2b993e72722"
+  "installer_sha256": "a01016e694e9c55ab93c9ad6e3511aa1318e4be62cc8a5e6b002ab2b3287d4ed"
 }
