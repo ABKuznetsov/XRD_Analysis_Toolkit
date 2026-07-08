@@ -130,7 +130,7 @@ def peak_presence_probability(peaks, observed_x: np.ndarray, corrected_y: np.nda
 def peak_presence_probability_from_records(peaks, observed_records: list[tuple[float, float]], structure) -> float:
     if not observed_records or not peaks:
         return 0.0
-    observed_positions = np.asarray([position for position, _height in observed_records], dtype=float)
+    observed_positions = np.sort(np.asarray([position for position, _height in observed_records], dtype=float))
     observed_heights = np.asarray([max(float(height), 0.0) for _position, height in observed_records], dtype=float)
     if len(observed_positions) == 0 or float(np.nanmax(observed_heights, initial=0.0)) <= 0:
         return 0.0
@@ -140,7 +140,7 @@ def peak_presence_probability_from_records(peaks, observed_records: list[tuple[f
         for peak in peaks
         if getattr(peak, "intensity", 0.0) >= 1.0 and 5.0 <= getattr(peak, "two_theta", 0.0) <= 120.0
     ]
-    strong_calc = sorted(strong_calc, key=lambda peak: float(getattr(peak, "intensity", 0.0)), reverse=True)[:36]
+    strong_calc = sorted(strong_calc, key=lambda peak: float(getattr(peak, "intensity", 0.0)), reverse=True)[:24]
     if not strong_calc:
         return 0.0
 
@@ -162,12 +162,13 @@ def peak_presence_probability_from_records(peaks, observed_records: list[tuple[f
 
     observed_total = 0.0
     observed_weighted = 0.0
+    sorted_calc_positions = np.sort(calc_positions)
     max_observed = max(float(np.nanmax(observed_heights)), 1.0)
     for obs_position, obs_height in observed_records[:30]:
         rel_height = max(float(obs_height), 0.0) / max_observed
         weight = max(rel_height, 0.03) ** 0.45
         observed_total += weight
-        nearest = _nearest_delta(calc_positions, obs_position)
+        nearest = _nearest_delta(sorted_calc_positions, obs_position)
         if nearest <= tolerance:
             quality = max(0.0, 1.0 - nearest / tolerance)
             observed_weighted += weight * (0.35 + 0.65 * quality)

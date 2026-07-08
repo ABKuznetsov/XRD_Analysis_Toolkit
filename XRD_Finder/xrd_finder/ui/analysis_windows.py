@@ -1045,7 +1045,24 @@ class PhaseFinderWindow(
         wavelength = round(float(getattr(pattern, "wavelength", None) or CU_KA1_WAVELENGTH), 6)
         processed = self._active_processed_observed_data()
         data_len = int(len(processed)) if processed is not None else -1
-        return (pattern_id, source_path, wavelength, self._active_background_removed(), data_len)
+        data_signature = self._processed_probability_signature(processed)
+        return (pattern_id, source_path, wavelength, self._active_background_removed(), data_len, data_signature)
+
+    def _processed_probability_signature(self, processed) -> tuple[float, float, float]:
+        if processed is None or not len(processed):
+            return (0.0, 0.0, 0.0)
+        try:
+            y_values = np.asarray(processed[:, 1], dtype=float)
+            y_values = y_values[np.isfinite(y_values)]
+            if not len(y_values):
+                return (0.0, 0.0, 0.0)
+            return (
+                round(float(np.nanpercentile(y_values, 10)), 3),
+                round(float(np.nanpercentile(y_values, 50)), 3),
+                round(float(np.nanpercentile(y_values, 99)), 3),
+            )
+        except Exception:
+            return (0.0, 0.0, 0.0)
 
     def _probability_observed_data(self) -> tuple[np.ndarray, np.ndarray, list[tuple[float, float]]] | None:
         observed = self._active_observed_data()
