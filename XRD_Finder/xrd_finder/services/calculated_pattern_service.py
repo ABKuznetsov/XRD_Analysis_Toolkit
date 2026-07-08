@@ -161,10 +161,12 @@ def _point_group_matrices(structure) -> list[tuple[tuple[int, int, int], tuple[i
 
 def _apply_hkl_matrix(matrix, hkl: tuple[int, int, int]) -> tuple[int, int, int]:
     h, k, l = hkl
+    # Symmetry operations transform fractional coordinates as r' = R r + t.
+    # Reflection indices transform with the reciprocal-space transpose R^T.
     return (
-        matrix[0][0] * h + matrix[0][1] * k + matrix[0][2] * l,
-        matrix[1][0] * h + matrix[1][1] * k + matrix[1][2] * l,
-        matrix[2][0] * h + matrix[2][1] * k + matrix[2][2] * l,
+        matrix[0][0] * h + matrix[1][0] * k + matrix[2][0] * l,
+        matrix[0][1] * h + matrix[1][1] * k + matrix[2][1] * l,
+        matrix[0][2] * h + matrix[1][2] * k + matrix[2][2] * l,
     )
 
 

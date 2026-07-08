@@ -9,11 +9,14 @@ import time
 import re
 
 from xrd_finder.io.cif_loader import create_phase_from_cif
+from xrd_finder.core.structure import AtomSite, CellParameters, Structure
+from xrd_finder.services.calculated_pattern_service import CU_KA1_WAVELENGTH, CalculatedPatternService
 from xrd_finder.services.cache_paths import default_phase_cache_root
 from xrd_finder.services.cod_online_service import CodEntry, CodOnlineService, formula_elements
 
 
 DEFAULT_CACHE_ROOT = default_phase_cache_root()
+DERIVED_CACHE_VERSION = 6
 
 
 @dataclass(slots=True)
@@ -33,6 +36,9 @@ class CachedPhaseEntry:
     gamma: float | None = None
     volume: float | None = None
     atoms_json: str = ""
+    iic: float | None = None
+    peaks_json: str = ""
+    derived_version: int = 0
 
     @property
     def cached(self) -> bool:
@@ -45,6 +51,8 @@ class LocalPhaseCache:
         self.cif_dir = self.root / "cif"
         self.index_path = self.root / "index.sqlite"
         self.cif_dir.mkdir(parents=True, exist_ok=True)
+        self._calculated_pattern_service = CalculatedPatternService()
+        self._corundum_reference_intensity: float | None = None
         self._ensure_schema()
 
     def status_row(self) -> list[str]:
@@ -174,7 +182,7 @@ class LocalPhaseCache:
             rows = connection.execute(
                 f"""
                 select source, entry_id, formula, name, spacegroup, source_text, cif_path, elements,
-                       a, b, c, alpha, beta, gamma, volume, atoms_json
+                       a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, derived_version
                 from phases
                 where {" and ".join(where)}
                 order by updated_at desc
@@ -238,7 +246,7 @@ class LocalPhaseCache:
             row = connection.execute(
                 """
                 select source, entry_id, formula, name, spacegroup, source_text, cif_path, elements,
-                       a, b, c, alpha, beta, gamma, volume, atoms_json
+                       a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, derived_version
                 from phases
                 where source = ? and entry_id = ?
                 """,
@@ -246,6 +254,26 @@ class LocalPhaseCache:
             ).fetchone()
         return self._row_to_entry(row) if row else None
 
+    def diffraction_rows(self, source: str, entry_id: str, limit: int = 60) -> list[list[str]]:
+        entry = self.get(source, entry_id)
+        if entry is None or not entry.peaks_json:
+            return []
+        try:
+            peaks = json.loads(entry.peaks_json)
+        except json.JSONDecodeError:
+            return []
+        rows = []
+        for peak in peaks[:limit]:
+            rows.append([
+                f"{float(peak.get('d', 0.0)):.4f}",
+                f"{float(peak.get('two_theta', 0.0)):.3f}",
+                f"{float(peak.get('intensity', 0.0)):.1f}",
+                str(peak.get("h", "")),
+                str(peak.get("k", "")),
+                str(peak.get("l", "")),
+                str(peak.get("multiplicity", "")),
+            ])
+        return rows
     def build_index(self) -> int:
         count = 0
         for cif_path in self.cif_dir.glob("*.cif"):
@@ -306,6 +334,10 @@ class LocalPhaseCache:
             source_text = (fallback.source if fallback else "") or str(structure.metadata.get("publication", "") or "")
             cell = structure.cell
             atoms_json = self._atoms_to_json(structure)
+            peaks = self._calculate_cached_peaks(structure)
+            peaks_json = self._peaks_to_json(peaks)
+            iic = self._estimate_iic_from_peaks(peaks)
+            derived_version = DERIVED_CACHE_VERSION
         except Exception:
             formula = fallback.formula if fallback else ""
             name = fallback.name if fallback else cif_path.stem
@@ -313,6 +345,9 @@ class LocalPhaseCache:
             source_text = fallback.source if fallback else ""
             cell = None
             atoms_json = ""
+            peaks_json = ""
+            iic = None
+            derived_version = 0
         entry = CachedPhaseEntry(
             source=source,
             entry_id=entry_id,
@@ -329,9 +364,89 @@ class LocalPhaseCache:
             gamma=getattr(cell, "gamma", None),
             volume=getattr(cell, "volume", None),
             atoms_json=atoms_json,
+            iic=iic,
+            peaks_json=peaks_json,
+            derived_version=derived_version,
         )
         with self._connect() as connection:
             self._upsert(connection, entry, keep_cif=False)
+
+    def _calculate_cached_peaks(self, structure) -> list:
+        try:
+            return self._calculated_pattern_service.calculate_sticks(
+                structure,
+                two_theta_min=5.0,
+                two_theta_max=120.0,
+                wavelength=float(getattr(structure, "wavelength", None) or CU_KA1_WAVELENGTH),
+                use_lp=True,
+                intensity_min=0.5,
+            )
+        except Exception:
+            return []
+
+    def _peaks_to_json(self, peaks) -> str:
+        rows = []
+        for peak in peaks[:300]:
+            rows.append({
+                "d": round(float(getattr(peak, "d", 0.0)), 6),
+                "two_theta": round(float(getattr(peak, "two_theta", 0.0)), 5),
+                "intensity": round(float(getattr(peak, "intensity", 0.0)), 4),
+                "raw_intensity": round(float(getattr(peak, "raw_intensity", 0.0)), 6),
+                "h": int(getattr(peak, "h", 0)),
+                "k": int(getattr(peak, "k", 0)),
+                "l": int(getattr(peak, "l", 0)),
+                "multiplicity": int(getattr(peak, "multiplicity", 1) or 1),
+            })
+        return json.dumps(rows, ensure_ascii=True, separators=(",", ":"))
+
+    def _estimate_iic_from_peaks(self, peaks) -> float | None:
+        sample = self._strongest_raw_peak(peaks)
+        corundum = self._corundum_strongest_raw_peak()
+        if sample <= 0.0 or corundum <= 0.0:
+            return None
+        return float(max(0.0, min(sample / corundum, 99.9)))
+
+    def _strongest_raw_peak(self, peaks) -> float:
+        return max(
+            (
+                max(float(getattr(peak, "raw_intensity", 0.0) or getattr(peak, "intensity", 0.0)), 0.0)
+                for peak in peaks
+            ),
+            default=0.0,
+        )
+
+    def _corundum_strongest_raw_peak(self) -> float:
+        if self._corundum_reference_intensity is None:
+            self._corundum_reference_intensity = self._strongest_raw_peak(self._calculate_cached_peaks(self._corundum_structure()))
+        return self._corundum_reference_intensity
+
+    def _corundum_structure(self) -> Structure:
+        reference_cif = Path(__file__).resolve().parents[2] / "Entry_96-100-0018.cif"
+        if reference_cif.exists():
+            try:
+                _phase, structure = create_phase_from_cif(reference_cif)
+                if not structure.formula:
+                    structure.formula = "Al2O3"
+                return structure
+            except Exception:
+                pass
+        structure = Structure.create("Corundum")
+        structure.formula = "Al2O3"
+        structure.space_group = "R -3 c"
+        structure.space_group_number = "167"
+        structure.cell = CellParameters(a=4.76060, b=4.76060, c=12.99400, alpha=90.0, beta=90.0, gamma=120.0)
+        structure.symops = [
+            "x,y,z", "-y,x-y,z", "-x+y,-x,z", "y,x,-z+1/2", "x-y,-y,-z+1/2", "-x,-x+y,-z+1/2",
+            "x+2/3,y+1/3,z+1/3", "-y+2/3,x-y+1/3,z+1/3", "-x+y+2/3,-x+1/3,z+1/3",
+            "y+2/3,x+1/3,-z+5/6", "x-y+2/3,-y+1/3,-z+5/6", "-x+2/3,-x+y+1/3,-z+5/6",
+            "x+1/3,y+2/3,z+2/3", "-y+1/3,x-y+2/3,z+2/3", "-x+y+1/3,-x+2/3,z+2/3",
+            "y+1/3,x+2/3,-z+7/6", "x-y+1/3,-y+2/3,-z+7/6", "-x+1/3,-x+y+2/3,-z+7/6",
+        ]
+        structure.atoms = [
+            AtomSite(label="Al", element="Al", x=0.0, y=0.0, z=0.3522, occupancy=1.0),
+            AtomSite(label="O", element="O", x=0.694, y=0.0, z=0.25, occupancy=1.0),
+        ]
+        return structure
 
     def _ensure_schema(self) -> None:
         with self._connect() as connection:
@@ -355,6 +470,9 @@ class LocalPhaseCache:
                     gamma real,
                     volume real,
                     atoms_json text not null default '',
+                    iic real,
+                    peaks_json text not null default '',
+                    derived_version integer not null default 0,
                     updated_at real not null,
                     primary key (source, entry_id)
                 )
@@ -376,6 +494,12 @@ class LocalPhaseCache:
                     connection.execute(f"alter table phases add column {column} real")
             if "atoms_json" not in existing:
                 connection.execute("alter table phases add column atoms_json text not null default ''")
+            if "iic" not in existing:
+                connection.execute("alter table phases add column iic real")
+            if "peaks_json" not in existing:
+                connection.execute("alter table phases add column peaks_json text not null default ''")
+            if "derived_version" not in existing:
+                connection.execute("alter table phases add column derived_version integer not null default 0")
             if "formula_key" not in existing:
                 connection.execute("alter table phases add column formula_key text not null default ''")
                 connection.execute("update phases set formula_key = lower(replace(formula, ' ', '')) where formula_key = ''")
@@ -410,18 +534,31 @@ class LocalPhaseCache:
         old_cif = ""
         if keep_cif:
             row = connection.execute(
-                "select cif_path from phases where source = ? and entry_id = ?",
+                """
+                select cif_path, a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, derived_version
+                from phases
+                where source = ? and entry_id = ?
+                """,
                 (entry.source, entry.entry_id),
             ).fetchone()
             old_cif = row["cif_path"] if row else ""
+            if row and old_cif and not entry.cif_path:
+                for field in ("a", "b", "c", "alpha", "beta", "gamma", "volume", "iic"):
+                    if getattr(entry, field) is None:
+                        setattr(entry, field, row[field])
+                for field in ("atoms_json", "peaks_json"):
+                    if not getattr(entry, field):
+                        setattr(entry, field, row[field])
+                if getattr(entry, "derived_version", 0) == 0:
+                    setattr(entry, "derived_version", row["derived_version"])
         cif_path = old_cif or entry.cif_path
         connection.execute(
             """
             insert into phases(
                 source, entry_id, formula, name, spacegroup, source_text, elements, formula_key, cif_path,
-                a, b, c, alpha, beta, gamma, volume, atoms_json, updated_at
+                a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, derived_version, updated_at
             )
-            values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             on conflict(source, entry_id) do update set
                 formula = excluded.formula,
                 name = excluded.name,
@@ -438,6 +575,9 @@ class LocalPhaseCache:
                 gamma = excluded.gamma,
                 volume = excluded.volume,
                 atoms_json = excluded.atoms_json,
+                iic = excluded.iic,
+                peaks_json = excluded.peaks_json,
+                derived_version = excluded.derived_version,
                 updated_at = excluded.updated_at
             """,
             (
@@ -458,6 +598,9 @@ class LocalPhaseCache:
                 entry.gamma,
                 entry.volume,
                 entry.atoms_json,
+                entry.iic,
+                entry.peaks_json,
+                entry.derived_version,
                 time.time(),
             ),
         )
@@ -479,6 +622,9 @@ class LocalPhaseCache:
             gamma=row["gamma"],
             volume=row["volume"],
             atoms_json=row["atoms_json"],
+            iic=row["iic"],
+            peaks_json=row["peaks_json"],
+            derived_version=row["derived_version"],
         )
 
     def _dedupe_key(self, row: sqlite3.Row) -> tuple:

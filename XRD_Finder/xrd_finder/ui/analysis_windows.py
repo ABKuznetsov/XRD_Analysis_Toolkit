@@ -1171,17 +1171,17 @@ class PhaseFinderWindow(
             return 0.0
         return area / peak
 
-    def _estimate_candidate_corundum_iic(self, candidate: dict[str, str], x_grid: np.ndarray | None = None) -> float:
+    def _estimate_candidate_corundum_iic(self, candidate: dict[str, str]) -> float:
         try:
             cif_path = self._candidate_cif_path(candidate)
             _phase, structure = create_phase_from_cif(cif_path)
             if not getattr(structure, "formula", "") and candidate.get("Formula"):
                 structure.formula = candidate["Formula"]
-            return self._estimate_structure_corundum_iic(structure, x_grid=x_grid)
+            return self._estimate_structure_corundum_iic(structure)
         except Exception:
             return 0.0
 
-    def _estimate_structure_corundum_iic(self, structure, x_grid: np.ndarray | None = None) -> float:
+    def _estimate_structure_corundum_iic(self, structure) -> float:
         wavelength = float(getattr(structure, "wavelength", None) or CU_KA1_WAVELENGTH)
         # Keep I/Ic stable: it is a reference-pattern property, not a current zoom/window property.
         two_theta_min = 5.0
@@ -1201,8 +1201,7 @@ class PhaseFinderWindow(
         corundum_total = self._raw_peak_reference_intensity(corundum_peaks)
         if sample_total <= 0 or corundum_total <= 0:
             return 0.0
-        correction = self._corundum_absorption_correction(getattr(structure, "formula", ""))
-        value = (sample_total / corundum_total) * correction
+        value = sample_total / corundum_total
         return float(np.clip(value, 0.0, 99.9))
 
     def _corundum_absorption_correction(self, formula: str) -> float:
@@ -1245,10 +1244,20 @@ class PhaseFinderWindow(
         return self._corundum_peak_cache[key]
 
     def _corundum_structure(self) -> Structure:
+        reference_cif = Path(__file__).resolve().parents[2] / "Entry_96-100-0018.cif"
+        if reference_cif.exists():
+            try:
+                _phase, structure = create_phase_from_cif(reference_cif)
+                if not structure.formula:
+                    structure.formula = "Al2O3"
+                return structure
+            except Exception:
+                pass
         structure = Structure.create("Corundum")
         structure.formula = "Al2O3"
         structure.space_group = "R -3 c"
-        structure.cell = CellParameters(a=4.759, b=4.759, c=12.991, alpha=90.0, beta=90.0, gamma=120.0)
+        structure.space_group_number = "167"
+        structure.cell = CellParameters(a=4.76060, b=4.76060, c=12.99400, alpha=90.0, beta=90.0, gamma=120.0)
         structure.symops = [
             "x,y,z",
             "-y,x-y,z",
@@ -1271,7 +1280,7 @@ class PhaseFinderWindow(
         ]
         structure.atoms = [
             AtomSite(label="Al", element="Al", x=0.0, y=0.0, z=0.3522, occupancy=1.0),
-            AtomSite(label="O", element="O", x=0.306, y=0.0, z=0.25, occupancy=1.0),
+            AtomSite(label="O", element="O", x=0.694, y=0.0, z=0.25, occupancy=1.0),
         ]
         return structure
 

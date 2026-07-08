@@ -81,7 +81,11 @@ class PhaseFinderSelectedPhasesActionsMixin:
                 structure.name = phase_name
             if not structure.formula and candidate.get("Formula"):
                 structure.formula = candidate["Formula"]
-            self.match_candidates.append(candidate.copy())
+            candidate_copy = candidate.copy()
+            iic = self._estimate_structure_corundum_iic(structure)
+            if iic > 0:
+                candidate_copy["I/Ic*"] = f"{iic:.3g}"
+            self.match_candidates.append(candidate_copy)
             self.match_structures[key] = structure
             if recalculate:
                 self._recalculate_match_profile(auto_zoom=self._should_autozoom_match_profile())
@@ -193,12 +197,14 @@ class PhaseFinderSelectedPhasesActionsMixin:
         rows = []
         for row, candidate in enumerate(self.match_candidates):
             key = self._candidate_key(candidate)
+            iic = self.match_iic.get(key, 0.0)
+            iic_text = f"{iic:.3g}" if iic > 0 else ""
             rows.append([
                 self._phase_color(candidate, row),
                 self._phase_legend_label(candidate),
                 self.match_alignment_scores.get(key, ""),
                 f"{self.match_quantities.get(key, 0.0):.1f}",
-                f"{self.match_iic.get(key, 0.0):.3g}",
+                iic_text,
             ])
         self.match_table.set_rows(rows)
 
@@ -209,3 +215,4 @@ class PhaseFinderSelectedPhasesActionsMixin:
             color = palette[index % len(palette)]
             candidate["_Color"] = color
         return color
+

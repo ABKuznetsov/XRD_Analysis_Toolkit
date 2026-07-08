@@ -52,11 +52,12 @@ class PhaseFinderCandidateInfoActionsMixin:
             _phase, structure = create_phase_from_cif(cif_path)
         except Exception:
             return
+        cached_rows = self._cached_diffraction_rows_for_candidate(candidate)
         enrich_candidate_from_structure(
             candidate,
             structure,
             self.candidate_search_service.display_formula,
-            self._diffraction_rows_for_structure,
+            lambda item: cached_rows or self._diffraction_rows_for_structure(item),
         )
         iic = self._estimate_structure_corundum_iic(structure)
         if iic > 0:
@@ -93,6 +94,17 @@ class PhaseFinderCandidateInfoActionsMixin:
                 )
             )
         return peaks
+
+    def _cached_diffraction_rows_for_candidate(self, candidate: dict[str, str]) -> list[list[str]]:
+        source = self._candidate_source(candidate)
+        entry_id = candidate.get("Entry", "")
+        if not source or not entry_id:
+            return []
+        try:
+            rows = self.local_phase_cache.diffraction_rows(source, entry_id)
+        except Exception:
+            return []
+        return rows
 
     def _diffraction_rows_for_structure(self, structure) -> list[list[str]]:
         try:
@@ -188,3 +200,4 @@ class PhaseFinderCandidateInfoActionsMixin:
             shutil.copy2(source, path)
         except Exception as exc:
             QMessageBox.warning(self, "Export CIF", str(exc))
+

@@ -10,7 +10,7 @@ import threading
 from xrd_finder.services.ccdc_service import CcdcService, extract_doi
 from xrd_finder.services.cod_online_service import CodEntry, CodOnlineService, formula_elements
 from xrd_finder.services.computational_database_service import AflowService, OqmdService
-from xrd_finder.services.local_phase_cache import LocalPhaseCache
+from xrd_finder.services.local_phase_cache import DERIVED_CACHE_VERSION, LocalPhaseCache
 from xrd_finder.services.match_pdf2_service import MatchPdf2Service
 from xrd_finder.services.materials_project_service import MaterialsProjectService
 from xrd_finder.services.rruff_service import RruffService
@@ -32,6 +32,10 @@ class CandidateSearchOptions:
 
 
 class CandidateSearchService:
+    STRUCTURAL_RESULT_LIMIT = 500
+    ONLINE_RESULT_LIMIT = 300
+    COMPUTATIONAL_RESULT_LIMIT = 150
+
     def __init__(
         self,
         local_phase_cache: LocalPhaseCache,
@@ -84,7 +88,7 @@ class CandidateSearchService:
                 ccdc_entries = self.ccdc.search_text(
                     query=query,
                     target_dir=self.local_phase_cache.root / "ccdc_cif",
-                    limit=80,
+                    limit=self.COMPUTATIONAL_RESULT_LIMIT,
                 )
                 self.index_ccdc_entries(ccdc_entries)
                 self.local_phase_cache.mark_search("CCDC", ccdc_key)
@@ -120,6 +124,7 @@ class CandidateSearchService:
                         text="" if query_elements else query,
                         elements=query_elements or None,
                         excluded_elements=options.excluded_elements,
+                        limit=self.STRUCTURAL_RESULT_LIMIT,
                     )
                 )
             )
@@ -131,6 +136,7 @@ class CandidateSearchService:
                         text="" if query_elements else query,
                         elements=query_elements or None,
                         excluded_elements=options.excluded_elements,
+                        limit=self.STRUCTURAL_RESULT_LIMIT,
                     )
                 )
             )
@@ -143,10 +149,10 @@ class CandidateSearchService:
                         cod_entries = self.cod_online.search_elements(
                             query_elements,
                             excluded_elements=options.excluded_elements,
-                            limit=100,
+                            limit=self.ONLINE_RESULT_LIMIT,
                         )
                     else:
-                        cod_entries = self.cod_online.search_text(query=query, limit=100)
+                        cod_entries = self.cod_online.search_text(query=query, limit=self.ONLINE_RESULT_LIMIT)
                     cod_entries = self.filter_cod_entries(cod_entries, options)
                     self.local_phase_cache.upsert_cod_entries(cod_entries)
                     self.local_phase_cache.mark_search("COD", cod_key)
@@ -161,7 +167,7 @@ class CandidateSearchService:
             mp_key = self.search_cache_key("text", query)
             if not self.local_phase_cache.search_is_fresh("MP", mp_key):
                 try:
-                    mp_entries = self.materials_project.search_text(query=query, limit=80)
+                    mp_entries = self.materials_project.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT)
                     self.local_phase_cache.upsert_materials_project_entries(mp_entries)
                     self.local_phase_cache.mark_search("MP", mp_key)
                     self.queue_background_mp_downloads(mp_entries)
@@ -174,7 +180,7 @@ class CandidateSearchService:
             aflow_key = self.search_cache_key("text", query)
             if not self.local_phase_cache.search_is_fresh("AFLOW", aflow_key):
                 try:
-                    aflow_entries = self.aflow.search_text(query=query, limit=80)
+                    aflow_entries = self.aflow.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT)
                     self.local_phase_cache.upsert_computational_entries(aflow_entries)
                     self.local_phase_cache.mark_search("AFLOW", aflow_key)
                     self.queue_background_aflow_downloads(aflow_entries)
@@ -187,7 +193,7 @@ class CandidateSearchService:
             oqmd_key = self.search_cache_key("text", query)
             if not self.local_phase_cache.search_is_fresh("OQMD", oqmd_key):
                 try:
-                    oqmd_entries = self.oqmd.search_text(query=query, limit=80)
+                    oqmd_entries = self.oqmd.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT)
                     self.local_phase_cache.upsert_computational_entries(oqmd_entries)
                     self.local_phase_cache.mark_search("OQMD", oqmd_key)
                     self.queue_background_oqmd_downloads(oqmd_entries)
@@ -208,6 +214,7 @@ class CandidateSearchService:
                     self.rruff.search(
                         elements=elements,
                         excluded_elements=options.excluded_elements,
+                        limit=self.STRUCTURAL_RESULT_LIMIT,
                     )
                 )
             )
@@ -217,6 +224,7 @@ class CandidateSearchService:
                     self.match_pdf2.search(
                         elements=elements,
                         excluded_elements=options.excluded_elements,
+                        limit=self.STRUCTURAL_RESULT_LIMIT,
                     )
                 )
             )
@@ -227,7 +235,7 @@ class CandidateSearchService:
                     cod_entries = self.cod_online.search_elements(
                         elements,
                         excluded_elements=options.excluded_elements,
-                        limit=100,
+                        limit=self.ONLINE_RESULT_LIMIT,
                     )
                     cod_entries = self.filter_cod_entries(cod_entries, options)
                     self.local_phase_cache.upsert_cod_entries(cod_entries)
@@ -240,7 +248,7 @@ class CandidateSearchService:
             mp_key = self.search_cache_key("elements", elements)
             if not self.local_phase_cache.search_is_fresh("MP", mp_key):
                 try:
-                    mp_entries = self.materials_project.search_elements(elements, limit=80)
+                    mp_entries = self.materials_project.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT)
                     self.local_phase_cache.upsert_materials_project_entries(mp_entries)
                     self.local_phase_cache.mark_search("MP", mp_key)
                     self.queue_background_mp_downloads(mp_entries)
@@ -251,7 +259,7 @@ class CandidateSearchService:
             aflow_key = self.search_cache_key("elements", elements)
             if not self.local_phase_cache.search_is_fresh("AFLOW", aflow_key):
                 try:
-                    aflow_entries = self.aflow.search_elements(elements, limit=80)
+                    aflow_entries = self.aflow.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT)
                     self.local_phase_cache.upsert_computational_entries(aflow_entries)
                     self.local_phase_cache.mark_search("AFLOW", aflow_key)
                     self.queue_background_aflow_downloads(aflow_entries)
@@ -262,7 +270,7 @@ class CandidateSearchService:
             oqmd_key = self.search_cache_key("elements", elements)
             if not self.local_phase_cache.search_is_fresh("OQMD", oqmd_key):
                 try:
-                    oqmd_entries = self.oqmd.search_elements(elements, limit=80)
+                    oqmd_entries = self.oqmd.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT)
                     self.local_phase_cache.upsert_computational_entries(oqmd_entries)
                     self.local_phase_cache.mark_search("OQMD", oqmd_key)
                     self.queue_background_oqmd_downloads(oqmd_entries)
@@ -282,7 +290,7 @@ class CandidateSearchService:
             elements=elements,
             excluded_elements=options.excluded_elements,
             sources=options.local_sources,
-            limit=100,
+            limit=self.STRUCTURAL_RESULT_LIMIT,
         )
 
     def download_cod_entries_to_cache(self, entries) -> int:
@@ -447,7 +455,7 @@ class CandidateSearchService:
                 entry.name or self.display_formula(entry.formula),
                 getattr(entry, "spacegroup", ""),
                 "",
-                "",
+                self.display_iic(getattr(entry, "iic", None), getattr(entry, "derived_version", 0)),
             ]
             for entry in entries
         ]
@@ -489,7 +497,7 @@ class CandidateSearchService:
                 entry.name or self.display_formula(entry.formula),
                 getattr(entry, "spacegroup", ""),
                 "",
-                "",
+                self.display_iic(getattr(entry, "iic", None), getattr(entry, "derived_version", 0)),
             ]
             for entry in entries
         ]
@@ -503,7 +511,7 @@ class CandidateSearchService:
                 entry.name or self.display_formula(entry.formula),
                 getattr(entry, "spacegroup", ""),
                 "",
-                "",
+                self.display_iic(getattr(entry, "iic", None), getattr(entry, "derived_version", 0)),
             ]
             for entry in entries
         ]
@@ -558,6 +566,19 @@ class CandidateSearchService:
         parts = re.findall(r"[A-Z][a-z]?[0-9.]*", formula or "")
         return " ".join(parts) if parts else formula
 
+    def display_iic(self, value, derived_version: int = DERIVED_CACHE_VERSION) -> str:
+        if int(derived_version or 0) != DERIVED_CACHE_VERSION:
+            return ""
+        if value is None or value == "":
+            return ""
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return ""
+        if number <= 0:
+            return ""
+        return f"{number:.3g}"
+
     def display_rruff_id(self, rruff_id: str) -> str:
         match = re.search(r"(?:^|[^A-Za-z0-9])(R[0-9]{5,7}(?:-[0-9]+)?)(?=$|[^A-Za-z0-9])", rruff_id or "")
         return match.group(1) if match else rruff_id
@@ -607,3 +628,5 @@ def normalize_candidate_row(row: list[str]) -> list[str]:
         return ["", "", "", row[4], "", "", ""]
     padded = list(row) + [""] * 7
     return padded[:7]
+
+

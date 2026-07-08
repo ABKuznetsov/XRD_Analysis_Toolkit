@@ -10,6 +10,18 @@ from xrd_finder.finder import FinderCandidateInput
 from xrd_finder.ui.pattern_plot_helpers import plot_phase_marker_lane, plot_profile
 
 
+def _candidate_iic_value(candidate: dict[str, str], estimate_candidate_iic: Callable[[dict[str, str]], float]) -> float:
+    raw_value = candidate.get("I/Ic*", "") or candidate.get("I/Ic", "")
+    text = str(raw_value).replace(",", ".").strip()
+    if text:
+        try:
+            value = float(text)
+        except ValueError:
+            value = 0.0
+        if np.isfinite(value) and value > 0.0:
+            return value
+    return estimate_candidate_iic(candidate)
+
 def build_finder_candidate_inputs(
     candidates: list[dict[str, str]],
     candidate_cif_path: Callable[[dict[str, str]], Path],
@@ -49,7 +61,7 @@ def draw_match_profile_result(
     phase_color: Callable[[dict[str, str], int], str],
     phase_legend_label: Callable[[dict[str, str]], str],
     candidate_key: Callable[[dict[str, str]], str],
-    estimate_candidate_iic: Callable[[dict[str, str], np.ndarray], float],
+    estimate_candidate_iic: Callable[[dict[str, str]], float],
     profile_fit_quality: Callable[[np.ndarray, np.ndarray, np.ndarray], float],
     add_peak_coverage_markers: Callable[..., tuple[int, int]],
     match_scales: dict[str, float],
@@ -91,7 +103,7 @@ def draw_match_profile_result(
         profile = np.asarray(candidate_result.profile, dtype=float)
         match_scales[key] = float(candidate_result.scale)
         match_quantities[key] = float(candidate_result.quantity_percent)
-        match_iic[key] = estimate_candidate_iic(candidate, x)
+        match_iic[key] = _candidate_iic_value(candidate, estimate_candidate_iic)
         match_zero_shifts[key] = float(result.global_zero_shift)
         match_cell_scales[key] = float(candidate_result.cell_scale)
         match_alignment_scores[key] = (
