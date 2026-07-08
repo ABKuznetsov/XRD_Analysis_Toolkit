@@ -263,22 +263,22 @@ For normal interactive work, importing XRD/CIF files from the application window
 
 # Reference Data Sources
 
-The **Databases** tab controls which data sources participate in phase search. The user decides which sources are active for a particular search and which local libraries should be indexed or cleared.
+The **Databases** tab controls which data sources participate in phase search. The user decides which sources are active for a particular search and which local libraries should be indexed or cleared. The links below point to the source projects or database providers, where users can review access rules, licenses, citation requirements and terms of use.
 
 Open or publicly accessible sources:
 
 - User phase library from imported CIF files
-- COD online search ([official site](https://www.crystallography.net/cod/))
-- COD local folder/archive indexed by the user ([official site](https://www.crystallography.net/cod/))
-- RRUFF measured powder-pattern data ([official site](https://rruff.info/))
-- Materials Project search with the user's own API key ([official site](https://materialsproject.org/))
-- AFLOW structure services when enabled in the application workflow ([official site](https://aflow.org/))
-- OQMD structure services when enabled in the application workflow ([official site](https://oqmd.org/))
+- COD online search ([source and terms](https://www.crystallography.net/cod/))
+- COD local folder/archive indexed by the user ([source and terms](https://www.crystallography.net/cod/))
+- RRUFF measured powder-pattern data ([source and terms](https://rruff.info/))
+- Materials Project search with the user's own API key ([source and terms](https://materialsproject.org/))
+- AFLOW structure services when enabled in the application workflow ([source and terms](https://aflow.org/))
+- OQMD structure services when enabled in the application workflow ([source and terms](https://oqmd.org/))
 
 Restricted or license-controlled sources, available only when the user has the right to use them:
 
-- PDF-2 reference-card data from a local user-provided installation or folder ([ICDD](https://www.icdd.com/pdf-2/))
-- CCDC/CSD data through the user's own CCDC Python API installation and valid license/access rights ([official site](https://www.ccdc.cam.ac.uk/solutions/software/csd/))
+- PDF-2 reference-card data from a local user-provided installation or folder ([provider and terms](https://www.icdd.com/pdf-2/))
+- CCDC/CSD data through the user's own CCDC Python API installation and valid license/access rights ([provider and terms](https://www.ccdc.cam.ac.uk/solutions/software/csd/))
 - other local commercial, institutional or private databases supplied by the user
 
 Large databases are never bundled with the application and are not downloaded automatically. Use the controls in **Databases** to download, index, update or clear local data explicitly.
