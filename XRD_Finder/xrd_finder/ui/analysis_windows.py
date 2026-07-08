@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
@@ -37,6 +38,7 @@ from xrd_finder.io.project_io import load_project_manifest, save_project_manifes
 from xrd_finder.services.calculated_pattern_service import (
     CU_KA1_WAVELENGTH,
     CalculatedPatternService,
+    HKLPeak,
 )
 from xrd_finder.services.candidate_search_service import (
     CandidateSearchService,
@@ -81,6 +83,7 @@ from xrd_finder.ui.peak_matching import (
     observed_peak_positions,
     observed_peak_records,
     peak_presence_probability,
+    peak_presence_probability_from_records,
     peak_probability_from_alignment,
 )
 from xrd_finder.ui.phase_finder_menu import build_phase_finder_menu_bar
@@ -1054,7 +1057,7 @@ class PhaseFinderWindow(
         try:
             background = self._estimate_background(observed[:, 0], observed[:, 1])
             corrected = np.clip(observed[:, 1] - background, 0.0, None)
-            records = self._observed_peak_records(observed[:, 0], corrected, limit=24)
+            records = self._observed_peak_records(observed[:, 0], corrected, limit=80)
         except Exception:
             return None
         self._observed_probability_cache = (key, np.asarray(observed[:, 0], dtype=float), corrected, records)
@@ -1066,26 +1069,33 @@ class PhaseFinderWindow(
         probability_data = self._probability_observed_data()
         if probability_data is None:
             return rows
-        observed_x, corrected, observed_records = probability_data
+        _observed_x, _corrected, observed_records = probability_data
         if not observed_records:
             return rows
 
         scored_rows = []
-        max_ranked_rows = 35
-        for index, row in enumerate(rows[:max_ranked_rows]):
+        for index, row in enumerate(rows):
             scored_row = list(row)
-            probability = self._candidate_row_peak_probability(scored_row, observed_x, corrected)
+            probability = self._candidate_row_peak_probability_from_records(
+                scored_row,
+                observed_records,
+                allow_cif_fallback=False,
+            )
             if probability > 0:
                 scored_row[5] = f"{probability:.0f}%"
             scored_rows.append((probability, index, scored_row))
-        for index, row in enumerate(rows[max_ranked_rows:], start=max_ranked_rows):
-            scored_rows.append((0.0, index, row))
         if not any(score > 0 for score, _index, _row in scored_rows):
             return [row for _score, _index, row in scored_rows]
         scored_rows.sort(key=lambda item: (-item[0], item[1]))
         return [row for _score, _index, row in scored_rows]
 
-    def _candidate_row_peak_probability(self, row: list[str], observed_x: np.ndarray, corrected_y: np.ndarray) -> float:
+    def _candidate_row_peak_probability_from_records(
+        self,
+        row: list[str],
+        observed_records: list[tuple[float, float]],
+        *,
+        allow_cif_fallback: bool = True,
+    ) -> float:
         candidate = {
             "Source": row[0] if len(row) > 0 else "",
             "Entry": row[1] if len(row) > 1 else "",
@@ -1102,16 +1112,68 @@ class PhaseFinderWindow(
         if cached_probability is not None:
             return cached_probability
         try:
-            _phase, structure = create_phase_from_cif(cif_path)
-            if candidate.get("Phase"):
-                structure.name = candidate["Phase"]
-            structure.wavelength = self._active_wavelength()
-            peaks = self._candidate_cached_peaks(cif_path, structure)
-            probability = self._peak_presence_probability(peaks, observed_x, corrected_y, structure)
+            structure = None
+            peaks = self._candidate_cached_json_peaks(candidate)
+            if peaks:
+                structure = self._candidate_lightweight_structure(candidate)
+            elif allow_cif_fallback:
+                _phase, structure = create_phase_from_cif(cif_path)
+                if candidate.get("Phase"):
+                    structure.name = candidate["Phase"]
+                structure.wavelength = self._active_wavelength()
+                peaks = self._candidate_cached_peaks(cif_path, structure)
+            else:
+                return 0.0
+            probability = peak_presence_probability_from_records(peaks, observed_records, structure)
             self._candidate_probability_cache[probability_key] = probability
             return probability
         except Exception:
             return 0.0
+
+    def _candidate_row_peak_probability(self, row: list[str], observed_x: np.ndarray, corrected_y: np.ndarray) -> float:
+        records = self._observed_peak_records(observed_x, corrected_y, limit=80)
+        return self._candidate_row_peak_probability_from_records(row, records)
+
+    def _candidate_cached_json_peaks(self, candidate: dict[str, str]) -> list[HKLPeak]:
+        source = self._candidate_source(candidate)
+        entry_id = candidate.get("Entry", "")
+        if source not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"} or not entry_id:
+            return []
+        entry = self.local_phase_cache.get(source, entry_id)
+        if entry is None or not entry.peaks_json:
+            return []
+        try:
+            rows = json.loads(entry.peaks_json)
+        except Exception:
+            return []
+        peaks = []
+        for item in rows:
+            try:
+                peaks.append(
+                    HKLPeak(
+                        h=int(item.get("h", 0)),
+                        k=int(item.get("k", 0)),
+                        l=int(item.get("l", 0)),
+                        d=float(item.get("d", 0.0)),
+                        two_theta=float(item.get("two_theta", 0.0)),
+                        intensity=float(item.get("intensity", 0.0)),
+                        multiplicity=int(item.get("multiplicity", 1) or 1),
+                        raw_intensity=float(item.get("raw_intensity", 0.0) or 0.0),
+                    )
+                )
+            except Exception:
+                continue
+        return peaks
+
+    def _candidate_lightweight_structure(self, candidate: dict[str, str]):
+        class _CandidateStructure:
+            pass
+
+        structure = _CandidateStructure()
+        structure.name = candidate.get("Phase", "") or candidate.get("Entry", "")
+        structure.formula = candidate.get("Formula", "")
+        structure.wavelength = self._active_wavelength()
+        return structure
 
     def _candidate_probability_key(self, candidate: dict[str, str], cif_path: Path) -> tuple[object, ...]:
         try:
@@ -1567,62 +1629,11 @@ class PhaseFinderWindow(
     def _set_candidate_rows(self, rows: list[list[str]]) -> None:
         self._candidate_rank_token += 1
         rows = [normalize_candidate_row(row) for row in rows]
+        if self._rank_by_peak_probability_enabled() and rows:
+            rows = self._rank_candidate_rows_by_peak_probability(rows)
         self.candidate_table.set_rows(rows, normalize_candidate_row)
         if rows:
             self._update_compound_card(self._candidate_row_values(0))
-        if self._rank_by_peak_probability_enabled() and rows:
-            self._start_candidate_probability_ranking(rows)
-
-    def _start_candidate_probability_ranking(self, rows: list[list[str]]) -> None:
-        probability_data = self._probability_observed_data()
-        if probability_data is None:
-            return
-        _observed_x, _corrected, observed_records = probability_data
-        if not observed_records:
-            return
-        self._candidate_rank_token += 1
-        token = self._candidate_rank_token
-        self._candidate_rank_rows = [list(row) for row in rows]
-        self._candidate_rank_scores = {}
-        self._candidate_rank_index = 0
-        QTimer.singleShot(60, lambda token=token: self._rank_candidate_rows_step(token))
-
-    def _rank_candidate_rows_step(self, token: int) -> None:
-        if token != self._candidate_rank_token or not self._candidate_rank_rows:
-            return
-        probability_data = self._probability_observed_data()
-        if probability_data is None:
-            return
-        observed_x, corrected, _observed_records = probability_data
-        max_ranked_rows = min(35, len(self._candidate_rank_rows))
-        batch_size = 3
-        stop = min(self._candidate_rank_index + batch_size, max_ranked_rows)
-        for row_index in range(self._candidate_rank_index, stop):
-            row = self._candidate_rank_rows[row_index]
-            probability = self._candidate_row_peak_probability(row, observed_x, corrected)
-            self._candidate_rank_scores[row_index] = probability
-            if probability > 0:
-                row[5] = f"{probability:.0f}%"
-                self.candidate_table.set_probability(row_index, row[5])
-        self._candidate_rank_index = stop
-        if self._candidate_rank_index < max_ranked_rows:
-            QTimer.singleShot(20, lambda token=token: self._rank_candidate_rows_step(token))
-            return
-        if not any(score > 0 for score in self._candidate_rank_scores.values()):
-            return
-        indexed_rows = []
-        for index, row in enumerate(self._candidate_rank_rows):
-            indexed_rows.append((self._candidate_rank_scores.get(index, 0.0), index, row))
-        indexed_rows.sort(key=lambda item: (-item[0], item[1]))
-        current = self.candidate_table.selected_row_values() or {}
-        current_key = (current.get("Source", ""), current.get("Entry", ""), current.get("Phase", ""))
-        sorted_rows = [row for _score, _index, row in indexed_rows]
-        self.candidate_table.set_rows(sorted_rows, normalize_candidate_row)
-        for row_index in range(self.candidate_table.rowCount()):
-            values = self._candidate_row_values(row_index)
-            if (values.get("Source", ""), values.get("Entry", ""), values.get("Phase", "")) == current_key:
-                self.candidate_table.selectRow(row_index)
-                break
 
     def _format_first_peak_two_theta(self, candidate) -> str:
         return ""

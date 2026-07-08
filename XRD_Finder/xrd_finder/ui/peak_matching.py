@@ -120,62 +120,144 @@ def peak_probability_from_alignment(alignment: PhaseAlignmentEstimate) -> float:
 
 
 def peak_presence_probability(peaks, observed_x: np.ndarray, corrected_y: np.ndarray, structure) -> float:
-    records = observed_peak_records(observed_x, corrected_y, limit=24)
-    if not records or not peaks:
+    return peak_presence_probability_from_records(
+        peaks,
+        observed_peak_records(observed_x, corrected_y, limit=80),
+        structure,
+    )
+
+
+def peak_presence_probability_from_records(peaks, observed_records: list[tuple[float, float]], structure) -> float:
+    if not observed_records or not peaks:
         return 0.0
-    observed_positions = np.asarray([position for position, _height in records], dtype=float)
+    observed_positions = np.asarray([position for position, _height in observed_records], dtype=float)
+    observed_heights = np.asarray([max(float(height), 0.0) for _position, height in observed_records], dtype=float)
+    if len(observed_positions) == 0 or float(np.nanmax(observed_heights, initial=0.0)) <= 0:
+        return 0.0
+
     strong_calc = [
         peak
         for peak in peaks
-        if getattr(peak, "intensity", 0.0) >= 2.0 and 5.0 <= getattr(peak, "two_theta", 0.0) <= 120.0
+        if getattr(peak, "intensity", 0.0) >= 1.0 and 5.0 <= getattr(peak, "two_theta", 0.0) <= 120.0
     ]
-    strong_calc = sorted(strong_calc, key=lambda peak: float(getattr(peak, "intensity", 0.0)), reverse=True)[:45]
+    strong_calc = sorted(strong_calc, key=lambda peak: float(getattr(peak, "intensity", 0.0)), reverse=True)[:36]
     if not strong_calc:
         return 0.0
-    alignment = estimate_phase_alignment(strong_calc, observed_positions, structure)
-    zero_shift = alignment.zero_shift if alignment.matched_peaks >= 3 else 0.0
-    calc_positions = np.asarray([float(peak.two_theta) + zero_shift for peak in strong_calc], dtype=float)
-    calc_intensities = np.asarray([max(float(getattr(peak, "intensity", 0.0)), 1.0) for peak in strong_calc], dtype=float)
 
-    tolerance = 0.42
-    observed_weighted = 0.0
+    alignment = estimate_phase_alignment(strong_calc, np.sort(observed_positions), structure)
+    zero_seed = alignment.zero_shift if alignment.matched_peaks >= 3 else 0.0
+    base_positions = np.asarray([float(peak.two_theta) for peak in strong_calc], dtype=float)
+    calc_intensities = np.asarray([max(float(getattr(peak, "intensity", 0.0)), 0.0) for peak in strong_calc], dtype=float)
+    strongest_calc = max(float(np.nanmax(calc_intensities)), 1.0)
+    calc_relative = np.clip(calc_intensities / strongest_calc, 0.0, 1.0)
+
+    tolerance = 0.34
+    calc_positions, calc_coverage, top_matches, strongest_match_quality, fit_penalty = _best_candidate_position_fit(
+        base_positions,
+        calc_relative,
+        observed_positions,
+        tolerance,
+        zero_seed,
+    )
+
     observed_total = 0.0
-    for obs_position, obs_height in records[:18]:
-        weight = max(obs_height, 1.0) ** 0.65
+    observed_weighted = 0.0
+    max_observed = max(float(np.nanmax(observed_heights)), 1.0)
+    for obs_position, obs_height in observed_records[:30]:
+        rel_height = max(float(obs_height), 0.0) / max_observed
+        weight = max(rel_height, 0.03) ** 0.45
         observed_total += weight
         nearest = _nearest_delta(calc_positions, obs_position)
         if nearest <= tolerance:
             quality = max(0.0, 1.0 - nearest / tolerance)
-            observed_weighted += weight * (0.45 + 0.55 * quality)
+            observed_weighted += weight * (0.35 + 0.65 * quality)
     observed_coverage = observed_weighted / observed_total if observed_total > 0 else 0.0
 
-    top_count = min(18, len(calc_positions))
+    # Primary ranking follows the candidate's own strongest peaks. Observed coverage
+    # is deliberately weak because unrelated strong peaks often belong to other phases.
+    probability = 100.0 * (0.78 * calc_coverage + 0.16 * observed_coverage + 0.06 * min(top_matches / 6.0, 1.0))
+    if strongest_match_quality <= 0.0:
+        probability = min(probability, 22.0)
+    elif top_matches < 2:
+        probability = min(probability, 45.0)
+    elif top_matches < 3:
+        probability = min(probability, 68.0)
+    probability *= fit_penalty
+    if alignment.score > 0.20:
+        probability *= max(0.68, 1.0 - min((alignment.score - 0.20) / 0.45, 0.32))
+    return float(np.clip(probability, 0.0, 100.0))
+
+
+def _best_candidate_position_fit(
+    base_positions: np.ndarray,
+    calc_relative: np.ndarray,
+    observed_positions: np.ndarray,
+    tolerance: float,
+    zero_seed: float,
+) -> tuple[np.ndarray, float, int, float, float]:
+    best_positions = base_positions
+    best_coverage = 0.0
+    best_top_matches = 0
+    best_strongest_quality = 0.0
+    best_penalty = 1.0
+    best_score = -1.0
+    scale_candidates = (-0.003, -0.0015, 0.0, 0.0015, 0.003)
+    zero_candidates = sorted({
+        -0.35,
+        -0.20,
+        -0.10,
+        0.0,
+        0.10,
+        0.20,
+        0.35,
+        float(np.clip(zero_seed, -0.45, 0.45)),
+    })
+    pivot = 45.0
+    for scale in scale_candidates:
+        scaled = base_positions + (base_positions - pivot) * scale
+        for zero in zero_candidates:
+            positions = scaled + zero
+            coverage, top_matches, strongest_quality = _candidate_position_coverage(
+                positions,
+                calc_relative,
+                observed_positions,
+                tolerance,
+            )
+            deformation_penalty = max(0.84, 1.0 - abs(scale) * 22.0 - abs(zero) * 0.16)
+            score = coverage * deformation_penalty
+            if score > best_score:
+                best_score = score
+                best_positions = positions
+                best_coverage = coverage
+                best_top_matches = top_matches
+                best_strongest_quality = strongest_quality
+                best_penalty = deformation_penalty
+    return best_positions, best_coverage, best_top_matches, best_strongest_quality, best_penalty
+
+
+def _candidate_position_coverage(
+    calc_positions: np.ndarray,
+    calc_relative: np.ndarray,
+    observed_positions: np.ndarray,
+    tolerance: float,
+) -> tuple[float, int, float]:
     calc_weighted = 0.0
     calc_total = 0.0
-    for calc_position, calc_intensity in zip(calc_positions[:top_count], calc_intensities[:top_count]):
-        weight = max(calc_intensity, 1.0) ** 0.55
+    top_matches = 0
+    strongest_match_quality = 0.0
+    for index, (calc_position, rel_intensity) in enumerate(zip(calc_positions, calc_relative)):
+        weight = max(float(rel_intensity), 0.03) ** 0.55
         calc_total += weight
-        nearest = _nearest_delta(observed_positions, calc_position)
+        nearest = _nearest_delta(observed_positions, float(calc_position))
         if nearest <= tolerance:
             quality = max(0.0, 1.0 - nearest / tolerance)
-            calc_weighted += weight * (0.45 + 0.55 * quality)
-    calc_coverage = calc_weighted / calc_total if calc_total > 0 else 0.0
-
-    # Rank mostly by the candidate's own strongest peaks. Observed coverage is only a
-    # weak helper because secondary phases can add many unrelated observed peaks.
-    signature_bonus = min(calc_coverage / 0.45, 1.0) if calc_coverage > 0 else 0.0
-    probability = 100.0 * (0.20 * observed_coverage + 0.68 * calc_coverage + 0.12 * signature_bonus)
-    top_calc_matches = 0
-    for calc_position in calc_positions[:min(8, len(calc_positions))]:
-        if _nearest_delta(observed_positions, calc_position) <= tolerance:
-            top_calc_matches += 1
-    if top_calc_matches < 1:
-        probability = min(probability, 25.0)
-    elif top_calc_matches < 2:
-        probability = min(probability, 55.0)
-    if alignment.score > 0.22:
-        probability *= max(0.75, 1.0 - min((alignment.score - 0.22) / 0.5, 0.25))
-    return float(np.clip(probability, 0.0, 100.0))
+            calc_weighted += weight * (0.35 + 0.65 * quality)
+            if index < 8:
+                top_matches += 1
+            if index == 0:
+                strongest_match_quality = quality
+    coverage = calc_weighted / calc_total if calc_total > 0 else 0.0
+    return coverage, top_matches, strongest_match_quality
 
 def _nearest_delta(sorted_values: np.ndarray, value: float) -> float:
     if len(sorted_values) == 0:
