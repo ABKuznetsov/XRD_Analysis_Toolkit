@@ -130,10 +130,21 @@ def peak_presence_probability(peaks, observed_x: np.ndarray, corrected_y: np.nda
 def peak_presence_probability_from_records(peaks, observed_records: list[tuple[float, float]], structure) -> float:
     if not observed_records or not peaks:
         return 0.0
-    observed_positions = np.sort(np.asarray([position for position, _height in observed_records], dtype=float))
-    observed_heights = np.asarray([max(float(height), 0.0) for _position, height in observed_records], dtype=float)
+    observed_pairs = sorted(
+        (
+            (float(position), max(float(height), 0.0))
+            for position, height in observed_records
+            if np.isfinite(position) and np.isfinite(height)
+        ),
+        key=lambda item: item[0],
+    )
+    if not observed_pairs:
+        return 0.0
+    observed_positions = np.asarray([position for position, _height in observed_pairs], dtype=float)
+    observed_heights = np.asarray([height for _position, height in observed_pairs], dtype=float)
     if len(observed_positions) == 0 or float(np.nanmax(observed_heights, initial=0.0)) <= 0:
         return 0.0
+    observed_relative = observed_heights / max(float(np.nanmax(observed_heights)), 1.0)
 
     strong_calc = [
         peak
@@ -152,10 +163,18 @@ def peak_presence_probability_from_records(peaks, observed_records: list[tuple[f
     calc_relative = np.clip(calc_intensities / strongest_calc, 0.0, 1.0)
 
     tolerance = 0.34
-    calc_positions, calc_coverage, top_matches, strongest_match_quality, fit_penalty = _best_candidate_position_fit(
+    (
+        calc_positions,
+        calc_coverage,
+        top_matches,
+        strongest_match_quality,
+        fit_penalty,
+        intensity_fit,
+    ) = _best_candidate_position_fit(
         base_positions,
         calc_relative,
         observed_positions,
+        observed_relative,
         tolerance,
         zero_seed,
     )
@@ -183,7 +202,7 @@ def peak_presence_probability_from_records(peaks, observed_records: list[tuple[f
         probability = min(probability, 45.0)
     elif top_matches < 3:
         probability = min(probability, 68.0)
-    probability *= fit_penalty
+    probability *= fit_penalty * (0.72 + 0.28 * intensity_fit)
     if alignment.score > 0.20:
         probability *= max(0.68, 1.0 - min((alignment.score - 0.20) / 0.45, 0.32))
     return float(np.clip(probability, 0.0, 100.0))
@@ -193,14 +212,16 @@ def _best_candidate_position_fit(
     base_positions: np.ndarray,
     calc_relative: np.ndarray,
     observed_positions: np.ndarray,
+    observed_relative: np.ndarray,
     tolerance: float,
     zero_seed: float,
-) -> tuple[np.ndarray, float, int, float, float]:
+) -> tuple[np.ndarray, float, int, float, float, float]:
     best_positions = base_positions
     best_coverage = 0.0
     best_top_matches = 0
     best_strongest_quality = 0.0
     best_penalty = 1.0
+    best_intensity_fit = 0.0
     best_score = -1.0
     scale_candidates = (-0.003, -0.0015, 0.0, 0.0015, 0.003)
     zero_candidates = sorted({
@@ -218,14 +239,15 @@ def _best_candidate_position_fit(
         scaled = base_positions + (base_positions - pivot) * scale
         for zero in zero_candidates:
             positions = scaled + zero
-            coverage, top_matches, strongest_quality = _candidate_position_coverage(
+            coverage, top_matches, strongest_quality, intensity_fit = _candidate_position_coverage(
                 positions,
                 calc_relative,
                 observed_positions,
+                observed_relative,
                 tolerance,
             )
             deformation_penalty = max(0.84, 1.0 - abs(scale) * 22.0 - abs(zero) * 0.16)
-            score = coverage * deformation_penalty
+            score = coverage * deformation_penalty * (0.85 + 0.15 * intensity_fit)
             if score > best_score:
                 best_score = score
                 best_positions = positions
@@ -233,35 +255,100 @@ def _best_candidate_position_fit(
                 best_top_matches = top_matches
                 best_strongest_quality = strongest_quality
                 best_penalty = deformation_penalty
-    return best_positions, best_coverage, best_top_matches, best_strongest_quality, best_penalty
+                best_intensity_fit = intensity_fit
+    return best_positions, best_coverage, best_top_matches, best_strongest_quality, best_penalty, best_intensity_fit
 
 
 def _candidate_position_coverage(
     calc_positions: np.ndarray,
     calc_relative: np.ndarray,
     observed_positions: np.ndarray,
+    observed_relative: np.ndarray,
     tolerance: float,
-) -> tuple[float, int, float]:
+) -> tuple[float, int, float, float]:
     calc_weighted = 0.0
     calc_total = 0.0
     top_matches = 0
     strongest_match_quality = 0.0
+    matched_calc: list[float] = []
+    matched_observed: list[float] = []
+    matched_weights: list[float] = []
     for index, (calc_position, rel_intensity) in enumerate(zip(calc_positions, calc_relative)):
-        weight = max(float(rel_intensity), 0.03) ** 0.55
+        calc_rel = max(float(rel_intensity), 0.03)
+        weight = calc_rel ** 0.55
         calc_total += weight
-        nearest = _nearest_delta(observed_positions, float(calc_position))
+        nearest, observed_index = _nearest_delta_index(observed_positions, float(calc_position))
         if nearest <= tolerance:
             quality = max(0.0, 1.0 - nearest / tolerance)
-            calc_weighted += weight * (0.35 + 0.65 * quality)
+            obs_rel = max(float(observed_relative[observed_index]), 0.001)
+            intensity_quality = _relative_intensity_quality(calc_rel, obs_rel, matched_calc, matched_observed, matched_weights)
+            calc_weighted += weight * (0.30 + 0.50 * quality + 0.20 * quality * intensity_quality)
+            matched_calc.append(calc_rel)
+            matched_observed.append(obs_rel)
+            matched_weights.append(weight)
             if index < 8:
                 top_matches += 1
             if index == 0:
-                strongest_match_quality = quality
+                strongest_match_quality = quality * (0.65 + 0.35 * intensity_quality)
     coverage = calc_weighted / calc_total if calc_total > 0 else 0.0
-    return coverage, top_matches, strongest_match_quality
+    intensity_fit = _relative_intensity_fit(matched_calc, matched_observed, matched_weights)
+    return coverage, top_matches, strongest_match_quality, intensity_fit
+
+
+def _relative_intensity_quality(
+    calc_rel: float,
+    obs_rel: float,
+    matched_calc: list[float],
+    matched_observed: list[float],
+    matched_weights: list[float],
+) -> float:
+    scale = _relative_intensity_scale(matched_calc, matched_observed, matched_weights)
+    expected = max(calc_rel * scale, 1e-6)
+    ratio = max(obs_rel, 1e-6) / expected
+    return float(np.clip(np.exp(-abs(np.log(ratio)) * 0.85), 0.0, 1.0))
+
+
+def _relative_intensity_fit(
+    matched_calc: list[float],
+    matched_observed: list[float],
+    matched_weights: list[float],
+) -> float:
+    if len(matched_calc) < 2:
+        return 0.55 if matched_calc else 0.0
+    scale = _relative_intensity_scale(matched_calc, matched_observed, matched_weights)
+    qualities = []
+    for calc_rel, obs_rel in zip(matched_calc, matched_observed):
+        expected = max(calc_rel * scale, 1e-6)
+        ratio = max(obs_rel, 1e-6) / expected
+        qualities.append(float(np.clip(np.exp(-abs(np.log(ratio)) * 0.85), 0.0, 1.0)))
+    weights = np.asarray(matched_weights, dtype=float)
+    values = np.asarray(qualities, dtype=float)
+    return float(np.average(values, weights=weights)) if float(np.sum(weights)) > 0 else float(np.mean(values))
+
+
+def _relative_intensity_scale(
+    matched_calc: list[float],
+    matched_observed: list[float],
+    matched_weights: list[float],
+) -> float:
+    if not matched_calc:
+        return 1.0
+    calc = np.asarray(matched_calc, dtype=float)
+    observed = np.asarray(matched_observed, dtype=float)
+    weights = np.asarray(matched_weights, dtype=float)
+    denominator = float(np.sum(weights * calc * calc))
+    if denominator <= 0:
+        return 1.0
+    scale = float(np.sum(weights * calc * observed) / denominator)
+    return float(np.clip(scale, 0.05, 12.0))
 
 def _nearest_delta(sorted_values: np.ndarray, value: float) -> float:
+    delta, _index = _nearest_delta_index(sorted_values, value)
+    return delta
+
+
+def _nearest_delta_index(sorted_values: np.ndarray, value: float) -> tuple[float, int]:
     if len(sorted_values) == 0:
-        return 999.0
+        return 999.0, -1
     index = nearest_index(sorted_values, float(value))
-    return abs(float(sorted_values[index]) - float(value))
+    return abs(float(sorted_values[index]) - float(value)), index
