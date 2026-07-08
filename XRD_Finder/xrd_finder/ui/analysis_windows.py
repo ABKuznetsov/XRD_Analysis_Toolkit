@@ -1197,8 +1197,12 @@ class PhaseFinderWindow(
             corundum_peaks = self._corundum_peaks(wavelength, two_theta_min, two_theta_max)
         except Exception:
             return 0.0
-        sample_total = self._raw_peak_reference_intensity(sample_peaks)
-        corundum_total = self._raw_peak_reference_intensity(corundum_peaks)
+        sample_total = self._diffraction_power_reference_intensity(sample_peaks, structure, wavelength)
+        corundum_total = self._diffraction_power_reference_intensity(
+            corundum_peaks,
+            self._corundum_structure(),
+            wavelength,
+        )
         if sample_total <= 0 or corundum_total <= 0:
             return 0.0
         value = sample_total / corundum_total
@@ -1284,12 +1288,16 @@ class PhaseFinderWindow(
         ]
         return structure
 
-    def _raw_peak_reference_intensity(self, peaks) -> float:
+    def _diffraction_power_reference_intensity(self, peaks, structure, wavelength: float) -> float:
         values = [
             max(float(getattr(peak, "raw_intensity", 0.0) or getattr(peak, "intensity", 0.0)), 0.0)
             for peak in peaks
         ]
-        return float(max(values, default=0.0))
+        strongest = float(max(values, default=0.0))
+        volume = float(getattr(getattr(structure, "cell", None), "volume", 0.0) or 0.0)
+        if strongest <= 0.0 or volume <= 0.0:
+            return 0.0
+        return strongest * (float(wavelength) / volume) ** 2
 
     def _calculate_candidate_overlay(self, candidate: dict[str, str], show_errors: bool) -> None:
         entry_id = candidate.get("Entry", "")

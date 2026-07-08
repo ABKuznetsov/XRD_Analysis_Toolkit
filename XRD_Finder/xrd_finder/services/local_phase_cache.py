@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import re
 from pathlib import Path
 import shutil
 import sqlite3
 import time
-import re
 
 from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.core.structure import AtomSite, CellParameters, Structure
@@ -16,7 +16,7 @@ from xrd_finder.services.cod_online_service import CodEntry, CodOnlineService, f
 
 
 DEFAULT_CACHE_ROOT = default_phase_cache_root()
-DERIVED_CACHE_VERSION = 6
+DERIVED_CACHE_VERSION = 8
 
 
 @dataclass(slots=True)
@@ -336,7 +336,7 @@ class LocalPhaseCache:
             atoms_json = self._atoms_to_json(structure)
             peaks = self._calculate_cached_peaks(structure)
             peaks_json = self._peaks_to_json(peaks)
-            iic = self._estimate_iic_from_peaks(peaks)
+            iic = self._estimate_iic_from_peaks(peaks, structure)
             derived_version = DERIVED_CACHE_VERSION
         except Exception:
             formula = fallback.formula if fallback else ""
@@ -399,9 +399,9 @@ class LocalPhaseCache:
             })
         return json.dumps(rows, ensure_ascii=True, separators=(",", ":"))
 
-    def _estimate_iic_from_peaks(self, peaks) -> float | None:
-        sample = self._strongest_raw_peak(peaks)
-        corundum = self._corundum_strongest_raw_peak()
+    def _estimate_iic_from_peaks(self, peaks, structure=None) -> float | None:
+        sample = self._volume_normalized_strongest_peak(peaks, structure)
+        corundum = self._corundum_volume_normalized_strongest_peak()
         if sample <= 0.0 or corundum <= 0.0:
             return None
         return float(max(0.0, min(sample / corundum, 99.9)))
@@ -415,9 +415,22 @@ class LocalPhaseCache:
             default=0.0,
         )
 
-    def _corundum_strongest_raw_peak(self) -> float:
+    def _volume_normalized_strongest_peak(self, peaks, structure=None) -> float:
+        strongest = self._strongest_raw_peak(peaks)
+        volume = float(getattr(getattr(structure, "cell", None), "volume", 0.0) or 0.0)
+        if strongest <= 0.0 or volume <= 0.0:
+            return 0.0
+        # Match/GSAS-style diffraction power scales F^2 by (lambda / V)^2.
+        wavelength = float(getattr(structure, "wavelength", None) or CU_KA1_WAVELENGTH)
+        return strongest * (wavelength / volume) ** 2
+
+    def _corundum_volume_normalized_strongest_peak(self) -> float:
         if self._corundum_reference_intensity is None:
-            self._corundum_reference_intensity = self._strongest_raw_peak(self._calculate_cached_peaks(self._corundum_structure()))
+            corundum_structure = self._corundum_structure()
+            self._corundum_reference_intensity = self._volume_normalized_strongest_peak(
+                self._calculate_cached_peaks(corundum_structure),
+                corundum_structure,
+            )
         return self._corundum_reference_intensity
 
     def _corundum_structure(self) -> Structure:
