@@ -17,116 +17,34 @@ More detailed installation notes are below in [Installation](#installation).
 
 Feature release focused on Phase Finder maintainability, background correction and cross-platform setup improvements.
 
-# Introduction
+# Overview
 
-Welcome to the **XRD Analysis Toolkit** project. Its first application, **XRD Phase Finder**, is an open-source Python tool for phase identification from powder X-ray diffraction (XRD) data. It combines experimental pattern handling, element-constrained database search, reference-pattern preview, CIF-based diffraction simulation and practical candidate ranking in one desktop workflow.
+**XRD Phase Finder** is an open-source desktop tool for powder X-ray diffraction phase identification. It is built for everyday search-match work: load experimental XRD patterns, limit the chemistry by elements, search local or online phase sources, preview candidate peaks, inspect phase cards and keep selected phases in one project.
 
-XRD Phase Finder is designed for everyday search-match work: import one or many experimental XRD patterns, restrict the chemistry with required or optional elements, search local and online phase sources, compare candidates against the observed pattern, inspect compound cards and build an interpretable set of selected phases.
+![XRD Phase Finder workspace](XRD_Finder/docs/screenshots/xrd-phase-finder-overview.jpg)
 
-The project is possible because of the scientific software and crystallographic-data ecosystem around powder diffraction.
+## What It Can Do
 
-Open or publicly accessible data sources and services that XRD Phase Finder can work with include:
+- import one or many XRD patterns and CIF files
+- smooth patterns, subtract background and compare stacked patterns
+- search candidates by required and optional elements
+- preview calculated or measured reference peaks directly on the active pattern
+- rank candidates by peak-match score and keep selected phase overlays
+- calculate diffraction from CIF structures and display compound cards
+- save projects with imported data, processing state, selected phases and view settings
+- manage local caches, user libraries and external database folders from the Databases tab
 
-- COD (Crystallography Open Database)
-- Materials Project (MP), when the user provides their own API key
-- AFLOW Database
-- OQMD (Open Quantum Materials Database)
-- RRUFF Project measured powder patterns
-- user-provided CIF folders and local phase libraries
+## Data Sources
 
-Support for restricted, proprietary or license-controlled sources is under active development. These sources will be available only when the user already has the legal right to access them:
+Open or publicly accessible sources supported or planned in the workflow include COD, Materials Project with the user's API key, AFLOW, OQMD, RRUFF measured patterns and user-provided CIF libraries.
 
-- PDF-2 reference-card data from a user-provided local PDF-2 installation or folder
-- CCDC/CSD data through the user's own CCDC Python API installation and valid license/access rights
-- any other local commercial, institutional or private crystallographic database supplied by the user
+Restricted databases are handled only as user-managed local data. PDF-2, CCDC/CSD and other commercial, institutional or private databases can be used only when the user already has the legal right to access them. The developers do **not** distribute closed or license-controlled databases with the installer.
 
-The developers of XRD Phase Finder **do not distribute closed, proprietary or license-controlled databases**. The project may provide optional connectors, import/indexing tools and local search workflows, but access to restricted data remains entirely the user's responsibility. Users must ensure that they have the right to access and process any restricted database, and must follow the license terms, attribution rules and citation requirements of each data source.
+## Notes
 
-XRD Phase Finder also builds on the open-source Python scientific stack, including:
+XRD Phase Finder is intended for phase identification and pre-refinement screening. It helps find chemically plausible candidates and compare their strongest calculated or measured peaks against the active pattern; it is not a replacement for full Rietveld refinement.
 
-- NumPy and SciPy
-- pybaselines
-- pyqtgraph
-- PySide6 / Qt
-- gemmi
-- pymatgen, when optional Materials Project workflows are installed
-
-Large third-party databases are **not bundled** with this repository or installer. XRD Phase Finder uses official online access, user-provided local folders, user API keys or optional local imports where available.
-
-The main mechanism behind XRD Phase Finder is intentionally pragmatic: it first helps the user find chemically plausible candidates, then compares each candidate's own strongest calculated or measured peaks against the active experimental pattern. This is meant for phase identification and pre-refinement screening, not as a replacement for full Rietveld refinement.
-
----
-# Interface Overview
-
-The screenshots below show representative parts of the XRD Phase Finder workflow. The interface is under active development, so exact button placement and labels may change between releases.
-
-## Phase Search Workspace
-
-![Phase search overview](XRD_Finder/docs/screenshots/phase-search-overview.png)
-
-The main workspace combines the active experimental pattern, candidate search results, selected phase overlays and element-based filters. The goal is to keep search, preview and interpretation in one window.
-
-## Candidate Preview and Matching
-
-![Candidate preview](XRD_Finder/docs/screenshots/candidate-preview.png)
-
-Candidate rows can be browsed to preview calculated or measured reference peaks against the active XRD pattern. Structural candidates can be added to the selected phase set for profile comparison.
-
-## Multi-pattern Comparison
-
-![Multi-pattern stack](XRD_Finder/docs/screenshots/multi-pattern-stack.png)
-
-Multiple checked XRD patterns can be displayed together with a controlled vertical offset. The highlighted pattern remains the active pattern for search and candidate preview.
-
-## Compound Card
-
-![Compound card](XRD_Finder/docs/screenshots/compound-card.png)
-
-The compound card is intended to collect available phase metadata: formula, source, links, cell parameters, atom positions and diffraction lines when the source provides them.
-
-## Database Management
-
-![Database panel](XRD_Finder/docs/screenshots/database-panel.png)
-
-The Databases tab manages local user libraries, indexed reference data, external source settings and cache/update/clear actions. Restricted databases are used only when the user provides data and has the right to access it.
-
-# Features
-
-## Search and Identification
-
-- Powder XRD pattern viewer
-- Automatic peak detection
-- Element filters with required and optional elements
-- COD online search and local COD/CIF indexing
-- User CIF library indexing
-- CCDC/CSD DOI/refcode lookup when the user has the CCDC Python API and valid access rights
-- Materials Project search with user API key
-- RRUFF measured powder-pattern overlays
-- PDF-2 reference-card support from user-provided local data
-- Candidate ranking by estimated peak-match probability for locally available structures
-
-## Visualization
-
-- Single-pattern and multi-pattern XRD display
-- Vertical offset control for stacked XRD patterns
-- Stable zoom while browsing candidates
-- Candidate preview peaks shown directly over the active XRD pattern
-- Persistent selected-phase overlays with editable colors
-- Project files preserve processed XRD curves, selected phases, element filters and Finder view state
-- Optional HKL labels
-- High-resolution plot export
-
-## Structure and Phase Data
-
-- Drag-and-drop import for XRD and CIF files
-- CIF-based diffraction pattern simulation
-- Multi-phase profile calculation
-- Automatic profile scaling
-- Peak assignment framework
-- Identification of unexplained diffraction peaks
-- Compound cards with cell parameters, atom positions and publication links
-- Diffraction-line tables in compound cards
-- Cross-platform support (Windows, macOS and Linux)
+The application uses the Python scientific stack, including NumPy, SciPy, pybaselines, pyqtgraph, PySide6/Qt, gemmi and pymatgen for Materials Project workflows.
 
 ---
 
