@@ -449,6 +449,17 @@ if (Test-Path -LiteralPath $appManifestPath) {
 }
 $startupNoticePath = Join-Path $finderRoot ("startup_notice_" + $localVersion + ".done")
 $showStartupNotice = -not (Test-Path -LiteralPath $startupNoticePath)
+if (-not $showStartupNotice -and (Test-Path -LiteralPath $appManifestPath)) {
+    try {
+        $noticeMarker = Get-Item -LiteralPath $startupNoticePath
+        $appManifestFile = Get-Item -LiteralPath $appManifestPath
+        if ($appManifestFile.LastWriteTimeUtc -gt $noticeMarker.LastWriteTimeUtc) {
+            $showStartupNotice = $true
+        }
+    } catch {
+        $showStartupNotice = $true
+    }
+}
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing

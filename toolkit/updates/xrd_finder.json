@@ -13,16 +13,16 @@
       "type": "installer",
       "platform": "windows-x64",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.0/XRD_Phase_Finder_Setup_1.1.0.exe",
-      "sha256": "4d1b7c9e6e788fecd0ce7c3b66a529c5b3641fb18a2cb20866454d46e737eeb7",
-      "size_bytes": 5852221
+      "sha256": "c4ea94cb01102df81da25eb2437798f98cbdd88c85e38912a17173f363ac6a9d",
+      "size_bytes": 5853656
     },
     {
       "name": "XRD_Phase_Finder_macOS_1.1.0.zip",
       "type": "installer-archive",
       "platform": "macos",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.0/XRD_Phase_Finder_macOS_1.1.0.zip",
-      "sha256": "c1a10cc8b97bf2c8035762e8b1346c205e942a2bdfcafa5d2c33ee721b1884dd",
-      "size_bytes": 3748233
+      "sha256": "6c53a789f6b5a621752426b9b369862f84804c502a9e6e1a1df325055f8ba17e",
+      "size_bytes": 3748791
     }
   ],
   "summary": [
@@ -32,6 +32,6 @@
     "Add macOS setup/update helpers and release archive tooling.",
     "Show a first-start/update notice while local caches and database data are prepared."
   ],
-  "installer_sha256": "4d1b7c9e6e788fecd0ce7c3b66a529c5b3641fb18a2cb20866454d46e737eeb7",
+  "installer_sha256": "c4ea94cb01102df81da25eb2437798f98cbdd88c85e38912a17173f363ac6a9d",
   "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.0/XRD_Phase_Finder_Setup_1.1.0.exe"
 }

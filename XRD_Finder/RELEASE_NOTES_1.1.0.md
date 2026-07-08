@@ -10,8 +10,8 @@ Feature release focused on Phase Finder maintainability, background correction a
 Checksums:
 
 ```text
-SHA256  4d1b7c9e6e788fecd0ce7c3b66a529c5b3641fb18a2cb20866454d46e737eeb7  XRD_Phase_Finder_Setup_1.1.0.exe
-SHA256  c1a10cc8b97bf2c8035762e8b1346c205e942a2bdfcafa5d2c33ee721b1884dd  XRD_Phase_Finder_macOS_1.1.0.zip
+SHA256  c4ea94cb01102df81da25eb2437798f98cbdd88c85e38912a17173f363ac6a9d  XRD_Phase_Finder_Setup_1.1.0.exe
+SHA256  6c53a789f6b5a621752426b9b369862f84804c502a9e6e1a1df325055f8ba17e  XRD_Phase_Finder_macOS_1.1.0.zip
 ```
 
 ## Changed
