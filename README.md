@@ -261,7 +261,7 @@ Open or publicly accessible sources:
 
 - User phase library from imported CIF files
 - COD online search ([official site](https://www.crystallography.net/cod/))
-- COD local folder/archive indexed by the user ([official site](https://www.crystallography.net/cod/))
+- COD local folder/archive indexed by the user 
 - RRUFF measured powder-pattern data ([official site](https://rruff.info/))
 - Materials Project search with the user's own API key ([official site](https://materialsproject.org/))
 - AFLOW structure services when enabled in the application workflow ([official site](https://aflow.org/))
