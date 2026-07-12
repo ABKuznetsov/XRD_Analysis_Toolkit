@@ -17,8 +17,6 @@ echo Application root: %APP_ROOT%>> "%LOG_FILE%"
 echo Sci root: %SCI_ROOT%>> "%LOG_FILE%"
 
 call :remove_user_path "%LocalAppData%\XRD_Toolkit\bin"
-call :remove_user_path "C:\Sci\bin"
-call :remove_user_path "C:\Sci\Python"
 
 call :check_windows_version
 if errorlevel 1 exit /b 1
@@ -42,16 +40,6 @@ if errorlevel 1 (
 
 echo Using Python: %PYTHON_CMD%
 echo Using Python: %PYTHON_CMD%>> "%LOG_FILE%"
-
-if exist "%SCI_ENV%\Scripts\python.exe" (
-    "%SCI_ENV%\Scripts\python.exe" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>> "%LOG_FILE%"
-    if errorlevel 1 (
-        echo Existing Sci environment is broken and will be recreated.
-        echo Existing Sci environment is broken and will be recreated.>> "%LOG_FILE%"
-        call :reset_sci_env
-        if errorlevel 1 exit /b 1
-    )
-)
 
 if not exist "%SCI_ENV%\Scripts\python.exe" (
     echo Creating shared Sci environment...
@@ -148,16 +136,6 @@ set "OLD_BIN_PATH=%~1"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$old=[Environment]::ExpandEnvironmentVariables('%OLD_BIN_PATH%'); $path=[Environment]::GetEnvironmentVariable('Path','User'); if ($path) { $parts=$path -split ';' | Where-Object { $_ -and ($_ -ine $old) }; [Environment]::SetEnvironmentVariable('Path',($parts -join ';'),'User') }" >> "%LOG_FILE%" 2>&1
 exit /b 0
 
-:reset_sci_env
-set "ENV_TO_REMOVE=%SCI_ENV%"
-if /I "%ENV_TO_REMOVE%"=="%LocalAppData%\Sci\env" (
-    rmdir /s /q "%ENV_TO_REMOVE%" >> "%LOG_FILE%" 2>&1
-    exit /b 0
-)
-echo Refusing to remove unexpected environment path: %ENV_TO_REMOVE%
-echo Refusing to remove unexpected environment path: %ENV_TO_REMOVE%>> "%LOG_FILE%"
-exit /b 1
-
 :check_windows_version
 ver | findstr /r /c:" 10\." >nul
 if errorlevel 1 (
@@ -190,12 +168,7 @@ if errorlevel 1 goto install_python_direct
 echo Python 3.11+ was not found. Installing with winget...
 echo Installing Python 3.11 with winget...>> "%LOG_FILE%"
 winget install --id Python.Python.3.11 -e --source winget --accept-package-agreements --accept-source-agreements >> "%LOG_FILE%" 2>&1
-if not errorlevel 1 (
-    call :find_python
-    if not errorlevel 1 exit /b 0
-    echo winget reported success, but Python 3.11 still cannot be launched. Trying direct Python installer...>> "%LOG_FILE%"
-    goto install_python_direct
-)
+if not errorlevel 1 exit /b 0
 
 echo winget Python install failed or is unavailable. Trying direct Python installer...>> "%LOG_FILE%"
 call :install_python_direct

@@ -13,10 +13,14 @@ FORBIDDEN_PARTS = {
     ".DS_Store",
     "__pycache__",
     "__MACOSX",
+    "diagnostics_runtime",
 }
 FORBIDDEN_SUFFIXES = {
     ".pyc",
     ".pyo",
+    ".log",
+    ".flag",
+    ".signal",
 }
 FORBIDDEN_PREFIXES = (
     "XRD_Finder/data/",

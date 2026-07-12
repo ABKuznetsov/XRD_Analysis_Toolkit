@@ -197,47 +197,65 @@ class CandidateSearchService:
         if options.materials_project_enabled and options.structural_data_enabled:
             mp_key = self.search_cache_key("text", query)
             if not self.local_phase_cache.search_is_fresh("MP", mp_key):
-                try:
-                    self._emit_search_progress(progress, "Searching Materials Project...", len(rows), 0, 9)
-                    mp_entries = self.materials_project.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT)
-                    self.local_phase_cache.upsert_materials_project_entries(mp_entries)
-                    self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                    queued = self.queue_background_mp_downloads(mp_entries)
-                    rows = self.dedupe_candidate_rows(rows + self.mp_rows(mp_entries))
-                    self._emit_search_progress(progress, f"Materials Project: found {len(mp_entries)}, queued {queued} CIF downloads", len(rows), queued, 9)
-                except Exception as exc:
-                    if not rows:
-                        rows.append(["MP", "", "", "Materials Project search failed", "", str(exc)])
+                if rows:
+                    self._queue_background_mp_text_refresh(mp_key, query)
+                    self._emit_search_progress(
+                        progress,
+                        "Local cache is ready; Materials Project refresh is running in the background",
+                        len(rows),
+                        0,
+                        9,
+                    )
+                else:
+                    try:
+                        self._emit_search_progress(progress, "Searching Materials Project...", len(rows), 0, 9)
+                        mp_entries = self.materials_project.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+                        self.local_phase_cache.upsert_materials_project_entries(mp_entries)
+                        self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
+                        queued = self.queue_background_mp_downloads(mp_entries)
+                        rows = self.dedupe_candidate_rows(rows + self.mp_rows(mp_entries))
+                        self._emit_search_progress(progress, f"Materials Project: found {len(mp_entries)}, queued {queued} CIF downloads", len(rows), queued, 9)
+                    except Exception as exc:
+                        if not rows:
+                            rows.append(["MP", "", "", "Materials Project search failed", "", str(exc)])
 
         if options.aflow_enabled and options.structural_data_enabled:
             aflow_key = self.search_cache_key("text", query)
             if not self.local_phase_cache.search_is_fresh("AFLOW", aflow_key):
-                try:
-                    self._emit_search_progress(progress, "Searching AFLOW...", len(rows), 0, 10)
-                    aflow_entries = self.aflow.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT)
-                    self.local_phase_cache.upsert_computational_entries(aflow_entries)
-                    self._mark_search_if_complete("AFLOW", aflow_key, len(aflow_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                    queued = self.queue_background_aflow_downloads(aflow_entries)
-                    rows = self.dedupe_candidate_rows(rows + self.computational_rows(aflow_entries))
-                    self._emit_search_progress(progress, f"AFLOW: found {len(aflow_entries)}, queued {queued} CIF downloads", len(rows), queued, 10)
-                except Exception as exc:
-                    if not rows:
-                        rows.append(["AFLOW", "", "", "AFLOW search failed", "", str(exc)])
+                if rows:
+                    self._queue_background_computational_text_refresh("AFLOW", aflow_key, query)
+                    self._emit_search_progress(progress, "Local cache is ready; AFLOW refresh is running in the background", len(rows), 0, 10)
+                else:
+                    try:
+                        self._emit_search_progress(progress, "Searching AFLOW...", len(rows), 0, 10)
+                        aflow_entries = self.aflow.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+                        self.local_phase_cache.upsert_computational_entries(aflow_entries)
+                        self._mark_search_if_complete("AFLOW", aflow_key, len(aflow_entries), self.COMPUTATIONAL_RESULT_LIMIT)
+                        queued = self.queue_background_aflow_downloads(aflow_entries)
+                        rows = self.dedupe_candidate_rows(rows + self.computational_rows(aflow_entries))
+                        self._emit_search_progress(progress, f"AFLOW: found {len(aflow_entries)}, queued {queued} CIF downloads", len(rows), queued, 10)
+                    except Exception as exc:
+                        if not rows:
+                            rows.append(["AFLOW", "", "", "AFLOW search failed", "", str(exc)])
 
         if options.oqmd_enabled and options.structural_data_enabled:
             oqmd_key = self.search_cache_key("text", query)
             if not self.local_phase_cache.search_is_fresh("OQMD", oqmd_key):
-                try:
-                    self._emit_search_progress(progress, "Searching OQMD...", len(rows), 0, 11)
-                    oqmd_entries = self.oqmd.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT)
-                    self.local_phase_cache.upsert_computational_entries(oqmd_entries)
-                    self._mark_search_if_complete("OQMD", oqmd_key, len(oqmd_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                    queued = self.queue_background_oqmd_downloads(oqmd_entries)
-                    rows = self.dedupe_candidate_rows(rows + self.computational_rows(oqmd_entries))
-                    self._emit_search_progress(progress, f"OQMD: found {len(oqmd_entries)}, queued {queued} CIF downloads", len(rows), queued, 11)
-                except Exception as exc:
-                    if not rows:
-                        rows.append(["OQMD", "", "", "OQMD search failed", "", str(exc)])
+                if rows:
+                    self._queue_background_computational_text_refresh("OQMD", oqmd_key, query)
+                    self._emit_search_progress(progress, "Local cache is ready; OQMD refresh is running in the background", len(rows), 0, 11)
+                else:
+                    try:
+                        self._emit_search_progress(progress, "Searching OQMD...", len(rows), 0, 11)
+                        oqmd_entries = self.oqmd.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+                        self.local_phase_cache.upsert_computational_entries(oqmd_entries)
+                        self._mark_search_if_complete("OQMD", oqmd_key, len(oqmd_entries), self.COMPUTATIONAL_RESULT_LIMIT)
+                        queued = self.queue_background_oqmd_downloads(oqmd_entries)
+                        rows = self.dedupe_candidate_rows(rows + self.computational_rows(oqmd_entries))
+                        self._emit_search_progress(progress, f"OQMD: found {len(oqmd_entries)}, queued {queued} CIF downloads", len(rows), queued, 11)
+                    except Exception as exc:
+                        if not rows:
+                            rows.append(["OQMD", "", "", "OQMD search failed", "", str(exc)])
 
         rows = self.dedupe_candidate_rows(self.filter_candidate_rows_by_excluded_elements(rows, options))
         self._emit_search_progress(progress, f"Done: found {len(rows)} candidates", len(rows), 0, 12)
@@ -308,42 +326,60 @@ class CandidateSearchService:
         if options.materials_project_enabled and options.structural_data_enabled:
             mp_key = self.search_cache_key("elements", elements)
             if not self.local_phase_cache.search_is_fresh("MP", mp_key):
-                try:
-                    self._emit_search_progress(progress, "Searching Materials Project...", len(rows), 0, 7)
-                    mp_entries = self.materials_project.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT)
-                    self.local_phase_cache.upsert_materials_project_entries(mp_entries)
-                    self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                    queued = self.queue_background_mp_downloads(mp_entries)
-                    rows = self.dedupe_candidate_rows(rows + self.mp_rows(mp_entries))
-                    self._emit_search_progress(progress, f"Materials Project: found {len(mp_entries)}, queued {queued} CIF downloads", len(rows), queued, 8)
-                except Exception as exc:
-                    rows.append(["MP", "", "", "Materials Project search failed", "", str(exc)])
+                if rows:
+                    self._queue_background_mp_elements_refresh(mp_key, elements)
+                    self._emit_search_progress(
+                        progress,
+                        "Local cache is ready; Materials Project refresh is running in the background",
+                        len(rows),
+                        0,
+                        8,
+                    )
+                else:
+                    try:
+                        self._emit_search_progress(progress, "Searching Materials Project...", len(rows), 0, 7)
+                        mp_entries = self.materials_project.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+                        self.local_phase_cache.upsert_materials_project_entries(mp_entries)
+                        self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
+                        queued = self.queue_background_mp_downloads(mp_entries)
+                        rows = self.dedupe_candidate_rows(rows + self.mp_rows(mp_entries))
+                        self._emit_search_progress(progress, f"Materials Project: found {len(mp_entries)}, queued {queued} CIF downloads", len(rows), queued, 8)
+                    except Exception as exc:
+                        rows.append(["MP", "", "", "Materials Project search failed", "", str(exc)])
         if options.aflow_enabled and options.structural_data_enabled:
             aflow_key = self.search_cache_key("elements", elements)
             if not self.local_phase_cache.search_is_fresh("AFLOW", aflow_key):
-                try:
-                    self._emit_search_progress(progress, "Searching AFLOW...", len(rows), 0, 9)
-                    aflow_entries = self.aflow.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT)
-                    self.local_phase_cache.upsert_computational_entries(aflow_entries)
-                    self._mark_search_if_complete("AFLOW", aflow_key, len(aflow_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                    queued = self.queue_background_aflow_downloads(aflow_entries)
-                    rows = self.dedupe_candidate_rows(rows + self.computational_rows(aflow_entries))
-                    self._emit_search_progress(progress, f"AFLOW: found {len(aflow_entries)}, queued {queued} CIF downloads", len(rows), queued, 10)
-                except Exception as exc:
-                    rows.append(["AFLOW", "", "", "AFLOW search failed", "", str(exc)])
+                if rows:
+                    self._queue_background_computational_elements_refresh("AFLOW", aflow_key, elements)
+                    self._emit_search_progress(progress, "Local cache is ready; AFLOW refresh is running in the background", len(rows), 0, 10)
+                else:
+                    try:
+                        self._emit_search_progress(progress, "Searching AFLOW...", len(rows), 0, 9)
+                        aflow_entries = self.aflow.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+                        self.local_phase_cache.upsert_computational_entries(aflow_entries)
+                        self._mark_search_if_complete("AFLOW", aflow_key, len(aflow_entries), self.COMPUTATIONAL_RESULT_LIMIT)
+                        queued = self.queue_background_aflow_downloads(aflow_entries)
+                        rows = self.dedupe_candidate_rows(rows + self.computational_rows(aflow_entries))
+                        self._emit_search_progress(progress, f"AFLOW: found {len(aflow_entries)}, queued {queued} CIF downloads", len(rows), queued, 10)
+                    except Exception as exc:
+                        rows.append(["AFLOW", "", "", "AFLOW search failed", "", str(exc)])
         if options.oqmd_enabled and options.structural_data_enabled:
             oqmd_key = self.search_cache_key("elements", elements)
             if not self.local_phase_cache.search_is_fresh("OQMD", oqmd_key):
-                try:
-                    self._emit_search_progress(progress, "Searching OQMD...", len(rows), 0, 11)
-                    oqmd_entries = self.oqmd.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT)
-                    self.local_phase_cache.upsert_computational_entries(oqmd_entries)
-                    self._mark_search_if_complete("OQMD", oqmd_key, len(oqmd_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                    queued = self.queue_background_oqmd_downloads(oqmd_entries)
-                    rows = self.dedupe_candidate_rows(rows + self.computational_rows(oqmd_entries))
-                    self._emit_search_progress(progress, f"OQMD: found {len(oqmd_entries)}, queued {queued} CIF downloads", len(rows), queued, 11)
-                except Exception as exc:
-                    rows.append(["OQMD", "", "", "OQMD search failed", "", str(exc)])
+                if rows:
+                    self._queue_background_computational_elements_refresh("OQMD", oqmd_key, elements)
+                    self._emit_search_progress(progress, "Local cache is ready; OQMD refresh is running in the background", len(rows), 0, 11)
+                else:
+                    try:
+                        self._emit_search_progress(progress, "Searching OQMD...", len(rows), 0, 11)
+                        oqmd_entries = self.oqmd.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+                        self.local_phase_cache.upsert_computational_entries(oqmd_entries)
+                        self._mark_search_if_complete("OQMD", oqmd_key, len(oqmd_entries), self.COMPUTATIONAL_RESULT_LIMIT)
+                        queued = self.queue_background_oqmd_downloads(oqmd_entries)
+                        rows = self.dedupe_candidate_rows(rows + self.computational_rows(oqmd_entries))
+                        self._emit_search_progress(progress, f"OQMD: found {len(oqmd_entries)}, queued {queued} CIF downloads", len(rows), queued, 11)
+                    except Exception as exc:
+                        rows.append(["OQMD", "", "", "OQMD search failed", "", str(exc)])
         rows = self.dedupe_candidate_rows(self.filter_candidate_rows_by_excluded_elements(rows, options))
         self._emit_search_progress(progress, f"Done: found {len(rows)} candidates", len(rows), 0, 12)
         return rows
@@ -419,6 +455,30 @@ class CandidateSearchService:
             lambda: self._refresh_cod_elements_cache(cod_key, elements, options),
         )
 
+    def _queue_background_mp_text_refresh(self, mp_key: str, query: str) -> None:
+        self._queue_background_refresh(
+            ("MP", mp_key),
+            lambda: self._refresh_mp_text_cache(mp_key, query),
+        )
+
+    def _queue_background_mp_elements_refresh(self, mp_key: str, elements: list[str]) -> None:
+        self._queue_background_refresh(
+            ("MP", mp_key),
+            lambda: self._refresh_mp_elements_cache(mp_key, elements),
+        )
+
+    def _queue_background_computational_text_refresh(self, source: str, key: str, query: str) -> None:
+        self._queue_background_refresh(
+            (source, key),
+            lambda: self._refresh_computational_text_cache(source, key, query),
+        )
+
+    def _queue_background_computational_elements_refresh(self, source: str, key: str, elements: list[str]) -> None:
+        self._queue_background_refresh(
+            (source, key),
+            lambda: self._refresh_computational_elements_cache(source, key, elements),
+        )
+
     def _queue_background_refresh(self, key: tuple[str, str], task: Callable[[], object]) -> None:
         with self._refresh_lock:
             if key in self._queued_refreshes:
@@ -475,6 +535,38 @@ class CandidateSearchService:
         self.local_phase_cache.upsert_cod_entries(cod_entries)
         self._mark_search_if_complete("COD", cod_key, cod_result_count, self.ONLINE_RESULT_LIMIT)
         self.queue_background_cod_downloads(cod_entries)
+
+    def _refresh_mp_text_cache(self, mp_key: str, query: str) -> None:
+        mp_entries = self.materials_project.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+        self.local_phase_cache.upsert_materials_project_entries(mp_entries)
+        self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
+        self.queue_background_mp_downloads(mp_entries)
+
+    def _refresh_mp_elements_cache(self, mp_key: str, elements: list[str]) -> None:
+        mp_entries = self.materials_project.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+        self.local_phase_cache.upsert_materials_project_entries(mp_entries)
+        self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
+        self.queue_background_mp_downloads(mp_entries)
+
+    def _refresh_computational_text_cache(self, source: str, key: str, query: str) -> None:
+        service = self.aflow if source == "AFLOW" else self.oqmd
+        entries = service.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+        self.local_phase_cache.upsert_computational_entries(entries)
+        self._mark_search_if_complete(source, key, len(entries), self.COMPUTATIONAL_RESULT_LIMIT)
+        if source == "AFLOW":
+            self.queue_background_aflow_downloads(entries)
+        else:
+            self.queue_background_oqmd_downloads(entries)
+
+    def _refresh_computational_elements_cache(self, source: str, key: str, elements: list[str]) -> None:
+        service = self.aflow if source == "AFLOW" else self.oqmd
+        entries = service.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+        self.local_phase_cache.upsert_computational_entries(entries)
+        self._mark_search_if_complete(source, key, len(entries), self.COMPUTATIONAL_RESULT_LIMIT)
+        if source == "AFLOW":
+            self.queue_background_aflow_downloads(entries)
+        else:
+            self.queue_background_oqmd_downloads(entries)
 
     def download_cod_entries_to_cache(self, entries) -> int:
         errors = 0
@@ -825,10 +917,17 @@ class CandidateSearchService:
     ) -> None:
         if progress is None:
             return
-        details = f"{message}\nFound: {int(found_count)} candidates"
+        total_steps = 12
+        current_step = max(0, min(int(step), total_steps))
+        remaining_steps = max(0, total_steps - current_step)
+        details = (
+            f"{message}\n"
+            f"Search progress: step {current_step}/{total_steps}; remaining {remaining_steps}\n"
+            f"Found: {int(found_count)} candidates"
+        )
         if queued_count:
-            details += f" | queued CIF downloads: {int(queued_count)}"
-        progress(details, int(step), 12)
+            details += f"\nCIF downloads queued in background: {int(queued_count)}"
+        progress(details, current_step, total_steps)
 
     def _dedupe_cod_entries(self, entries: list[CodEntry]) -> list[CodEntry]:
         unique = []

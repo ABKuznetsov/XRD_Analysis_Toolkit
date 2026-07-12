@@ -7,14 +7,12 @@ SCI_ROOT="$HOME/Library/Application Support/Sci"
 SCI_ENV="$SCI_ROOT/env"
 XRD_FINDER_USER_ROOT="$SCI_ROOT/XRD_Finder"
 SCI_LOGS="$SCI_ROOT/logs"
-LOG_FILE="$SCI_LOGS/xrd_finder_console.log"
 READY_FILE="$SCI_ROOT/xrd_finder_ready"
 
 mkdir -p "$SCI_ROOT" "$XRD_FINDER_USER_ROOT" "$SCI_LOGS"
 
 echo "XRD Phase Finder startup preview"
 echo "Application root: $APP_ROOT"
-echo "Log file: $LOG_FILE"
 echo
 
 if [ ! -x "$SCI_ENV/bin/python" ]; then
@@ -52,9 +50,8 @@ export MPLCONFIGDIR="$XRD_FINDER_USER_ROOT/matplotlib"
 export XRD_FINDER_READY_FILE="$READY_FILE"
 export QT_MAC_WANTS_LAYER=1
 rm -f "$READY_FILE"
-echo "[$(date)] Starting XRD Phase Finder" > "$LOG_FILE"
 
-"$SCI_ENV/bin/python" -m xrd_finder.apps.finder_gui "$@" >> "$LOG_FILE" 2>&1 &
+"$SCI_ENV/bin/python" -m xrd_finder.apps.finder_gui "$@" &
 APP_PID="$!"
 
 echo "4/4 Waiting for application window..."
@@ -66,8 +63,6 @@ for _ in {1..120}; do
     if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
         echo
         echo "XRD Phase Finder exited during startup."
-        echo "Last log lines:"
-        tail -30 "$LOG_FILE" 2>/dev/null || true
         read "?Press Enter to close..."
         exit 1
     fi
@@ -75,6 +70,4 @@ for _ in {1..120}; do
 done
 
 echo "Startup is taking longer than expected. The app may still be opening."
-echo "Last log lines:"
-tail -20 "$LOG_FILE" 2>/dev/null || true
 read "?Press Enter to close..."

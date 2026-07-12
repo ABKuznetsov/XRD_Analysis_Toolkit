@@ -887,13 +887,11 @@ class PhaseFinderWindow(
         super().closeEvent(event)
 
     def _run_background_task(self, title: str, label: str, task, on_success, on_error=None, with_progress: bool = False) -> None:
-        dialog = QProgressDialog(label, "", 0, 100 if with_progress else 0, self)
+        dialog = QProgressDialog(label, "", 0, 0, self)
         dialog.setWindowTitle(title)
         dialog.setCancelButton(None)
         dialog.setMinimumDuration(0)
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
-        if with_progress:
-            dialog.setValue(0)
         dialog.show()
 
         handle = BackgroundTaskHandle(task, self, accepts_progress=with_progress)
@@ -915,12 +913,15 @@ class PhaseFinderWindow(
                 QMessageBox.warning(self, title, message or details)
 
         def progress(message: str, value: int, maximum: int) -> None:
-            maximum = max(1, int(maximum))
-            value = max(0, min(int(value), maximum))
-            dialog.setMaximum(maximum)
-            dialog.setValue(value)
             if message:
                 dialog.setLabelText(message)
+            maximum = int(maximum)
+            if maximum > 0:
+                value = max(0, min(int(value), maximum))
+                dialog.setMaximum(maximum)
+                dialog.setValue(value)
+            else:
+                dialog.setRange(0, 0)
 
         handle.progress.connect(progress)
         handle.finished.connect(finish)
@@ -974,7 +975,7 @@ class PhaseFinderWindow(
         panel.requiredElementToggled.connect(self._toggle_required_element)
         panel.optionalElementToggled.connect(self._toggle_optional_element)
         panel.searchRequested.connect(self._search_from_controls)
-        panel.resetRequested.connect(self._reset_selected_elements)
+        panel.resetRequested.connect(self._reset_candidate_search_table)
 
         self.composition_splitter = panel.splitter
         self.element_table = panel.element_table
@@ -1253,17 +1254,21 @@ class PhaseFinderWindow(
         self._candidate_probability_cache.clear()
         self._candidate_gain_profile_cache.clear()
 
-    def _trim_candidate_probability_cache(self, limit: int = 1000) -> None:
+    def _trim_candidate_probability_cache(self, limit: int = 5000) -> None:
         while len(self._candidate_probability_cache) > limit:
             self._candidate_probability_cache.pop(next(iter(self._candidate_probability_cache)), None)
 
-    def _trim_candidate_gain_profile_cache(self, limit: int = 128) -> None:
+    def _trim_candidate_gain_profile_cache(self, limit: int = 512) -> None:
         while len(self._candidate_gain_profile_cache) > limit:
             self._candidate_gain_profile_cache.pop(next(iter(self._candidate_gain_profile_cache)), None)
 
-    def _trim_match_profile_result_cache(self, limit: int = 24) -> None:
+    def _trim_match_profile_result_cache(self, limit: int = 128) -> None:
         while len(self.match_profile_result_cache) > limit:
             self.match_profile_result_cache.pop(next(iter(self.match_profile_result_cache)), None)
+
+    def _trim_candidate_peak_cache(self, limit: int = 2048) -> None:
+        while len(self._candidate_peak_cache) > limit:
+            self._candidate_peak_cache.pop(next(iter(self._candidate_peak_cache)), None)
 
     def _active_probability_context_key(self) -> tuple[object, ...]:
         pattern = self._active_pattern()
@@ -1317,9 +1322,9 @@ class PhaseFinderWindow(
         if not observed_records:
             return rows
 
-        gain_context = self._candidate_gain_context()
-        rows_to_rank = rows[:120]
-        tail_rows = rows[120:]
+        rows_to_rank = rows[:60]
+        tail_rows = rows[60:]
+        gain_context = self._candidate_gain_context() if len(rows_to_rank) <= 40 else None
         scored_rows = []
         for index, row in enumerate(rows_to_rank):
             scored_row = list(row)
@@ -1635,9 +1640,8 @@ class PhaseFinderWindow(
             two_theta_max=120.0,
             intensity_min=0.5,
         )
-        if len(self._candidate_peak_cache) > 256:
-            self._candidate_peak_cache.clear()
         self._candidate_peak_cache[cache_key] = peaks
+        self._trim_candidate_peak_cache()
         return peaks
 
     def _rank_by_peak_probability_enabled(self) -> bool:
@@ -2012,6 +2016,18 @@ class PhaseFinderWindow(
             self.ccdc_doi_input.clear()
         self._update_element_fields()
 
+    def _reset_candidate_search_table(self) -> None:
+        self._reset_selected_elements()
+        if self.search_input is not None:
+            self.search_input.clear()
+        if hasattr(self, "_clear_transient_candidate_preview"):
+            self._clear_transient_candidate_preview()
+        if hasattr(self, "_clear_probability_caches"):
+            self._clear_probability_caches()
+        if hasattr(self, "candidate_search_service"):
+            self.candidate_search_service.cancel_background_downloads()
+        self._set_candidate_rows([["", "", "", "Candidate list cleared", "", ""]])
+
     def _update_element_fields(self) -> None:
         self.selected_elements = {
             element for element, state in self.element_states.items() if state == "required"
@@ -2114,7 +2130,7 @@ class PhaseFinderWindow(
         self.candidate_table.set_rows(rows, lambda row: row)
         if hasattr(self, "_update_profile_view_context"):
             self._update_profile_view_context()
-        if rows:
+        if rows and normalize_candidate_row(rows[0])[0]:
             self._update_compound_card(self._candidate_row_values(0))
 
     def _format_first_peak_two_theta(self, candidate) -> str:

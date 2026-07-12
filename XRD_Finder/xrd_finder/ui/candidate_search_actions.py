@@ -91,7 +91,7 @@ class PhaseFinderCandidateSearchActionsMixin:
         return (
             self._structural_data_enabled()
             and bool(self.settings.value("materials_project/enabled", False, type=bool))
-            and self.materials_project.status().configured
+            and bool(getattr(self.materials_project, "api_key", ""))
         )
 
     def _local_cache_sources(self) -> list[str]:

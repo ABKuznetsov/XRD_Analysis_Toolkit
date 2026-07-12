@@ -31,12 +31,22 @@ class MaterialsProjectService:
     def __init__(self, api_key: str = "") -> None:
         self.api_key = api_key.strip()
 
-    def status(self) -> MaterialsProjectStatus:
+    def status(self, check_client: bool = False) -> MaterialsProjectStatus:
+        if not self.api_key:
+            return MaterialsProjectStatus(
+                configured=False,
+                client_available=False,
+                label="API key is not configured",
+            )
+        if not check_client:
+            return MaterialsProjectStatus(
+                configured=True,
+                client_available=False,
+                label="API key configured; client will be checked when used",
+            )
         client_kind = self._client_kind()
         client_available = bool(client_kind)
-        if not self.api_key:
-            label = "API key is not configured"
-        elif not client_available:
+        if not client_available:
             label = "mp-api or pymatgen Materials Project client not installed"
         else:
             label = f"Ready ({client_kind})"
@@ -84,7 +94,7 @@ class MaterialsProjectService:
         elements: list[str] | None,
         limit: int,
     ) -> list[MaterialsProjectEntry]:
-        if not self.status().configured:
+        if not self.status(check_client=True).configured:
             return []
         fields = ["material_id", "formula_pretty", "symmetry", "energy_above_hull"]
         client_kind = self._client_kind()
@@ -104,11 +114,25 @@ class MaterialsProjectService:
         try:
             from mp_api.client import MPRester
 
-            return MPRester(self.api_key)
+            return self._with_request_timeout(MPRester(self.api_key))
         except Exception:
             from pymatgen.ext.matproj import MPRester
 
-        return MPRester(self.api_key)
+        return self._with_request_timeout(MPRester(self.api_key))
+
+    def _with_request_timeout(self, mpr):
+        session = getattr(mpr, "session", None)
+        if session is None or getattr(session, "_xrd_timeout_wrapped", False):
+            return mpr
+        original_request = session.request
+
+        def request_with_timeout(method, url, **kwargs):
+            kwargs.setdefault("timeout", (4, 12))
+            return original_request(method, url, **kwargs)
+
+        session.request = request_with_timeout
+        session._xrd_timeout_wrapped = True
+        return mpr
 
     def _client_available(self) -> bool:
         return bool(self._client_kind())

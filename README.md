@@ -7,15 +7,15 @@
 
 # Download XRD Phase Finder
 
-**Windows 10/11:** [Download `XRD_Phase_Finder_Setup_1.1.2.exe`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.2/XRD_Phase_Finder_Setup_1.1.2.exe) and run the installer.
+**Windows 10/11:** [Download `XRD_Phase_Finder_Setup_1.1.3.exe`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.3/XRD_Phase_Finder_Setup_1.1.3.exe) and run the installer.
 
-**macOS:** [Download `XRD_Phase_Finder_macOS_1.1.2.zip`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.2/XRD_Phase_Finder_macOS_1.1.2.zip), extract it and run `install_macos.command`.
+**macOS:** [Download `XRD_Phase_Finder_macOS_1.1.3.zip`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.3/XRD_Phase_Finder_macOS_1.1.3.zip), extract it and run `install_macos.command`.
 
 More detailed installation notes are below in [Installation](#installation).
 
-# XRD Phase Finder 1.1.2
+# XRD Phase Finder 1.1.3
 
-Feature release focused on Phase Finder maintainability, background correction and cross-platform setup improvements.
+Maintenance release focused on fixing candidate-search hangs and reducing startup disk logging.
 
 # Overview
 
@@ -103,8 +103,8 @@ The `?` button in the application opens a compact in-app helper with the same co
 
 Latest release assets:
 
-- Windows 10/11: [XRD_Phase_Finder_Setup_1.1.2.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.2/XRD_Phase_Finder_Setup_1.1.2.exe)
-- macOS: [XRD_Phase_Finder_macOS_1.1.2.zip](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.2/XRD_Phase_Finder_macOS_1.1.2.zip)
+- Windows 10/11: [XRD_Phase_Finder_Setup_1.1.3.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.3/XRD_Phase_Finder_Setup_1.1.3.exe)
+- macOS: [XRD_Phase_Finder_macOS_1.1.3.zip](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.3/XRD_Phase_Finder_macOS_1.1.3.zip)
 - All releases: [GitHub Releases](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases)
 
 Third-party database access and licensing are summarized in [Reference Data Sources](#reference-data-sources).
@@ -131,7 +131,7 @@ XRD Phase Finder uses a shared per-user environment named `Sci`. Future XRD appl
 Download and run:
 
 ```text
-XRD_Phase_Finder_Setup_1.1.2.exe
+XRD_Phase_Finder_Setup_1.1.3.exe
 ```
 
 The installer:
@@ -150,7 +150,7 @@ If Python 3.11 is not already available, the setup script first tries `winget` a
 Download and extract:
 
 ```text
-XRD_Phase_Finder_macOS_1.1.2.zip
+XRD_Phase_Finder_macOS_1.1.3.zip
 ```
 
 Then run:
@@ -374,7 +374,7 @@ XRD_Analysis_Toolkit/
             Source-checkout command-line launchers
 ```
 
-The repository contains source code, documentation, runtime setup scripts and update metadata. Generated installer files such as `XRD_Phase_Finder_Setup_1.1.2.exe` and `XRD_Phase_Finder_macOS_1.1.2.zip` are **not committed to the repository**; they are published separately as GitHub Release assets.
+The repository contains source code, documentation, runtime setup scripts and update metadata. Generated installer files such as `XRD_Phase_Finder_Setup_1.1.3.exe` and `XRD_Phase_Finder_macOS_1.1.3.zip` are **not committed to the repository**; they are published separately as GitHub Release assets.
 
 The root `XRD_Analysis_Toolkit` layout keeps shared toolkit files separate from the `XRD_Finder` application folder. This leaves room for additional XRD-related applications later while preserving a clear application boundary.
 
@@ -426,7 +426,7 @@ The current implementation is intended for **initial phase identification** and 
 
 # Current Status
 
-Current development stage: **1.1.2 stable public release**.
+Current development stage: **1.1.3 stable public release**.
 
 The application is ready for practical search-match and visual phase-identification workflows on Windows and macOS. The current release includes the graphical Phase Finder workspace, project save/load, multi-pattern display, CIF-based phase overlays, candidate cards, database management, startup/update preview and packaged installers.
 

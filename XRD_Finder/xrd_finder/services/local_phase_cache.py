@@ -160,11 +160,21 @@ class LocalPhaseCache:
             where.append(f"source in ({placeholders})")
             params.extend(sorted(allowed_sources))
         for element in sorted(required):
-            where.append("' ' || elements || ' ' like ?")
-            params.append(f"% {element} %")
+            where.append(
+                "exists ("
+                "select 1 from phase_elements pe "
+                "where pe.source = phases.source and pe.entry_id = phases.entry_id and pe.element = ?"
+                ")"
+            )
+            params.append(element)
         for element in sorted(excluded):
-            where.append("' ' || elements || ' ' not like ?")
-            params.append(f"% {element} %")
+            where.append(
+                "not exists ("
+                "select 1 from phase_elements pe "
+                "where pe.source = phases.source and pe.entry_id = phases.entry_id and pe.element = ?"
+                ")"
+            )
+            params.append(element)
         if text:
             like_text = f"%{text}%"
             compact_formula = self._formula_key(text)
@@ -181,17 +191,28 @@ class LocalPhaseCache:
             )
             params.extend([like_text, like_text, like_text, like_text, f"%{compact_formula}%", f"%{sorted_formula}%"])
         with self._connect() as connection:
-            rows = connection.execute(
-                f"""
-                select source, entry_id, formula, name, spacegroup, source_text, cif_path, elements,
-                       a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, derived_version
-                from phases
-                where {" and ".join(where)}
-                order by updated_at desc
-                limit ?
-                """,
-                (*params, max(limit * 5, limit)),
-            ).fetchall()
+            deadline = time.monotonic() + 2.0
+
+            def abort_slow_query() -> int:
+                return int(time.monotonic() > deadline)
+
+            connection.set_progress_handler(abort_slow_query, 5000)
+            try:
+                rows = connection.execute(
+                    f"""
+                    select source, entry_id, formula, name, spacegroup, source_text, cif_path, elements,
+                           a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, derived_version
+                    from phases
+                    where {" and ".join(where)}
+                    order by updated_at desc
+                    limit ?
+                    """,
+                    (*params, max(limit * 3, limit)),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+            finally:
+                connection.set_progress_handler(None, 0)
         results = []
         seen = set()
         for row in rows:
@@ -503,6 +524,16 @@ class LocalPhaseCache:
                 )
                 """
             )
+            connection.execute(
+                """
+                create table if not exists phase_elements (
+                    source text not null,
+                    entry_id text not null,
+                    element text not null,
+                    primary key (source, entry_id, element)
+                )
+                """
+            )
             existing = {row[1] for row in connection.execute("pragma table_info(phases)").fetchall()}
             for column in ["a", "b", "c", "alpha", "beta", "gamma", "volume"]:
                 if column not in existing:
@@ -521,6 +552,11 @@ class LocalPhaseCache:
             connection.execute("create index if not exists idx_phases_source_updated on phases(source, updated_at desc)")
             connection.execute("create index if not exists idx_phases_formula_key on phases(formula_key)")
             connection.execute("create index if not exists idx_phases_elements on phases(elements)")
+            connection.execute("create index if not exists idx_phase_elements_element on phase_elements(element, source, entry_id)")
+            element_count = connection.execute("select count(*) from phase_elements").fetchone()[0]
+            if not element_count:
+                for row in connection.execute("select source, entry_id, elements from phases").fetchall():
+                    self._replace_phase_elements(connection, row["source"], row["entry_id"], row["elements"])
 
     def _connect(self) -> sqlite3.Connection:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -534,6 +570,7 @@ class LocalPhaseCache:
         placeholders = ", ".join("?" for _ in sources)
         with self._connect() as connection:
             connection.execute(f"delete from phases where source in ({placeholders})", sources)
+            connection.execute(f"delete from phase_elements where source in ({placeholders})", sources)
             connection.execute(f"delete from search_cache where source in ({placeholders})", sources)
 
     def _remove_cache_dirs(self, names: list[str]) -> None:
@@ -619,6 +656,25 @@ class LocalPhaseCache:
                 time.time(),
             ),
         )
+        self._replace_phase_elements(connection, entry.source, entry.entry_id, " ".join(sorted(formula_elements(entry.formula))))
+
+    def _replace_phase_elements(
+        self,
+        connection: sqlite3.Connection,
+        source: str,
+        entry_id: str,
+        elements_text: str,
+    ) -> None:
+        connection.execute("delete from phase_elements where source = ? and entry_id = ?", (source, entry_id))
+        rows = [
+            (source, entry_id, element)
+            for element in sorted({item.strip() for item in elements_text.split() if item.strip()})
+        ]
+        if rows:
+            connection.executemany(
+                "insert or ignore into phase_elements(source, entry_id, element) values(?, ?, ?)",
+                rows,
+            )
 
     def _row_to_entry(self, row: sqlite3.Row) -> CachedPhaseEntry:
         return CachedPhaseEntry(

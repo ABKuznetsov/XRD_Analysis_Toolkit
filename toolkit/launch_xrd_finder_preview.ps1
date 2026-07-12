@@ -250,8 +250,7 @@ function Invoke-UpdateDownload {
         try {
             Write-LauncherLog "Downloading update with curl.exe: $Url"
             Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
-            $curlLog = Join-Path ([System.IO.Path]::GetDirectoryName($OutFile)) "curl_update.log"
-            $curlProcess = Start-Process -FilePath $curl.Source -ArgumentList @("-L", "--fail", "--retry", "3", "--connect-timeout", "30", "--max-time", "300", "-A", "XRD-Phase-Finder-Updater", "-o", $OutFile, $Url) -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput $curlLog -RedirectStandardError $curlLog
+            $curlProcess = Start-Process -FilePath $curl.Source -ArgumentList @("-L", "--fail", "--retry", "3", "--connect-timeout", "30", "--max-time", "300", "-A", "XRD-Phase-Finder-Updater", "-o", $OutFile, $Url) -Wait -PassThru -WindowStyle Hidden
             if ($curlProcess.ExitCode -eq 0 -and (Test-Path -LiteralPath $OutFile) -and ((Get-Item -LiteralPath $OutFile).Length -gt 1024)) { return }
             $errors.Add("curl.exe exit code: " + $curlProcess.ExitCode) | Out-Null
         } catch {
@@ -326,7 +325,7 @@ function Wait-ApplicationMainWindow {
             if ($details) {
                 throw "XRD Phase Finder closed during startup. Exit code: $($Process.ExitCode)`r`n`r`nStartup log:`r`n$details`r`n`r`nFull log: $LogPath"
             }
-            throw "XRD Phase Finder closed during startup. Exit code: $($Process.ExitCode)`r`nFull log: $LogPath"
+            throw "XRD Phase Finder closed during startup. Exit code: $($Process.ExitCode)"
         }
         $Process.Refresh()
         if ($Process.MainWindowHandle -ne [IntPtr]::Zero -or (Test-ProcessHasVisibleWindow $Process.Id)) {
@@ -343,7 +342,7 @@ function Wait-ApplicationMainWindow {
     if ($details) {
         throw "XRD Phase Finder is running, but the main window did not appear within $TimeoutSeconds seconds.`r`n`r`nStartup log:`r`n$details`r`n`r`nFull log: $LogPath"
     }
-    throw "XRD Phase Finder is running, but the main window did not appear within $TimeoutSeconds seconds.`r`nFull log: $LogPath"
+    throw "XRD Phase Finder is running, but the main window did not appear within $TimeoutSeconds seconds."
 }
 function Add-StepRow {
     param(
@@ -416,16 +415,9 @@ $finderRoot = Join-Path $appsRoot "xrd_phase_finder"
 $dataRoot = Join-Path $finderRoot "data"
 $logsRoot = Join-Path $toolkitRoot "logs"
 $updateRoot = Join-Path $toolkitRoot "updates"
-$launcherLog = Join-Path $logsRoot "launcher_preview.log"
 function Write-LauncherLog {
     param([string]$Message)
-    try {
-        if (-not (Test-Path -LiteralPath $logsRoot)) { New-Item -ItemType Directory -Path $logsRoot -Force | Out-Null }
-        "[$(Get-Date -Format s)] $Message" | Add-Content -LiteralPath $launcherLog -Encoding UTF8
-    } catch {
-    }
 }
-Write-LauncherLog "Preview launcher started from $appRoot"
 $pythonw = Join-Path $envRoot "Scripts\pythonw.exe"
 $pythonExe = Join-Path $envRoot "Scripts\python.exe"
 $setupBat = Join-Path $appRoot "toolkit\setup_sci_env.bat"
@@ -501,37 +493,6 @@ function Test-ProcessHasVisibleWindow {
     return $found
 }
 
-function Stop-LegacySciPythonProcesses {
-    param([string]$ExpectedPython)
-    try {
-        $expected = [System.IO.Path]::GetFullPath($ExpectedPython).ToLowerInvariant()
-        $legacyRoot = [System.IO.Path]::GetFullPath("C:\Sci\Python").ToLowerInvariant()
-        $processes = Get-CimInstance Win32_Process -Filter "name = 'python.exe' or name = 'pythonw.exe'" -ErrorAction SilentlyContinue
-        foreach ($process in $processes) {
-            $commandLine = [string]$process.CommandLine
-            if (-not $commandLine) { continue }
-            $normalized = $commandLine.ToLowerInvariant()
-            if ($normalized.Contains($legacyRoot) -and -not $normalized.Contains($expected)) {
-                Write-LauncherLog "Stopping legacy Sci Python process PID=$($process.ProcessId): $commandLine"
-                Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction SilentlyContinue
-            }
-        }
-    } catch {
-        Write-LauncherLog ("Legacy Sci process cleanup skipped: " + $_.Exception.Message)
-    }
-}
-
-function Test-PythonRuntime {
-    param([string]$PythonPath)
-    if (-not (Test-Path -LiteralPath $PythonPath)) { return $false }
-    try {
-        $process = Start-Process -FilePath $PythonPath -ArgumentList @("-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)") -Wait -PassThru -WindowStyle Hidden
-        return ($process.ExitCode -eq 0)
-    } catch {
-        return $false
-    }
-}
-
 $script:Form = New-Object System.Windows.Forms.Form
 $script:Form.Text = "XRD Phase Finder"
 $script:Form.StartPosition = "CenterScreen"
@@ -604,9 +565,9 @@ try {
     Pause-PreviewStep
     Set-ProgressText 28 "Preparing runtime"
     Set-Step 1 "Checking..." "Looking for Sci runtime" "Blue"
-    if ((-not (Test-Path -LiteralPath $pythonw)) -or (-not (Test-PythonRuntime $pythonExe))) {
+    if (-not (Test-Path -LiteralPath $pythonw)) {
         Set-ProgressText 28 "First launch can take several minutes"
-        Set-Step 1 "Installing..." "Preparing or repairing the shared Sci Python environment. Later starts will be faster." "Blue"
+        Set-Step 1 "Installing..." "First launch: downloading and configuring Python packages. Later starts will be faster." "Blue"
         if (-not (Test-Path -LiteralPath $setupBat)) {
             throw "Setup script was not found: $setupBat"
         }
@@ -624,15 +585,10 @@ try {
     if (-not (Test-Path -LiteralPath $pythonExe)) {
         throw "Python executable was not found: $pythonExe"
     }
-    if (-not (Test-PythonRuntime $pythonExe)) {
-        throw "Sci Python environment is present but cannot be launched: $pythonExe"
-    }
-    Stop-LegacySciPythonProcesses $pythonExe
     Ensure-Folder (Join-Path $dataRoot "cod_cache")
     Ensure-Folder (Join-Path $dataRoot "cod_cache\rruff")
     Set-Step 1 "OK" "Runtime and cache database are ready" "Green"
 
-    Write-LauncherLog "Preparing Python app in the background while preview steps continue."
     $env:PYTHONDONTWRITEBYTECODE = "1"
     $env:XRD_FINDER_DATA_DIR = $dataRoot
     $env:MPLCONFIGDIR = Join-Path $finderRoot "matplotlib"
@@ -645,23 +601,19 @@ try {
     } else {
         $env:PYTHONPATH = $appPackageRoot
     }
-    $startupLog = Join-Path $logsRoot "xrd_finder_startup.log"
+    $startupLog = ""
     $readyFile = Join-Path $logsRoot "xrd_finder_ready.flag"
     $preparedFile = Join-Path $logsRoot "xrd_finder_prepared.flag"
     $showSignalFile = Join-Path $logsRoot "xrd_finder_show.signal"
     Remove-Item -LiteralPath $readyFile -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $preparedFile -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $showSignalFile -Force -ErrorAction SilentlyContinue
-    Write-LauncherLog "Starting Python app with $pythonExe -m $entryModule"
-    "[$(Get-Date -Format s)] Starting XRD Phase Finder from $appRoot" | Set-Content -LiteralPath $startupLog -Encoding UTF8
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $pythonExe
     $startInfo.Arguments = "-m $entryModule"
     $startInfo.WorkingDirectory = $appRoot
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
     $startInfo.EnvironmentVariables["PYTHONDONTWRITEBYTECODE"] = "1"
     $startInfo.EnvironmentVariables["XRD_FINDER_DATA_DIR"] = $dataRoot
     $startInfo.EnvironmentVariables["XRD_FINDER_PREPARED_FILE"] = $preparedFile
@@ -675,12 +627,7 @@ try {
     $startInfo.EnvironmentVariables["QT_QPA_PLATFORM"] = "windows"
     $appProcess = New-Object System.Diagnostics.Process
     $appProcess.StartInfo = $startInfo
-    Register-ObjectEvent -InputObject $appProcess -EventName OutputDataReceived -Action { if ($EventArgs.Data) { Add-Content -LiteralPath $Event.MessageData -Value $EventArgs.Data } } -MessageData $startupLog | Out-Null
-    Register-ObjectEvent -InputObject $appProcess -EventName ErrorDataReceived -Action { if ($EventArgs.Data) { Add-Content -LiteralPath $Event.MessageData -Value $EventArgs.Data } } -MessageData $startupLog | Out-Null
     $null = $appProcess.Start()
-    Write-LauncherLog "Python app process started. PID=$($appProcess.Id)"
-    $appProcess.BeginOutputReadLine()
-    $appProcess.BeginErrorReadLine()
 
 
     Pause-PreviewStep
@@ -791,17 +738,14 @@ try {
     Set-Step 4 "Opening..." "Showing the main application window" "Blue"
     "show" | Set-Content -LiteralPath $showSignalFile -Encoding UTF8
     Wait-ApplicationMainWindow $appProcess 120 $startupLog $readyFile | Out-Null
-    Write-LauncherLog "Main application window is ready."
     if ($showStartupNotice) {
         try { "seen" | Set-Content -LiteralPath $startupNoticePath -Encoding UTF8 } catch {}
-        Write-LauncherLog "Startup notice marked as seen for version $localVersion."
     }
     Set-Step 4 "OK" "XRD Phase Finder window is ready" "Green"
     Set-ProgressText 100 "Ready"
     [System.Windows.Forms.Application]::DoEvents()
     Start-Sleep -Milliseconds 400
 } catch {
-    Write-LauncherLog ("Startup failed: " + $_.Exception.Message)
     Set-ProgressText 100 "Failed"
     if ($script:StepStatusLabels.Count -gt 0) {
         Set-Step 4 "Failed" $_.Exception.Message "Red"
