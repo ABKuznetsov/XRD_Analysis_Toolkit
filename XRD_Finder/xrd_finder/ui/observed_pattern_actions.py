@@ -4,6 +4,7 @@ import numpy as np
 import pyqtgraph as pg
 
 from xrd_finder.core.pattern import Pattern
+from xrd_finder.services.preprocessing_service import auto_preprocess_for_scoring
 from xrd_finder.ui.observed_patterns import apply_pattern_offsets, load_observed_patterns, normalize_intensity, observed_pattern_data, processed_pattern_data
 from xrd_finder.ui.pattern_plot_helpers import (
     calculate_profile_for_structure,
@@ -40,6 +41,8 @@ class PhaseFinderObservedPatternActionsMixin:
 
     def _set_pattern_normalization(self, enabled: bool) -> None:
         self.normalize_observed_patterns = bool(enabled)
+        if hasattr(self, "_auto_scoring_cache"):
+            self._auto_scoring_cache.clear()
         if hasattr(self, "_invalidate_match_profile_cache"):
             self._invalidate_match_profile_cache()
         self._clear_probability_caches()
@@ -61,6 +64,76 @@ class PhaseFinderObservedPatternActionsMixin:
 
     def _active_processed_observed_data(self) -> np.ndarray | None:
         return self._pattern_processed_observed_data(self._active_pattern())
+
+    def _pattern_scoring_background_removed(self, pattern: Pattern | None) -> bool:
+        if getattr(self, "_scoring_source", "Auto") == "Auto":
+            return True
+        return bool(pattern is not None and pattern.processed_background_removed)
+
+    def _pattern_scoring_observed_data(self, pattern: Pattern | None) -> np.ndarray | None:
+        if pattern is None:
+            return None
+        if getattr(self, "_scoring_source", "Auto") != "Auto":
+            processed = self._pattern_processed_observed_data(pattern)
+            return processed if processed is not None else self._normalized_observed_data(observed_pattern_data(pattern))
+        result = self._pattern_auto_preprocessing_result(pattern)
+        if result is None:
+            return None
+        return np.column_stack([result.x, result.corrected_y])
+
+    def _pattern_finder_observed_data(self, pattern: Pattern | None) -> np.ndarray | None:
+        if pattern is None or getattr(self, "_scoring_source", "Auto") != "Auto":
+            return self._pattern_scoring_observed_data(pattern)
+        result = self._pattern_auto_preprocessing_result(pattern)
+        if result is None:
+            return None
+        return np.column_stack([result.x, result.y])
+
+    def _pattern_finder_background_removed(self, pattern: Pattern | None) -> bool:
+        if getattr(self, "_scoring_source", "Auto") == "Auto":
+            return False
+        return bool(pattern is not None and pattern.processed_background_removed)
+
+    def _pattern_auto_preprocessing_result(self, pattern: Pattern | None):
+        if pattern is None:
+            return None
+        raw = self._normalized_observed_data(observed_pattern_data(pattern))
+        if raw is None or not len(raw):
+            return None
+        key = self._auto_scoring_cache_key(pattern, raw)
+        cache = getattr(self, "_auto_scoring_cache", {})
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+        result = auto_preprocess_for_scoring(raw[:, 0], raw[:, 1])
+        cache[key] = result
+        self._auto_scoring_cache = cache
+        self._trim_auto_scoring_cache()
+        return result
+
+    def _active_scoring_observed_data(self) -> np.ndarray | None:
+        return self._pattern_scoring_observed_data(self._active_pattern())
+
+    def _auto_scoring_cache_key(self, pattern: Pattern, raw: np.ndarray) -> tuple[object, ...]:
+        x = np.asarray(raw[:, 0], dtype=float)
+        y = np.asarray(raw[:, 1], dtype=float)
+        return (
+            pattern.id,
+            str(getattr(pattern, "source_path", "")),
+            int(len(raw)),
+            round(float(x[0]), 6),
+            round(float(x[-1]), 6),
+            round(float(np.nanpercentile(y, 1)), 5),
+            round(float(np.nanpercentile(y, 50)), 5),
+            round(float(np.nanpercentile(y, 99)), 5),
+            bool(self.normalize_observed_patterns),
+            "auto-scoring-components-v2",
+        )
+
+    def _trim_auto_scoring_cache(self, limit: int = 32) -> None:
+        cache = getattr(self, "_auto_scoring_cache", {})
+        while len(cache) > limit:
+            cache.pop(next(iter(cache)), None)
 
     def _active_background_removed(self) -> bool:
         pattern = self._active_pattern()
@@ -105,13 +178,16 @@ class PhaseFinderObservedPatternActionsMixin:
         )
 
         for item in loaded_patterns:
-            y = item.plotted_y
+            crop_ranges = self._valid_crop_ranges(item.pattern)
+            x_plot, y = self._crop_curve_to_ranges(item.x, item.plotted_y, crop_ranges)
+            if len(x_plot) == 0:
+                continue
             plot_style = getattr(self, "plot_style", None)
             active = item.pattern.id == active_id
             color = self._observed_pattern_color(item.pattern.id)
             base_width = float(getattr(getattr(plot_style, "observed", None), "width", 1.35))
             width = base_width + 0.75 if active else max(base_width, 0.5)
-            curve_item = self.match_plot.plot(item.x, y, pen=pg.mkPen(color, width=width))
+            curve_item = self.match_plot.plot(x_plot, y, pen=pg.mkPen(color, width=width))
             try:
                 curve_item._xrd_pattern_id = item.pattern.id
             except Exception:
@@ -133,15 +209,46 @@ class PhaseFinderObservedPatternActionsMixin:
                 pass
             self.plot_layers["observed"].extend([curve_item, legend_proxy])
             self.observed_pattern_plot_context[item.pattern.id] = item.context
-            x_values.append(item.x)
+            x_values.append(x_plot)
             y_values.append(y)
 
+        self._draw_estimated_background_components(loaded_patterns)
         self._draw_checked_phase_profiles(loaded_patterns)
         if hasattr(self, "_apply_plot_layer_visibility_settings"):
             self._apply_plot_layer_visibility_settings(self.plot_view_settings)
 
         if x_values and y_values and not self.match_plot_view_initialized:
             self._reset_match_plot_view()
+
+    def _draw_estimated_background_components(self, loaded_patterns) -> None:
+        for item in loaded_patterns:
+            pattern = item.pattern
+            if getattr(pattern, "processed_background_removed", False):
+                continue
+            components = (
+                (getattr(pattern, "estimated_background_points", []), "#202124", "physical background"),
+                (
+                    getattr(pattern, "estimated_background_with_halo_points", []),
+                    "#1a73e8",
+                    "background + amorphous phase",
+                ),
+            )
+            for points, color, label in components:
+                if not points:
+                    continue
+                values = np.asarray(points, dtype=float)
+                if values.ndim != 2 or values.shape[1] < 2 or len(values) < 2:
+                    continue
+                y = np.interp(item.x, values[:, 0], values[:, 1]) + float(item.offset)
+                x_plot, y_plot = self._crop_curve_to_ranges(item.x, y, self._valid_crop_ranges(pattern))
+                if len(x_plot) == 0:
+                    continue
+                curve = self.match_plot.plot(x_plot, y_plot, pen=pg.mkPen(color, width=1.8), name=label)
+                try:
+                    curve._xrd_pattern_id = pattern.id
+                except Exception:
+                    pass
+                self.plot_layers["background"].append(curve)
 
 
     def _observed_pattern_color(self, pattern_id: str) -> str:
@@ -260,6 +367,120 @@ class PhaseFinderObservedPatternActionsMixin:
             {"offset": 0.0, "raw_min": 0.0, "raw_max": 1.0, "plot_min": 0.0, "plot_max": 1.0, "height": 1.0},
         )
 
+    def _valid_crop_ranges(self, pattern: Pattern | None) -> list[tuple[float, float]]:
+        ranges = []
+        for item in getattr(pattern, "crop_ranges", []) if pattern is not None else []:
+            if not isinstance(item, (list, tuple)) or len(item) < 2:
+                continue
+            try:
+                start = float(item[0])
+                end = float(item[1])
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(start) and np.isfinite(end) and end > start:
+                ranges.append((start, end))
+        ranges.sort(key=lambda value: value[0])
+        return ranges
+
+    def _crop_curve_to_ranges(
+        self,
+        x_values,
+        y_values,
+        ranges: list[tuple[float, float]],
+    ) -> tuple[np.ndarray, np.ndarray]:
+        x = np.asarray(x_values, dtype=float)
+        y = np.asarray(y_values, dtype=float)
+        if not ranges or len(x) == 0 or len(y) == 0 or len(x) != len(y):
+            return x, y
+        x_parts = []
+        y_parts = []
+        for start, end in ranges:
+            mask = (x >= start) & (x <= end)
+            if not np.any(mask):
+                continue
+            if x_parts:
+                x_parts.append(np.asarray([np.nan], dtype=float))
+                y_parts.append(np.asarray([np.nan], dtype=float))
+            x_parts.append(x[mask])
+            y_parts.append(y[mask])
+        if not x_parts:
+            return np.asarray([], dtype=float), np.asarray([], dtype=float)
+        return np.concatenate(x_parts), np.concatenate(y_parts)
+
+    def _plot_item_data_arrays(self, item) -> tuple[np.ndarray, np.ndarray] | None:
+        x = getattr(item, "xData", None)
+        y = getattr(item, "yData", None)
+        if x is None or y is None:
+            return None
+        try:
+            x_values = np.asarray(x, dtype=float)
+            y_values = np.asarray(y, dtype=float)
+        except Exception:
+            return None
+        if len(x_values) == 0 or len(y_values) == 0 or len(x_values) != len(y_values):
+            return None
+        finite = np.isfinite(x_values) & np.isfinite(y_values)
+        if not np.any(finite):
+            return None
+        return x_values[finite], y_values[finite]
+
+    def _plot_data_bounds(self, x_range: tuple[float, float] | None = None) -> tuple[float, float, float, float] | None:
+        xmin_values = []
+        xmax_values = []
+        ymin_values = []
+        ymax_values = []
+        for items in self.plot_layers.values():
+            for item in items:
+                try:
+                    if not item.isVisible():
+                        continue
+                except Exception:
+                    pass
+                arrays = self._plot_item_data_arrays(item)
+                if arrays is None:
+                    continue
+                x_values, y_values = arrays
+                if x_range is not None:
+                    left, right = x_range
+                    mask = (x_values >= left) & (x_values <= right)
+                    if not np.any(mask):
+                        continue
+                    x_values = x_values[mask]
+                    y_values = y_values[mask]
+                xmin_values.append(float(np.nanmin(x_values)))
+                xmax_values.append(float(np.nanmax(x_values)))
+                ymin_values.append(float(np.nanmin(y_values)))
+                ymax_values.append(float(np.nanmax(y_values)))
+        if not xmin_values:
+            return None
+        return min(xmin_values), max(xmax_values), min(ymin_values), max(ymax_values)
+
+    def _plot_xrd_crop_range(self, full_bounds: tuple[float, float, float, float]) -> tuple[float, float]:
+        xmin, xmax, _ymin, _ymax = full_bounds
+        ranges = []
+        for pattern in self._patterns_to_display():
+            ranges.extend(self._valid_crop_ranges(pattern))
+        if ranges:
+            crop_min = min(start for start, _end in ranges)
+            crop_max = max(end for _start, end in ranges)
+            return max(xmin, crop_min), min(xmax, crop_max)
+        return xmin, xmax
+
     def _reset_match_plot_view(self) -> None:
-        self.match_plot.autoRange()
+        full_bounds = self._plot_data_bounds()
+        if full_bounds is None:
+            self.match_plot.autoRange(padding=0.0)
+            self.match_plot_view_initialized = True
+            return
+        xmin, xmax = self._plot_xrd_crop_range(full_bounds)
+        if xmax <= xmin:
+            xmin, xmax = full_bounds[0], full_bounds[1]
+        visible_bounds = self._plot_data_bounds((xmin, xmax)) or full_bounds
+        ymin, ymax = visible_bounds[2], visible_bounds[3]
+        if ymax <= ymin:
+            delta = max(abs(ymax) * 0.01, 1.0)
+            ymin -= delta
+            ymax += delta
+        self.match_plot.setXRange(float(xmin), float(xmax), padding=0.0)
+        self.match_plot.setYRange(float(ymin), float(ymax), padding=0.0)
         self.match_plot_view_initialized = True

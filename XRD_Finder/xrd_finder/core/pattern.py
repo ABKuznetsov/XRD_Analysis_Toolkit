@@ -15,6 +15,9 @@ class Pattern(ProjectObject):
     processed_points: list[list[float]] = field(default_factory=list)
     processed_label: str = ""
     processed_background_removed: bool = False
+    estimated_background_points: list[list[float]] = field(default_factory=list)
+    estimated_background_with_halo_points: list[list[float]] = field(default_factory=list)
+    crop_ranges: list[list[float]] = field(default_factory=list)
 
     @classmethod
     def create(cls, name: str, source_path: str = "") -> "Pattern":

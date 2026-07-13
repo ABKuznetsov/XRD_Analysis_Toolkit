@@ -104,8 +104,17 @@ def estimate_profile_fwhm(x, corrected_y) -> float:
     return float(np.clip(np.nanmedian(widths), 0.06, 0.8))
 
 
+def _set_legend_label(item, label: str | None):
+    if label:
+        try:
+            item._xrd_legend_label = str(label)
+        except Exception:
+            pass
+    return item
+
+
 def plot_profile(plot: pg.PlotWidget, x, y, color: str, label: str, width: float = 1.5):
-    return plot.plot(x, y, pen=pg.mkPen(color, width=width), name=label)
+    return _set_legend_label(plot.plot(x, y, pen=pg.mkPen(color, width=width)), label)
 
 
 def hkl_stick_arrays(peaks, baseline: float, height: float):
@@ -136,7 +145,7 @@ def plot_hkl_sticks(
     width: float = 1.6,
 ):
     stick_x, stick_y = hkl_stick_arrays(peaks, baseline, height)
-    return plot.plot(stick_x, stick_y, pen=pg.mkPen(color, width=width), name=label)
+    return _set_legend_label(plot.plot(stick_x, stick_y, pen=pg.mkPen(color, width=width)), label)
 
 
 def plot_peak_intensity_sticks(
@@ -161,7 +170,7 @@ def plot_peak_intensity_sticks(
         intensity = max(float(getattr(peak, "intensity", 0.0)), 0.0)
         stick_x.extend([two_theta, two_theta, np.nan])
         stick_y.extend([base_y, base_y + height * intensity / 100.0, np.nan])
-    return plot.plot(stick_x, stick_y, pen=pg.mkPen(color, width=width), name=label)
+    return _set_legend_label(plot.plot(stick_x, stick_y, pen=pg.mkPen(color, width=width)), label)
 
 
 def plot_hkl_ticks(plot: pg.PlotWidget, peaks, color: str, baseline: float, height: float):

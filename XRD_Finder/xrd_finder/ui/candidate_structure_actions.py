@@ -32,19 +32,23 @@ class PhaseFinderCandidateStructureActionsMixin:
         return rows
 
     def _preview_candidate_row(self, row: int) -> None:
+        self._candidate_preview_token = int(getattr(self, "_candidate_preview_token", 0)) + 1
+        preview_token = self._candidate_preview_token
+        if hasattr(self, "_clear_transient_candidate_preview"):
+            self._clear_transient_candidate_preview()
         candidate = self._candidate_row_values(row)
         if self._candidate_source(candidate) == "RRUFF" and candidate.get("Entry"):
-            self._preview_rruff_reference(candidate, show_errors=False)
+            self._preview_rruff_reference(candidate, show_errors=False, preview_token=preview_token)
             return
         if self._candidate_source(candidate) == "PDF2" and candidate.get("Entry"):
-            self._preview_pdf2_reference(candidate, show_errors=False)
+            self._preview_pdf2_reference(candidate, show_errors=False, preview_token=preview_token)
             return
         if self._candidate_source(candidate) not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"} or not candidate.get("Entry"):
             return
         self._with_candidate_cif_ready(
             candidate,
             "Preview structure",
-            lambda ready_candidate: self._calculate_candidate_overlay(ready_candidate, show_errors=False),
+            lambda ready_candidate: self._calculate_candidate_overlay(ready_candidate, show_errors=False, preview_token=preview_token),
         )
 
     def _candidate_source(self, candidate: dict[str, str]) -> str:

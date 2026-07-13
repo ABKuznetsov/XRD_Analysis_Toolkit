@@ -18,7 +18,7 @@ class XrdViewBox(pg.ViewBox):
         event.accept()
 
     def mouseDoubleClickEvent(self, event) -> None:
-        self.autoRange(padding=0.02)
+        self.autoRange(padding=0.0)
         event.accept()
 
 

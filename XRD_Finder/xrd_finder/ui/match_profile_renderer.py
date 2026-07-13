@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Callable
 
 import numpy as np
+from scipy.ndimage import gaussian_filter1d
 
 from xrd_finder.finder import FinderCandidateInput
 from xrd_finder.ui.pattern_plot_helpers import add_hkl_labels, plot_peak_intensity_sticks, plot_phase_marker_lane, plot_profile
@@ -130,6 +131,11 @@ def draw_match_profile_result(
     observed_ymin_plot = observed_ymin + active_plot_offset
     background_plot = background + active_plot_offset
     calculated_total_plot = calculated_total + active_plot_offset
+    residual = observed_y - calculated_total
+    if len(x) > 2 and len(residual):
+        step = float(np.nanmedian(np.diff(x)))
+        sigma = max(1.0, min(14.0, float(getattr(result, "fwhm", 0.18) or 0.18) / max(abs(step), 1.0e-6) / 4.0))
+        residual = gaussian_filter1d(residual, sigma=sigma, mode="nearest")
     phase_peak_sets: list[tuple[str, str, np.ndarray]] = []
     phase_assignment_styles: dict[str, tuple[str, str]] = {}
 
@@ -279,6 +285,22 @@ def draw_match_profile_result(
     )
     _tag_plot_item(background_item, pattern_id)
     plot_layers["background"].append(background_item)
+    residual_peak = float(np.nanmax(np.abs(residual))) if len(residual) else 0.0
+    if residual_peak > 0.0:
+        difference_height = y_span * 0.24
+        difference_scale = min(1.0, difference_height / max(residual_peak, 1.0e-9))
+        difference_baseline = min(observed_ymin_plot, float(np.nanpercentile(background_plot, 5))) - y_span * 0.24
+        difference_y = difference_baseline + residual * difference_scale
+        difference_item = plot_profile(
+            match_plot,
+            x,
+            difference_y,
+            "#6f45a3",
+            "difference",
+            width=max(style.background.width + 0.4, 1.4),
+        )
+        _tag_plot_item(difference_item, pattern_id)
+        plot_layers["difference"].append(difference_item)
     fit_quality = profile_fit_quality(observed_y, background, calculated_total)
     marker_layer_counts = {layer: len(plot_layers.get(layer, [])) for layer in ("coverage_markers", "peak_labels", "unknown_peaks")}
     explained, total_observed = add_peak_coverage_markers(

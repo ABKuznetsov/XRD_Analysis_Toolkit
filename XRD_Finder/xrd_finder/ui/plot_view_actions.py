@@ -226,6 +226,7 @@ class PhaseFinderPlotViewActionsMixin:
             "calculated_profile": settings.layer_total_profile_visible,
             "phase_profiles": settings.layer_phase_profiles_visible,
             "background": settings.layer_background_visible,
+            "difference": settings.layer_difference_visible,
             "phase_ticks": settings.layer_phase_ticks_visible,
             "coverage_markers": settings.layer_coverage_markers_visible,
             "peak_labels": settings.layer_peak_labels_visible,
@@ -295,14 +296,16 @@ class PhaseFinderPlotViewActionsMixin:
             return
         canvas_width = max(source_width - 22, 260)
         canvas_height = max(source_height - 22, 220)
-        if hasattr(self, "plot_canvas_layout"):
-            self.plot_canvas_layout.setAlignment(self.match_plot, Qt.AlignmentFlag.AlignCenter)
         if aspect is None:
+            if hasattr(self, "plot_canvas_layout"):
+                self.plot_canvas_layout.setAlignment(self.match_plot, Qt.Alignment())
+            self.match_plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             self.match_plot.setMinimumSize(260, 220)
             self.match_plot.setMaximumSize(16777215, 16777215)
-            self.match_plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             self.match_plot.updateGeometry()
             return
+        if hasattr(self, "plot_canvas_layout"):
+            self.plot_canvas_layout.setAlignment(self.match_plot, Qt.AlignmentFlag.AlignCenter)
         target_width = canvas_width
         target_height = int(target_width / max(float(aspect), 0.1))
         if target_height > canvas_height:

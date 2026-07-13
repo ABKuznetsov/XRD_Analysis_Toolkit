@@ -1,10 +1,72 @@
 from __future__ import annotations
 
+from PySide6.QtWidgets import QMessageBox
+
 from xrd_finder.services.candidate_search_service import CandidateSearchOptions
 from xrd_finder.services.cod_online_service import formula_elements
 
 
 class PhaseFinderCandidateSearchActionsMixin:
+    def _auto_search_candidates(self) -> None:
+        if self._active_pattern() is None:
+            QMessageBox.information(self, "Auto search", "Import or select an XRD pattern first.")
+            return
+        probability_data = self._probability_observed_data() if hasattr(self, "_probability_observed_data") else None
+        if probability_data is None:
+            QMessageBox.information(self, "Auto search", "No usable peaks were detected in the active pattern.")
+            return
+        _observed_x, _corrected, observed_records = probability_data
+        peak_positions = [float(position) for position, _height in observed_records[:80]]
+        if not peak_positions:
+            QMessageBox.information(self, "Auto search", "No usable peaks were detected in the active pattern.")
+            return
+
+        elements = list(self.selected_element_order)
+        options = self._candidate_search_options()
+        options.observed_peak_positions = peak_positions
+        if not elements:
+            # An unconstrained online element query is both slow and scientifically
+            # weak. The local SQL peak index is designed for this broad first pass.
+            options.cod_online_enabled = False
+            options.rruff_enabled = False
+            options.match_pdf2_enabled = False
+            options.materials_project_enabled = False
+            options.aflow_enabled = False
+            options.oqmd_enabled = False
+
+        self._prepare_candidate_database_search()
+        auto_search_token = int(getattr(self, "_auto_search_token", 0)) + 1
+        self._auto_search_token = auto_search_token
+        self.finder_action_bar.set_auto_search_busy(True)
+        label = " ".join(elements) if elements else "observed peak positions"
+
+        def success(result) -> None:
+            if auto_search_token != getattr(self, "_auto_search_token", 0):
+                return
+            self.finder_action_bar.set_auto_search_busy(False)
+            rows = result or []
+            if not rows:
+                self._set_candidate_rows([["", "", "", "No candidates found by automatic peak search", "", ""]])
+                return
+            self._set_candidate_rows(rows, force_rank=True)
+            if self.candidate_table.rowCount() > 0:
+                self.candidate_table.selectRow(0)
+
+        def failure(message: str, details: str) -> None:
+            if auto_search_token != getattr(self, "_auto_search_token", 0):
+                return
+            self.finder_action_bar.set_auto_search_busy(False)
+            QMessageBox.warning(self, "Auto search failed", message or details)
+
+        self._run_background_task(
+            "Auto search",
+            f"Searching candidates from {label}...",
+            lambda progress: self.candidate_search_service.search_elements(elements, options, progress=progress),
+            success,
+            failure,
+            with_progress=True,
+        )
+
     def _prepare_candidate_database_search(self) -> None:
         if hasattr(self, "_clear_transient_candidate_preview"):
             self._clear_transient_candidate_preview()
@@ -85,7 +147,19 @@ class PhaseFinderCandidateSearchActionsMixin:
             structural_data_enabled=self._structural_data_enabled(),
             reference_patterns_enabled=self._reference_patterns_enabled(),
             material_class_allowed=self._material_class_allowed,
+            observed_peak_positions=self._candidate_search_peak_positions(),
         )
+
+    def _candidate_search_peak_positions(self) -> list[float]:
+        if not hasattr(self, "_rank_by_peak_probability_enabled") or not self._rank_by_peak_probability_enabled():
+            return []
+        if not hasattr(self, "_probability_observed_data"):
+            return []
+        probability_data = self._probability_observed_data()
+        if probability_data is None:
+            return []
+        _observed_x, _corrected, observed_records = probability_data
+        return [float(position) for position, _height in observed_records[:80]]
 
     def _materials_project_enabled(self) -> bool:
         return (

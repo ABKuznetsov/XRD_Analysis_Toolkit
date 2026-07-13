@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
     QGridLayout,
     QHeaderView,
     QFrame,
     QLabel,
+    QPushButton,
     QScrollArea,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -20,12 +23,35 @@ from xrd_finder.services.ccdc_service import extract_doi
 
 
 class CompoundCardWidget(QWidget):
+    pawleyFitRequested = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.labels: dict[str, QLabel] = {}
+        self.sample_labels: dict[str, QLabel] = {}
+        self.sample_title: QLabel | None = None
+        self.reference_title: QLabel | None = None
+        self.tabs: QTabWidget | None = None
+        self.sample_phase_table: QTableWidget | None = None
         self.atom_table: QTableWidget | None = None
         self.diffraction_table: QTableWidget | None = None
         self._build_ui()
+
+    def set_sample(
+        self,
+        pattern: object | None,
+        phase_rows: list[list[str]] | None = None,
+    ) -> None:
+        data = self._sample_values(pattern)
+        if self.sample_title is not None:
+            title = str(data.get("Sample Name", "") or "")
+            self.sample_title.setText(title if title else "No sample selected")
+        for key, label in self.sample_labels.items():
+            text = str(data.get(key, "") or "")
+            label.setText(text if text else "-")
+        self._set_table_rows(self.sample_phase_table, phase_rows)
+        if pattern is not None and self.tabs is not None:
+            self.tabs.setCurrentIndex(0)
 
     def set_candidate(self, candidate: Mapping[str, object] | None) -> None:
         data = dict(candidate or {})
@@ -46,37 +72,105 @@ class CompoundCardWidget(QWidget):
         }
         data.update({key: value for key, value in aliases.items() if key not in data or not data.get(key)})
 
+        if self.reference_title is not None:
+            title = str(data.get("Name", "") or data.get("Phase", "") or "")
+            self.reference_title.setText(title if title else "No reference selected")
+
         for key, label in self.labels.items():
             text = str(data.get(key, "") or "")
             label.setText(text if text else "-")
 
         self._set_table_rows(self.atom_table, data.get("_AtomRows"))
         self._set_table_rows(self.diffraction_table, data.get("_DiffractionRows"))
+        if candidate is not None and self.tabs is not None:
+            self.tabs.setCurrentIndex(1)
 
     def _build_ui(self) -> None:
         colors = self._theme_colors()
-        self.setStyleSheet(f"CompoundCardWidget {{ background: {colors['bg']}; color: {colors['text']}; }}")
+        self.setStyleSheet(
+            f"CompoundCardWidget {{ background: {colors['bg']}; color: {colors['text']}; }}"
+            "QTabWidget::pane { border: 1px solid #46515d; top: -1px; }"
+            "QTabBar::tab { background: #252a31; color: #eef2f7; padding: 6px 10px; }"
+            "QTabBar::tab:selected { background: #34404c; }"
+        )
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setStyleSheet(f"QScrollArea {{ background: {colors['bg']}; border: 0; }}")
-        outer.addWidget(scroll)
+        self.tabs = QTabWidget()
+        outer.addWidget(self.tabs)
+        self.tabs.addTab(self._sample_tab(colors), "Sample")
+        self.tabs.addTab(self._reference_tab(colors), "Reference")
 
+    def _sample_tab(self, colors: dict[str, str]) -> QWidget:
+        scroll = self._scroll_area(colors)
         content = QWidget()
         content.setStyleSheet(f"background: {colors['bg']}; color: {colors['text']};")
         scroll.setWidget(content)
+
         layout = QVBoxLayout(content)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
 
-        title = QLabel("Selected compound")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet(self._section_style())
-        layout.addWidget(title)
+        self.sample_title = self._section_title("No sample selected")
+        layout.addWidget(self.sample_title)
+        fit_button = QPushButton("Pawley cell fit")
+        fit_button.setToolTip("Refine unit-cell parameters for assigned phases from observed peak positions.")
+        fit_button.clicked.connect(self.pawleyFitRequested)
+        layout.addWidget(fit_button)
+        layout.addWidget(self._section_title("Sample provenance and measurement"))
+        layout.addLayout(
+            self._field_grid(
+                [
+                    ("Sample Name", "Sample name"),
+                    ("Sample File", "Source file"),
+                    ("Sample Method", "Method"),
+                    ("Sample Wavelength", "Wavelength"),
+                    ("Sample Units", "Axes"),
+                    ("Sample Processing", "Processing"),
+                    ("Sample Phases", "Assigned phases"),
+                ],
+                target=self.sample_labels,
+            )
+        )
 
+        layout.addWidget(self._section_title("Assigned phases"))
+        self.sample_phase_table = self._table(
+            [
+                "Phase",
+                "Formula",
+                "Sp. gr.",
+                "a",
+                "b",
+                "c",
+                "alpha",
+                "beta",
+                "gamma",
+                "V",
+                "Quant. (%)",
+                "I/Ic",
+                "Cell scale",
+                "FWHM",
+                "eta",
+            ],
+            stretch_columns={0},
+        )
+        self.sample_phase_table.setMinimumHeight(220)
+        layout.addWidget(self.sample_phase_table, 2)
+        layout.addStretch(1)
+        return scroll
+
+    def _reference_tab(self, colors: dict[str, str]) -> QWidget:
+        scroll = self._scroll_area(colors)
+        content = QWidget()
+        content.setStyleSheet(f"background: {colors['bg']}; color: {colors['text']};")
+        scroll.setWidget(content)
+
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        self.reference_title = self._section_title("No reference selected")
+        layout.addWidget(self.reference_title)
         layout.addWidget(self._section_title("Phase classification"))
         layout.addLayout(
             self._field_grid(
@@ -123,15 +217,23 @@ class CompoundCardWidget(QWidget):
         )
 
         self.atom_table = self._table(["Site", "El", "x", "y", "z", "Occ.", "B"], stretch_columns={0, 6})
-        self.atom_table.setMinimumHeight(220)
+        self.atom_table.setMinimumHeight(260)
         layout.addWidget(self.atom_table, 2)
 
         layout.addWidget(self._section_title("Diffraction data"))
         self.diffraction_table = self._table(["d [A]", "2theta", "Int.", "h", "k", "l", "Mult."], stretch_columns={2, 6})
-        self.diffraction_table.setMinimumHeight(240)
+        self.diffraction_table.setMinimumHeight(300)
         layout.addWidget(self.diffraction_table, 3)
+        return scroll
 
-    def _field_grid(self, rows: list[tuple[str, str]]) -> QGridLayout:
+    def _scroll_area(self, colors: dict[str, str]) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet(f"QScrollArea {{ background: {colors['bg']}; border: 0; }}")
+        return scroll
+    def _field_grid(self, rows: list[tuple[str, str]], *, target: dict[str, QLabel] | None = None) -> QGridLayout:
+        target_labels = target if target is not None else self.labels
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(6)
@@ -147,11 +249,46 @@ class CompoundCardWidget(QWidget):
             value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             colors = self._theme_colors()
             value.setStyleSheet(f"background: {colors['bg']}; color: {colors['text']}; padding: 4px 6px;")
-            self.labels[key] = value
+            target_labels[key] = value
             grid.addWidget(name, row_index, 0)
             grid.addWidget(value, row_index, 1)
         grid.setColumnStretch(1, 1)
         return grid
+
+    def _sample_values(self, pattern: object | None) -> dict[str, str]:
+        if pattern is None:
+            return {}
+        name = str(getattr(pattern, "name", "") or "")
+        source_path = str(getattr(pattern, "source_path", "") or "")
+        source_name = Path(source_path).name if source_path else ""
+        wavelength = getattr(pattern, "wavelength", None)
+        try:
+            wavelength_text = f"{float(wavelength):.5g} A" if wavelength else ""
+        except (TypeError, ValueError):
+            wavelength_text = str(wavelength or "")
+        x_unit = str(getattr(pattern, "x_unit", "") or "2theta")
+        y_unit = str(getattr(pattern, "y_unit", "") or "intensity")
+        processed_label = str(getattr(pattern, "processed_label", "") or "")
+        background_removed = bool(getattr(pattern, "processed_background_removed", False))
+        processing_parts: list[str] = []
+        if processed_label:
+            processing_parts.append(processed_label)
+        if background_removed:
+            processing_parts.append("background removed")
+        processed_points = getattr(pattern, "processed_points", None)
+        if isinstance(processed_points, list) and processed_points:
+            processing_parts.append(f"{len(processed_points)} processed points")
+        linked_phase_ids = getattr(pattern, "linked_phase_ids", None)
+        phase_count = len(linked_phase_ids) if isinstance(linked_phase_ids, list) else 0
+        return {
+            "Sample Name": name,
+            "Sample File": source_name or source_path,
+            "Sample Method": "XRD",
+            "Sample Wavelength": wavelength_text,
+            "Sample Units": f"{x_unit} / {y_unit}",
+            "Sample Processing": "; ".join(processing_parts) if processing_parts else "original",
+            "Sample Phases": str(phase_count) if phase_count else "none",
+        }
 
     def _section_title(self, text: str) -> QLabel:
         label = QLabel(text)

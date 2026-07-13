@@ -40,15 +40,22 @@ def add_peak_coverage_markers(
         return 0, 0
     y_span = max(float(np.nanmax(observed_y)) - float(np.nanmin(observed_y)), float(np.nanmax(observed_y)), 1.0)
     marker_offset = y_span * 0.045
-    marker_cutoff = float(np.nanpercentile(observed_y, 72))
+    corrected_strength = np.asarray(corrected_y, dtype=float)
+    finite_strength = corrected_strength[np.isfinite(corrected_strength) & (corrected_strength > 0)]
+    if len(finite_strength):
+        marker_cutoff = float(np.nanpercentile(finite_strength, 72))
+        strength_floor = float(np.nanpercentile(finite_strength, 60))
+    else:
+        marker_cutoff = float(np.nanpercentile(observed_y, 72))
+        strength_floor = float(np.nanpercentile(observed_y, 60))
     unknown_limit = 10
     unknown_count = 0
     explained = 0
     considered_positions = []
-    observed_60 = float(np.nanpercentile(observed_y, 60))
     for obs_x in peak_positions:
         y_index = int(np.argmin(np.abs(x - obs_x)))
-        if float(observed_y[y_index]) >= observed_60:
+        peak_strength = float(corrected_strength[y_index]) if len(corrected_strength) > y_index else float(observed_y[y_index])
+        if peak_strength >= strength_floor:
             considered_positions.append(float(obs_x))
     for obs_x in considered_positions:
         y_index = int(np.argmin(np.abs(x - obs_x)))
@@ -75,7 +82,8 @@ def add_peak_coverage_markers(
             plot_layers["coverage_markers"].append(item)
             explained += 1
         else:
-            if unknown_count >= unknown_limit or float(observed_y[y_index]) < marker_cutoff:
+            peak_strength = float(corrected_strength[y_index]) if len(corrected_strength) > y_index else float(observed_y[y_index])
+            if unknown_count >= unknown_limit or peak_strength < marker_cutoff:
                 continue
             item = pg.ScatterPlotItem(
                 [float(obs_x)],
@@ -105,7 +113,12 @@ def add_assignment_markers(
     style = style or PlotStyle()
     y_span = max(float(np.nanmax(observed_y)) - float(np.nanmin(observed_y)), float(np.nanmax(observed_y)), 1.0)
     marker_offset = y_span * 0.05
-    unknown_cutoff = float(np.nanpercentile(observed_y, 74))
+    peak_strengths = [
+        max(float(getattr(observed_peak, "intensity", 0.0)), 0.0)
+        for observed_peak in observed_peaks
+        if np.isfinite(float(getattr(observed_peak, "intensity", 0.0)))
+    ]
+    unknown_cutoff = float(np.nanpercentile(peak_strengths, 74)) if peak_strengths else float(np.nanpercentile(observed_y, 74))
     unknown_count = 0
     explained = 0
     legend_marker_names: set[str] = set()
@@ -115,7 +128,10 @@ def add_assignment_markers(
         if not np.isfinite(obs_x):
             continue
         y_index = int(np.argmin(np.abs(x - obs_x)))
-        peak_records.append((float(observed_y[y_index]), observed_peak, y_index))
+        peak_height = max(float(getattr(observed_peak, "intensity", 0.0)), 0.0)
+        if peak_height <= 0.0:
+            peak_height = max(float(observed_y[y_index]) - float(np.nanpercentile(observed_y, 10)), 0.0)
+        peak_records.append((peak_height, observed_peak, y_index))
     peak_records = sorted(peak_records, key=lambda item: item[0], reverse=True)[:80]
     peak_records = sorted(peak_records, key=lambda item: float(item[1].two_theta))
     for _peak_height, observed_peak, y_index in peak_records:
@@ -152,7 +168,7 @@ def add_assignment_markers(
                     plot.addItem(text)
                     plot_layers["peak_labels"].append(text)
         else:
-            if unknown_count >= 10 or float(observed_y[y_index]) < unknown_cutoff:
+            if unknown_count >= 10 or _peak_height < unknown_cutoff:
                 continue
             item = pg.ScatterPlotItem(
                 [obs_x],

@@ -89,6 +89,7 @@ class PlotViewSettings:
     layer_total_profile_visible: bool = True
     layer_phase_profiles_visible: bool = True
     layer_background_visible: bool = True
+    layer_difference_visible: bool = True
     layer_phase_ticks_visible: bool = True
     layer_coverage_markers_visible: bool = True
     layer_peak_labels_visible: bool = False
@@ -167,7 +168,7 @@ class CollapsibleSection(QWidget):
 class PlotViewSettingsWidget(QScrollArea):
     settingsChanged = Signal(object)
     profileCandidateColorRequested = Signal(int)
-    _DEFAULT_SETTINGS_KEY = "plot_view/default_settings"
+    _DEFAULT_SETTINGS_KEY = "plot_view/default_settings_v2"
 
     _ASPECTS = {
         "Fit": None,
@@ -739,6 +740,9 @@ class PlotViewSettingsWidget(QScrollArea):
         self.layer_background_checkbox = QCheckBox()
         self.layer_background_checkbox.setChecked(True)
         self.layer_background_checkbox.toggled.connect(self._emit_settings)
+        self.layer_difference_checkbox = QCheckBox()
+        self.layer_difference_checkbox.setChecked(True)
+        self.layer_difference_checkbox.toggled.connect(self._emit_settings)
         self.layer_phase_ticks_checkbox = QCheckBox()
         self.layer_phase_ticks_checkbox.setChecked(True)
         self.layer_phase_ticks_checkbox.toggled.connect(self._emit_settings)
@@ -756,6 +760,7 @@ class PlotViewSettingsWidget(QScrollArea):
         form.addRow("Total calculated profile", self.layer_total_profile_checkbox)
         form.addRow("Individual phase profiles", self.layer_phase_profiles_checkbox)
         form.addRow("Background", self.layer_background_checkbox)
+        form.addRow("Difference curve", self.layer_difference_checkbox)
         form.addRow("Phase tick marks", self.layer_phase_ticks_checkbox)
         form.addRow("Assignment markers", self.layer_coverage_markers_checkbox)
         form.addRow("Peak labels", self.layer_peak_labels_checkbox)
@@ -952,6 +957,7 @@ class PlotViewSettingsWidget(QScrollArea):
             layer_total_profile_visible=bool(self.layer_total_profile_checkbox.isChecked()),
             layer_phase_profiles_visible=bool(self.layer_phase_profiles_checkbox.isChecked()),
             layer_background_visible=bool(self.layer_background_checkbox.isChecked()),
+            layer_difference_visible=bool(self.layer_difference_checkbox.isChecked()),
             layer_phase_ticks_visible=bool(self.layer_phase_ticks_checkbox.isChecked()),
             layer_coverage_markers_visible=bool(self.layer_coverage_markers_checkbox.isChecked()),
             layer_peak_labels_visible=bool(self.layer_peak_labels_checkbox.isChecked()),
@@ -1060,6 +1066,7 @@ class PlotViewSettingsWidget(QScrollArea):
         self.layer_total_profile_checkbox.setChecked(settings.layer_total_profile_visible)
         self.layer_phase_profiles_checkbox.setChecked(settings.layer_phase_profiles_visible)
         self.layer_background_checkbox.setChecked(settings.layer_background_visible)
+        self.layer_difference_checkbox.setChecked(settings.layer_difference_visible)
         self.layer_phase_ticks_checkbox.setChecked(settings.layer_phase_ticks_visible)
         self.layer_coverage_markers_checkbox.setChecked(settings.layer_coverage_markers_visible)
         self.layer_peak_labels_checkbox.setChecked(settings.layer_peak_labels_visible)

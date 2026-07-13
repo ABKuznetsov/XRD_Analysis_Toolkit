@@ -5,8 +5,11 @@ import mmap
 import os
 from pathlib import Path
 import re
+import sqlite3
 import threading
+import time
 
+from xrd_finder.services.cache_paths import default_data_root
 from xrd_finder.services.cod_online_service import formula_elements
 
 
@@ -46,14 +49,17 @@ class MatchPdf2Service:
         self.root = Path(root or env_root or DEFAULT_MATCH_PDF2_ROOT)
         self.summary_path = self.root / "summary.dat"
         self.pdf2_path = self.root / "pdf2.dat"
+        self.index_root = default_data_root() / "pdf2_cache"
+        self.index_path = self.index_root / "index.sqlite"
         self._entries: list[MatchPdf2Entry] | None = None
         self._details_cache: dict[str, dict[str, object]] = {}
         self._lock = threading.RLock()
+        self._ensure_schema()
 
     def status(self) -> MatchPdf2Status:
         if not self.summary_path.exists():
             return MatchPdf2Status(False, "summary.dat not found", self.root, 0)
-        count = len(self._entries) if self._entries is not None else 0
+        count = len(self._entries) if self._entries is not None else self._indexed_count()
         label = f"{count} PDF-2 cards" if count else "summary.dat ready"
         return MatchPdf2Status(True, label, self.root, count)
 
@@ -77,6 +83,7 @@ class MatchPdf2Service:
         with self._lock:
             self._entries = None
             self._details_cache.clear()
+        self._clear_index_for_current_summary()
 
     def search(
         self,
@@ -90,29 +97,9 @@ class MatchPdf2Service:
         required = {element.strip() for element in elements or [] if element.strip()}
         excluded = {element.strip() for element in excluded_elements or [] if element.strip()}
         query = text.strip().lower()
-        results = []
-        for entry in self._load_entries():
-            entry_elements = formula_elements(entry.formula)
-            if required and not required.issubset(entry_elements):
-                continue
-            if excluded and entry_elements & excluded:
-                continue
-            if query:
-                haystack = " ".join(
-                    [
-                        entry.entry_id,
-                        self.short_entry_id(entry.entry_id),
-                        entry.chemical_name,
-                        entry.name,
-                        entry.formula,
-                    ]
-                ).lower()
-                if query not in haystack:
-                    continue
-            results.append(entry)
-            if len(results) >= limit:
-                break
-        return results
+        if not self._index_is_fresh():
+            self._load_entries()
+        return self._search_index(query, required, excluded, limit)
 
     def diffraction_peaks(self, entry_id: str, limit: int = 250) -> list[MatchPdf2Peak]:
         if not self.pdf2_path.exists():
@@ -157,6 +144,7 @@ class MatchPdf2Service:
         with self._lock:
             if self._entries is None:
                 self._entries = self._read_summary()
+                self._replace_index(self._entries)
             return self._entries
 
     def short_entry_id(self, entry_id: str) -> str:
@@ -286,6 +274,160 @@ class MatchPdf2Service:
             if entry is not None:
                 entries.append(entry)
         return entries
+
+    def _summary_signature(self) -> tuple[str, int, int]:
+        try:
+            stat = self.summary_path.stat()
+        except OSError:
+            return str(self.summary_path), 0, 0
+        return str(self.summary_path), int(stat.st_mtime_ns), int(stat.st_size)
+
+    def _index_is_fresh(self) -> bool:
+        summary_path, summary_mtime, summary_size = self._summary_signature()
+        if summary_mtime <= 0:
+            return False
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select count(*) as count
+                from pdf2_entries
+                where summary_path = ? and summary_mtime = ? and summary_size = ?
+                """,
+                (summary_path, summary_mtime, summary_size),
+            ).fetchone()
+        return bool(row and int(row["count"]) > 0)
+
+    def _indexed_count(self) -> int:
+        summary_path, summary_mtime, summary_size = self._summary_signature()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                select count(*) as count
+                from pdf2_entries
+                where summary_path = ? and summary_mtime = ? and summary_size = ?
+                """,
+                (summary_path, summary_mtime, summary_size),
+            ).fetchone()
+        return int(row["count"] if row else 0)
+
+    def _replace_index(self, entries: list[MatchPdf2Entry]) -> None:
+        summary_path, summary_mtime, summary_size = self._summary_signature()
+        if summary_mtime <= 0:
+            return
+        rows = [
+            (
+                entry.entry_id,
+                self.short_entry_id(entry.entry_id),
+                entry.formula,
+                entry.name,
+                entry.chemical_name,
+                entry.quality,
+                " ".join(sorted(formula_elements(entry.formula))),
+                summary_path,
+                summary_mtime,
+                summary_size,
+                time.time(),
+            )
+            for entry in entries
+        ]
+        with self._connect() as connection:
+            connection.execute("delete from pdf2_entries where summary_path = ?", (summary_path,))
+            if rows:
+                connection.executemany(
+                    """
+                    insert or replace into pdf2_entries(
+                        entry_id, short_entry_id, formula, name, chemical_name, quality,
+                        elements, summary_path, summary_mtime, summary_size, updated_at
+                    ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+
+    def _clear_index_for_current_summary(self) -> None:
+        summary_path, _summary_mtime, _summary_size = self._summary_signature()
+        with self._connect() as connection:
+            connection.execute("delete from pdf2_entries where summary_path = ?", (summary_path,))
+
+    def _search_index(
+        self,
+        query: str,
+        required: set[str],
+        excluded: set[str],
+        limit: int,
+    ) -> list[MatchPdf2Entry]:
+        summary_path, summary_mtime, summary_size = self._summary_signature()
+        where = ["summary_path = ?", "summary_mtime = ?", "summary_size = ?"]
+        params: list[object] = [summary_path, summary_mtime, summary_size]
+        for element in sorted(required):
+            where.append("instr(' ' || elements || ' ', ?) > 0")
+            params.append(f" {element} ")
+        for element in sorted(excluded):
+            where.append("instr(' ' || elements || ' ', ?) = 0")
+            params.append(f" {element} ")
+        if query:
+            like_text = f"%{query}%"
+            where.append(
+                "("
+                "lower(entry_id) like ? or "
+                "lower(short_entry_id) like ? or "
+                "lower(formula) like ? or "
+                "lower(name) like ? or "
+                "lower(chemical_name) like ?"
+                ")"
+            )
+            params.extend([like_text, like_text, like_text, like_text, like_text])
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                select entry_id, formula, name, chemical_name, quality
+                from pdf2_entries
+                where {" and ".join(where)}
+                order by updated_at desc
+                limit ?
+                """,
+                (*params, max(int(limit), 1)),
+            ).fetchall()
+        return [
+            MatchPdf2Entry(
+                entry_id=row["entry_id"],
+                formula=row["formula"],
+                name=row["name"],
+                chemical_name=row["chemical_name"],
+                quality=row["quality"],
+            )
+            for row in rows
+        ]
+
+    def _ensure_schema(self) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                create table if not exists pdf2_entries (
+                    entry_id text not null,
+                    short_entry_id text not null default '',
+                    formula text not null default '',
+                    name text not null default '',
+                    chemical_name text not null default '',
+                    quality text not null default '',
+                    elements text not null default '',
+                    summary_path text not null default '',
+                    summary_mtime integer not null default 0,
+                    summary_size integer not null default 0,
+                    updated_at real not null,
+                    primary key (summary_path, entry_id)
+                )
+                """
+            )
+            connection.execute("create index if not exists idx_pdf2_summary on pdf2_entries(summary_path, summary_mtime, summary_size)")
+            connection.execute("create index if not exists idx_pdf2_elements on pdf2_entries(elements)")
+            connection.execute("create index if not exists idx_pdf2_formula on pdf2_entries(formula)")
+            connection.execute("create index if not exists idx_pdf2_name on pdf2_entries(name)")
+
+    def _connect(self) -> sqlite3.Connection:
+        self.index_root.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(self.index_path)
+        connection.row_factory = sqlite3.Row
+        return connection
 
     def _parse_summary_record(self, text: str) -> MatchPdf2Entry | None:
         match = re.search(r"\s+(\d{1,2})-\s*(\d{1,5})\s*([A-Za-z]*)\s*$", text)

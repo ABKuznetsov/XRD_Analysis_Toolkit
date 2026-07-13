@@ -11,6 +11,7 @@ class CalculationContext:
     two_theta_min: float
     two_theta_max: float
     x_grid_fingerprint: tuple[int, float, float, int]
+    profile_eta: float = 0.0
     global_zero_shift: float = 0.0
     cell_scale: float = 1.0
 
@@ -30,9 +31,10 @@ class CalculationContext:
         )
 
     @property
-    def profile_key(self) -> tuple[float, float, tuple[int, float, float, int], float, float]:
+    def profile_key(self) -> tuple[float, float, float, tuple[int, float, float, int], float, float]:
         return (
             round(float(self.fwhm), 6),
+            round(float(self.profile_eta), 5),
             round(float(self.wavelength), 7),
             self.x_grid_fingerprint,
             round(float(self.global_zero_shift), 6),

@@ -25,7 +25,12 @@ class ObservedPatternProcessor:
     def prepare(self, finder_input: FinderInput) -> ObservedPatternData:
         x_grid, observed_y = self.observed_arrays(finder_input)
         observed_y = self.smooth_y(observed_y, finder_input.smoothing_window)
-        background = self.estimate_background(x_grid, observed_y) if finder_input.subtract_background else np.zeros_like(observed_y)
+        if finder_input.subtract_background:
+            background = self.custom_background(finder_input, x_grid)
+            if background is None:
+                background = self.estimate_background(x_grid, observed_y)
+        else:
+            background = np.zeros_like(observed_y)
         target_y = np.clip(observed_y - background, 0.0, None)
         fwhm = finder_input.fwhm or self.estimate_fwhm(x_grid, target_y)
         peaks = self.observed_peaks(x_grid, target_y, fwhm)
@@ -72,15 +77,44 @@ class ObservedPatternProcessor:
         except Exception:
             return np.full_like(y, float(np.nanpercentile(y, 15)))
 
+    def custom_background(self, finder_input: FinderInput, x_grid: np.ndarray) -> np.ndarray | None:
+        if finder_input.background_x is None or finder_input.background_y is None:
+            return None
+        x = np.asarray(finder_input.background_x, dtype=float)
+        y = np.asarray(finder_input.background_y, dtype=float)
+        if len(x) != len(y) or len(x) < 2:
+            return None
+        mask = np.isfinite(x) & np.isfinite(y)
+        if np.count_nonzero(mask) < 2:
+            return None
+        x = x[mask]
+        y = y[mask]
+        order = np.argsort(x)
+        x = x[order]
+        y = y[order]
+        unique_x, unique_indices = np.unique(x, return_index=True)
+        unique_y = y[unique_indices]
+        if len(unique_x) < 2:
+            return None
+        return np.asarray(
+            np.interp(x_grid, unique_x, unique_y, left=float(unique_y[0]), right=float(unique_y[-1])),
+            dtype=float,
+        )
+
     def estimate_fwhm(self, x: np.ndarray, y: np.ndarray) -> float:
         if len(x) < 5 or float(np.nanmax(y)) <= 0:
             return 0.18
-        prominence = max(float(np.nanmax(y)) * 0.08, 1.0)
-        indices, _properties = find_peaks(y, prominence=prominence, distance=max(3, len(y) // 1000))
+        prominence = max(_robust_noise(y) * 5.0, float(np.nanpercentile(y, 95)) * 0.04, 1.0)
+        step = _median_step(x)
+        indices, _properties = find_peaks(
+            y,
+            prominence=prominence,
+            distance=max(3, int(round(0.11 / max(step, 1.0e-6)))),
+            width=(1, max(5, int(round(1.4 / max(step, 1.0e-6))))),
+        )
         if len(indices) == 0:
             return 0.18
         widths = peak_widths(y, indices, rel_height=0.5)[0]
-        step = abs(float(np.nanmedian(np.diff(x)))) if len(x) > 1 else 0.02
         return float(np.clip(np.nanmedian(widths) * step, 0.05, 0.35))
 
     def observed_peak_positions(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -89,10 +123,16 @@ class ObservedPatternProcessor:
     def observed_peaks(self, x: np.ndarray, y: np.ndarray, fwhm: float) -> list[ObservedPeak]:
         if len(x) < 5 or float(np.nanmax(y)) <= 0:
             return []
-        prominence = max(float(np.nanmax(y)) * 0.03, 1.0)
-        indices, _properties = find_peaks(y, prominence=prominence, distance=max(3, len(y) // 1000))
+        step = _median_step(x)
+        prominence = max(_robust_noise(y) * 4.4, float(np.nanpercentile(y, 95)) * 0.035, 1.0)
+        indices, properties = find_peaks(
+            y,
+            prominence=prominence,
+            distance=max(3, int(round(0.11 / max(step, 1.0e-6)))),
+            width=(1, max(5, int(round(1.4 / max(step, 1.0e-6))))),
+        )
         if len(indices) > 150:
-            heights = y[indices]
+            heights = properties.get("prominences", y[indices])
             indices = indices[np.argsort(heights)[-150:]]
         ordered = indices[np.argsort(np.asarray(x, dtype=float)[indices])]
         return [
@@ -103,3 +143,22 @@ class ObservedPatternProcessor:
             )
             for index in ordered
         ]
+
+
+def _median_step(x: np.ndarray) -> float:
+    diffs = np.diff(np.asarray(x, dtype=float))
+    diffs = diffs[np.isfinite(diffs) & (diffs > 0)]
+    return float(np.nanmedian(diffs)) if len(diffs) else 0.03
+
+
+def _robust_noise(y: np.ndarray) -> float:
+    values = np.asarray(y, dtype=float)
+    finite = values[np.isfinite(values)]
+    if len(finite) < 3:
+        return 1.0
+    diffs = np.diff(finite)
+    mad = float(np.nanmedian(np.abs(diffs - np.nanmedian(diffs)))) if len(diffs) else 0.0
+    if mad > 0:
+        return max(1.4826 * mad / np.sqrt(2.0), 1.0)
+    mad = float(np.nanmedian(np.abs(finite - np.nanmedian(finite))))
+    return max(1.4826 * mad, 1.0)

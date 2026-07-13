@@ -5,16 +5,16 @@
   "apps": {
     "xrd_finder": {
       "name": "XRD Phase Finder",
-      "version": "1.1.3",
+      "version": "1.1.4",
       "entry_module": "xrd_finder.apps.finder_gui",
       "folder": "XRD_Finder",
       "requirements": "XRD_Finder/requirements.txt",
       "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/latest",
       "manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/toolkit/manifest.json",
       "update_manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/toolkit/updates/xrd_finder.json",
-      "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.3/XRD_Phase_Finder_Setup_1.1.3.exe",
+      "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.4/XRD_Phase_Finder_Setup_1.1.4.exe",
       "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.3/XRD_Phase_Finder_macOS_1.1.3.zip",
-      "installer_sha256": "8a118e16ed54a3e2ff0ed11fcf708a9d97be72ed632bb37186566e5725edd96e",
+      "installer_sha256": "9af2eac23cf928c102a721595f96459151c41a16631114ddb484c1221e3ceb42",
       "macos_installer_sha256": "f20228a7ec6f72d463d5ee120420dfa18471734d6af199f282d25e5c66d35d2f"
     }
   }

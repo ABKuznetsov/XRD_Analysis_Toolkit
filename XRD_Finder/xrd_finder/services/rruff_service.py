@@ -137,24 +137,38 @@ class RruffService:
         required = {element.strip() for element in elements or [] if element.strip()}
         excluded = {element.strip() for element in excluded_elements or [] if element.strip()}
         text = text.strip().lower()
+        where = ["1 = 1"]
+        params: list[object] = []
+        for element in sorted(required):
+            where.append("instr(' ' || elements || ' ', ?) > 0")
+            params.append(f" {element} ")
+        for element in sorted(excluded):
+            where.append("instr(' ' || elements || ' ', ?) = 0")
+            params.append(f" {element} ")
+        if text:
+            like_text = f"%{text}%"
+            where.append(
+                "("
+                "lower(rruff_id) like ? or "
+                "lower(name) like ? or "
+                "lower(formula) like ? or "
+                "lower(source_text) like ?"
+                ")"
+            )
+            params.extend([like_text, like_text, like_text, like_text])
         with self._connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 select rruff_id, name, formula, path, source_text, elements
                 from rruff_patterns
+                where {" and ".join(where)}
                 order by updated_at desc
-                """
+                limit ?
+                """,
+                (*params, limit),
             ).fetchall()
         results = []
         for row in rows:
-            row_elements = set((row["elements"] or "").split())
-            if required and not required.issubset(row_elements):
-                continue
-            if excluded and row_elements & excluded:
-                continue
-            haystack = " ".join([row["rruff_id"], row["name"], row["formula"], row["source_text"]]).lower()
-            if text and text not in haystack:
-                continue
             results.append(
                 RruffEntry(
                     rruff_id=row["rruff_id"],
@@ -164,9 +178,30 @@ class RruffService:
                     source_text=row["source_text"],
                 )
             )
-            if len(results) >= limit:
-                break
         return results
+
+    def iter_entries(self, limit: int | None = None) -> list[RruffEntry]:
+        sql = """
+            select rruff_id, name, formula, path, source_text
+            from rruff_patterns
+            order by updated_at desc
+        """
+        params: tuple[object, ...] = ()
+        if limit is not None:
+            sql += " limit ?"
+            params = (max(0, int(limit)),)
+        with self._connect() as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [
+            RruffEntry(
+                rruff_id=row["rruff_id"],
+                name=row["name"],
+                formula=row["formula"],
+                path=row["path"],
+                source_text=row["source_text"],
+            )
+            for row in rows
+        ]
 
     def pattern_path(self, rruff_id: str) -> Path | None:
         with self._connect() as connection:
@@ -252,6 +287,10 @@ class RruffService:
                 )
                 """
             )
+            connection.execute("create index if not exists idx_rruff_updated on rruff_patterns(updated_at desc)")
+            connection.execute("create index if not exists idx_rruff_elements on rruff_patterns(elements)")
+            connection.execute("create index if not exists idx_rruff_formula on rruff_patterns(formula)")
+            connection.execute("create index if not exists idx_rruff_name on rruff_patterns(name)")
 
     def _connect(self) -> sqlite3.Connection:
         self.root.mkdir(parents=True, exist_ok=True)

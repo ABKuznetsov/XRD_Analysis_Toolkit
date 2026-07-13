@@ -70,8 +70,14 @@ class PhaseFinderSelectedPhasesActionsMixin:
     ) -> bool:
         key = self._candidate_key(candidate)
         if any(self._candidate_key(item) == key for item in self.match_candidates):
+            self._sync_candidate_to_sample_phase(candidate, show_errors=show_errors)
             if recalculate:
-                self._recalculate_match_profile(auto_zoom=self._should_autozoom_match_profile())
+                refined = False
+                if bool(getattr(self, "auto_refine_cells_on_add", False)) and hasattr(self, "_fit_active_sample_pawley_cells"):
+                    refined = bool(self._fit_active_sample_pawley_cells(show_messages=False, recalculate=True))
+                if not refined:
+                    self._recalculate_match_profile(auto_zoom=self._should_autozoom_match_profile())
+                self._refresh_candidate_gain_ranking()
             return True
         try:
             cif_path = self._candidate_cif_path(candidate)
@@ -87,17 +93,41 @@ class PhaseFinderSelectedPhasesActionsMixin:
                 candidate_copy["I/Ic*"] = f"{iic:.3g}"
             self.match_candidates.append(candidate_copy)
             self.match_structures[key] = structure
+            self._sync_candidate_to_sample_phase(candidate_copy, show_errors=show_errors)
             if hasattr(self, "_save_active_profile_state"):
                 self._save_active_profile_state()
             if hasattr(self, "_invalidate_match_profile_cache"):
                 self._invalidate_match_profile_cache(getattr(self, "active_profile_pattern_id", None))
             if recalculate:
-                self._recalculate_match_profile(auto_zoom=self._should_autozoom_match_profile())
+                refined = False
+                if bool(getattr(self, "auto_refine_cells_on_add", False)) and hasattr(self, "_fit_active_sample_pawley_cells"):
+                    refined = bool(self._fit_active_sample_pawley_cells(show_messages=False, recalculate=True))
+                if not refined:
+                    self._recalculate_match_profile(auto_zoom=self._should_autozoom_match_profile())
+                self._refresh_candidate_gain_ranking()
             return True
         except Exception as exc:
             if show_errors:
                 QMessageBox.warning(self, "Working set failed", str(exc))
             return False
+
+    def _sync_candidate_to_sample_phase(self, candidate: dict[str, str], *, show_errors: bool) -> None:
+        pattern = self._active_pattern()
+        if pattern is None:
+            return
+        active_pattern_id = pattern.id
+        try:
+            phase, _structure = self._add_candidate_to_project(candidate)
+            self._link_phases_to_checked_patterns([phase.id])
+            self.project.touch()
+            self.tree.set_project(self.project)
+            self.tree.select_object("pattern", active_pattern_id)
+            self.project_changed.emit()
+            if hasattr(self, "_update_compound_card_sample"):
+                self._update_compound_card_sample()
+        except Exception as exc:
+            if show_errors:
+                QMessageBox.warning(self, "Sample phase", str(exc))
 
     def _sync_candidate_rows_to_match_list(self) -> None:
         candidates = self._candidate_rows()
@@ -143,6 +173,8 @@ class PhaseFinderSelectedPhasesActionsMixin:
             self.project.touch()
             self.tree.set_project(self.project)
             self.project_changed.emit()
+            if hasattr(self, "_update_compound_card_sample"):
+                self._update_compound_card_sample()
         finally:
             self.unsetCursor()
         if errors:
@@ -180,6 +212,7 @@ class PhaseFinderSelectedPhasesActionsMixin:
         if hasattr(self, "_invalidate_match_profile_cache"):
             self._invalidate_match_profile_cache(getattr(self, "active_profile_pattern_id", None))
         self._recalculate_match_profile()
+        self._refresh_candidate_gain_ranking()
 
     def _change_selected_match_color(self) -> None:
         row = self.match_table.currentRow()
@@ -228,8 +261,25 @@ class PhaseFinderSelectedPhasesActionsMixin:
                 iic_text,
             ])
         self.match_table.set_rows(rows)
+        if hasattr(self, "_update_compound_card_sample"):
+            self._update_compound_card_sample()
         if hasattr(self, "_update_profile_view_context"):
             self._update_profile_view_context()
+
+    def _refresh_candidate_gain_ranking(self) -> None:
+        if not self.match_candidates or self.candidate_table.rowCount() <= 0:
+            return
+        current = self.candidate_table.selected_row_values() or {}
+        current_key = self._candidate_key(current) if current.get("Entry") else ""
+        rows = self._candidate_state_rows(self.candidate_table.all_row_values())
+        self._set_candidate_rows(rows, force_rank=True)
+        if not current_key:
+            return
+        for row in range(self.candidate_table.rowCount()):
+            candidate = self.candidate_table.row_values(row)
+            if self._candidate_key(candidate) == current_key:
+                self.candidate_table.selectRow(row)
+                break
 
     def _phase_color(self, candidate: dict[str, str], index: int) -> str:
         palette = ["#d93025", "#1a73e8", "#188038", "#f9ab00", "#8e24aa", "#7b1fa2"]
@@ -238,4 +288,3 @@ class PhaseFinderSelectedPhasesActionsMixin:
             color = palette[index % len(palette)]
             candidate["_Color"] = color
         return color
-

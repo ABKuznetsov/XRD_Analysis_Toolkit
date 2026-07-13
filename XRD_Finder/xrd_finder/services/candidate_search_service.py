@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import itertools
 import queue
 import re
@@ -31,6 +31,7 @@ class CandidateSearchOptions:
     structural_data_enabled: bool
     reference_patterns_enabled: bool
     material_class_allowed: Callable[[str], bool]
+    observed_peak_positions: list[float] = field(default_factory=list)
 
 
 class CandidateSearchService:
@@ -390,6 +391,17 @@ class CandidateSearchService:
         text: str = "",
         elements: list[str] | None = None,
     ):
+        if options.observed_peak_positions:
+            peak_entries = self.local_phase_cache.search_by_peaks(
+                options.observed_peak_positions,
+                text=text,
+                elements=elements,
+                excluded_elements=options.excluded_elements,
+                sources=options.local_sources,
+                limit=self.STRUCTURAL_RESULT_LIMIT,
+            )
+            if peak_entries:
+                return peak_entries
         return self.local_phase_cache.search(
             text=text,
             elements=elements,

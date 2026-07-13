@@ -35,14 +35,147 @@ class PhaseFinderCandidateInfoActionsMixin:
         if not candidate:
             return
         self._enrich_candidate_with_structure_info(candidate)
+        self._update_candidate_gain(candidate)
         self._refresh_candidate_table_row(row, candidate)
         self.candidate_table.set_iic(row, candidate.get("I/Ic*", ""))
         self._update_compound_card(candidate)
         self._preview_candidate_row(row)
 
+    def _update_candidate_gain(self, candidate: dict[str, str]) -> None:
+        if not self.match_candidates:
+            candidate.pop("Gain (%)", None)
+            return
+        context = self._candidate_gain_context()
+        if context is None:
+            return
+        row = [
+            candidate.get("Source", ""),
+            candidate.get("Entry", ""),
+            candidate.get("Formula", ""),
+            candidate.get("Phase", ""),
+            candidate.get("Space group", ""),
+            candidate.get("Match (%)", ""),
+            "",
+            candidate.get("I/Ic*", "") or candidate.get("I/Ic", ""),
+        ]
+        gain = self._candidate_row_integral_gain(row, context)
+        candidate["Gain (%)"] = f"{gain:.1f}%" if gain < 10.0 else f"{gain:.0f}%"
+
     def _update_compound_card(self, candidate: dict[str, str] | None) -> None:
         if self.compound_card is not None:
+            self._update_compound_card_sample()
             self.compound_card.set_candidate(candidate)
+
+    def _update_compound_card_sample(self) -> None:
+        if self.compound_card is not None and hasattr(self.compound_card, "set_sample"):
+            self.compound_card.set_sample(
+                self._active_pattern(),
+                self._compound_card_phase_rows(),
+            )
+
+    def _compound_card_phase_rows(self) -> list[list[str]]:
+        pattern = self._active_pattern()
+        if pattern is None:
+            return []
+        linked_phase_ids = getattr(pattern, "linked_phase_ids", [])
+        if not isinstance(linked_phase_ids, list) or not linked_phase_ids:
+            return []
+        phase_by_id = {phase.id: phase for phase in self.project.phases}
+        structure_by_id = {structure.id: structure for structure in self.project.structures}
+        metric_by_phase_id = self._compound_card_phase_metrics_by_id()
+        rows: list[list[str]] = []
+        for phase_id in linked_phase_ids:
+            phase = phase_by_id.get(phase_id)
+            if phase is None:
+                continue
+            structure = structure_by_id.get(phase.structure_id or "")
+            cell = getattr(structure, "cell", None)
+            cell_values = self._compound_card_cell_values(cell)
+            metrics = metric_by_phase_id.get(phase.id, {})
+            rows.append(
+                [
+                    phase.name or getattr(structure, "name", "") or phase.id,
+                    phase.formula or getattr(structure, "formula", ""),
+                    phase.space_group or getattr(structure, "space_group", ""),
+                    *cell_values,
+                    metrics.get("quantity", ""),
+                    metrics.get("iic", ""),
+                    metrics.get("cell_scale", ""),
+                    metrics.get("fwhm", ""),
+                    metrics.get("eta", ""),
+                ]
+            )
+        return rows
+
+    def _compound_card_cell_values(self, cell) -> list[str]:
+        return [
+            self._compound_card_number(getattr(cell, "a", None), precision=5),
+            self._compound_card_number(getattr(cell, "b", None), precision=5),
+            self._compound_card_number(getattr(cell, "c", None), precision=5),
+            self._compound_card_number(getattr(cell, "alpha", None), precision=4),
+            self._compound_card_number(getattr(cell, "beta", None), precision=4),
+            self._compound_card_number(getattr(cell, "gamma", None), precision=4),
+            self._compound_card_number(getattr(cell, "volume", None), precision=5),
+        ]
+
+    def _compound_card_number(self, value, *, precision: int) -> str:
+        if value is None:
+            return ""
+        try:
+            return f"{float(value):.{precision}g}"
+        except Exception:
+            return str(value)
+
+    def _compound_card_phase_metrics_by_id(self) -> dict[str, dict[str, str]]:
+        metrics: dict[str, dict[str, str]] = {}
+        phase_by_source_path = {
+            self._compound_card_path_key(phase.source_path): phase.id
+            for phase in self.project.phases
+            if self._compound_card_path_key(getattr(phase, "source_path", ""))
+        }
+        phase_by_name_formula = {
+            (str(phase.name or "").casefold(), str(phase.formula or "").casefold()): phase.id
+            for phase in self.project.phases
+        }
+        for candidate in self.match_candidates:
+            key = self._candidate_key(candidate)
+            phase_id = ""
+            if self._candidate_source(candidate) == "USER" and candidate.get("Entry"):
+                phase_id = candidate.get("Entry", "")
+            if not phase_id:
+                structure = self.match_structures.get(key)
+                source_path = str(getattr(structure, "source_path", "") or "")
+                if source_path:
+                    phase_id = phase_by_source_path.get(self._compound_card_path_key(source_path), "")
+            if not phase_id:
+                phase_id = phase_by_name_formula.get(
+                    (
+                        self._candidate_phase_name(candidate).casefold(),
+                        str(candidate.get("Formula", "") or "").casefold(),
+                    ),
+                    "",
+                )
+            if not phase_id:
+                continue
+            quantity = float(self.match_quantities.get(key, 0.0) or 0.0)
+            iic = float(self.match_iic.get(key, 0.0) or 0.0)
+            cell_scale = float(self.match_cell_scales.get(key, 0.0) or 0.0)
+            metrics[phase_id] = {
+                "quantity": f"{quantity:.1f}" if quantity else "",
+                "iic": f"{iic:.3g}" if iic > 0 else "",
+                "cell_scale": f"{cell_scale:.5g}" if cell_scale else "",
+                "fwhm": self._compound_card_number(getattr(self, "_last_match_profile_fwhm", None), precision=4),
+                "eta": self._compound_card_number(getattr(self, "_last_match_profile_eta", None), precision=3),
+            }
+        return metrics
+
+    def _compound_card_path_key(self, path: str) -> str:
+        if not path:
+            return ""
+        try:
+            return str(Path(path).resolve()).lower()
+        except Exception:
+            return str(path).lower()
 
     def _enrich_candidate_with_structure_info(self, candidate: dict[str, str]) -> None:
         if self._candidate_source(candidate) == "PDF2" and candidate.get("Entry"):
@@ -248,6 +381,7 @@ class PhaseFinderCandidateInfoActionsMixin:
             "Phase": candidate.get("Phase", ""),
             "Sp. gr.": candidate.get("Space group", ""),
             "Match (%)": candidate.get("Match (%)", ""),
+            "Gain (%)": candidate.get("Gain (%)", ""),
             "I/Ic": candidate.get("I/Ic*", "") or candidate.get("I/Ic", ""),
         }.items():
             column = -1

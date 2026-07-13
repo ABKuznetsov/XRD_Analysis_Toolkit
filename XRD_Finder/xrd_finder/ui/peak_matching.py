@@ -27,15 +27,15 @@ def nearest_index(sorted_values: np.ndarray, value: float) -> int:
 
 def observed_peak_positions(x, corrected_y) -> np.ndarray:
     y = np.asarray(corrected_y, dtype=float)
+    x_values = np.asarray(x, dtype=float)
     if len(y) < 5 or float(np.nanmax(y)) <= 0:
         return np.array([], dtype=float)
-    prominence = max(float(np.nanmax(y)) * 0.04, float(np.nanstd(y)) * 3.5, 1.0)
-    peak_indices, _properties = find_peaks(y, prominence=prominence, distance=max(5, len(y) // 700))
+    peak_indices, _properties = _observed_peak_indices(x_values, y, prominence_factor=4.2, relative_prominence=0.030)
     if len(peak_indices) > 80:
         heights = y[peak_indices]
         keep = np.argsort(heights)[-80:]
         peak_indices = peak_indices[keep]
-    return np.sort(np.asarray(x, dtype=float)[peak_indices])
+    return np.sort(x_values[peak_indices])
 
 
 def observed_peak_records(x, corrected_y, limit: int = 24) -> list[tuple[float, float]]:
@@ -43,17 +43,59 @@ def observed_peak_records(x, corrected_y, limit: int = 24) -> list[tuple[float, 
     x_values = np.asarray(x, dtype=float)
     if len(y) < 5 or float(np.nanmax(y)) <= 0:
         return []
-    prominence = max(float(np.nanmax(y)) * 0.025, float(np.nanstd(y)) * 2.5, 1.0)
-    peak_indices, _properties = find_peaks(y, prominence=prominence, distance=max(5, len(y) // 800))
+    peak_indices, properties = _observed_peak_indices(x_values, y, prominence_factor=3.4, relative_prominence=0.020)
     if len(peak_indices) == 0:
         return []
+    prominences = properties.get("prominences", np.zeros_like(peak_indices, dtype=float))
     records = [
-        (float(x_values[index]), max(float(y[index]), 0.0))
-        for index in peak_indices
+        (float(x_values[index]), max(float(y[index]), float(prominence), 0.0))
+        for index, prominence in zip(peak_indices, prominences, strict=False)
         if np.isfinite(x_values[index]) and np.isfinite(y[index]) and y[index] > 0
     ]
     records.sort(key=lambda item: item[1], reverse=True)
     return records[:limit]
+
+
+def _observed_peak_indices(
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    prominence_factor: float,
+    relative_prominence: float,
+) -> tuple[np.ndarray, dict]:
+    step = _median_step(x)
+    noise = _robust_noise(y)
+    finite = y[np.isfinite(y)]
+    p95 = float(np.nanpercentile(finite, 95)) if len(finite) else 0.0
+    prominence = max(noise * float(prominence_factor), p95 * float(relative_prominence), 1.0)
+    distance = max(3, int(round(0.11 / max(step, 1.0e-6))))
+    max_width = max(5, int(round(1.4 / max(step, 1.0e-6))))
+    indices, properties = find_peaks(
+        y,
+        prominence=prominence,
+        distance=distance,
+        width=(1, max_width),
+    )
+    return indices, properties
+
+
+def _median_step(x: np.ndarray) -> float:
+    diffs = np.diff(np.asarray(x, dtype=float))
+    diffs = diffs[np.isfinite(diffs) & (diffs > 0)]
+    return float(np.nanmedian(diffs)) if len(diffs) else 0.03
+
+
+def _robust_noise(y: np.ndarray) -> float:
+    values = np.asarray(y, dtype=float)
+    finite = values[np.isfinite(values)]
+    if len(finite) < 3:
+        return 1.0
+    diffs = np.diff(finite)
+    mad = float(np.nanmedian(np.abs(diffs - np.nanmedian(diffs)))) if len(diffs) else 0.0
+    if mad > 0:
+        return max(1.4826 * mad / np.sqrt(2.0), 1.0)
+    mad = float(np.nanmedian(np.abs(finite - np.nanmedian(finite))))
+    return max(1.4826 * mad, 1.0)
 
 
 def estimate_phase_alignment(peaks, observed_positions: np.ndarray, structure) -> PhaseAlignmentEstimate:

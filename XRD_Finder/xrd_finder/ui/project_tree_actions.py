@@ -191,6 +191,8 @@ class PhaseFinderProjectTreeActionsMixin:
         view_range = self._plot_view_range() if self.show_all_selected_patterns else None
         try:
             self._refresh_observed_pattern_plot()
+            if hasattr(self, "_update_compound_card_sample"):
+                self._update_compound_card_sample()
             displayed_patterns = self._patterns_to_display() if self.show_all_selected_patterns else [self._active_pattern()]
             has_profile_candidates = any(self._profile_candidates_for_pattern(pattern) for pattern in displayed_patterns if pattern is not None)
             if has_profile_candidates:

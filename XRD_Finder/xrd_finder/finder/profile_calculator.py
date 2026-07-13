@@ -107,6 +107,7 @@ class CachedProfileCalculator:
             peaks,
             x_grid,
             fwhm=context.fwhm,
+            eta=context.profile_eta,
             wavelength=context.wavelength,
             include_kalpha2=True,
         )

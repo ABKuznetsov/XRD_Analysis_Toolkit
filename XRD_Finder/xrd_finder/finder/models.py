@@ -36,6 +36,7 @@ class FinderCandidateInput:
     name: str = ""
     formula: str = ""
     source: str = ""
+    structure: object | None = None
 
 
 @dataclass(slots=True)
@@ -48,6 +49,8 @@ class FinderInput:
     fwhm: float | None = None
     observed_x: list[float] | None = None
     observed_y: list[float] | None = None
+    background_x: list[float] | None = None
+    background_y: list[float] | None = None
     subtract_background: bool = True
     smoothing_window: int = 0
     snap_peak_positions: bool = True
@@ -65,8 +68,11 @@ class FinderCandidateResult:
     score: float = 0.0
     matched_peaks: int = 0
     total_peaks: int = 0
+    mean_delta_two_theta: float = 0.0
     status: str = "unmatched"
     cell_scale: float = 1.0
+    fwhm: float = 0.0
+    profile_eta: float = 0.0
     two_theta: list[float] = field(default_factory=list)
     profile: list[float] = field(default_factory=list)
     peak_two_theta: list[float] = field(default_factory=list)
@@ -75,6 +81,9 @@ class FinderCandidateResult:
     peak_h: list[int] = field(default_factory=list)
     peak_k: list[int] = field(default_factory=list)
     peak_l: list[int] = field(default_factory=list)
+    matched_reference_two_theta: list[float] = field(default_factory=list)
+    matched_observed_two_theta: list[float] = field(default_factory=list)
+    matched_delta_two_theta: list[float] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -86,4 +95,5 @@ class FinderResult:
     global_zero_shift: float
     fwhm: float
     candidates: list[FinderCandidateResult]
+    profile_eta: float = 0.0
     observed_peaks: list[ObservedPeak] = field(default_factory=list)

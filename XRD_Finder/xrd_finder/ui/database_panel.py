@@ -23,6 +23,7 @@ class DatabasePanelWidget(QWidget):
     materialsProjectToggled = Signal(bool)
     saveMaterialsProjectRequested = Signal()
     rebuildUserIndexRequested = Signal()
+    rebuildLocalPeakIndexRequested = Signal()
     clearUserLibraryRequested = Signal()
     indexCodFolderRequested = Signal()
     indexCodZipRequested = Signal()
@@ -172,6 +173,14 @@ class DatabasePanelWidget(QWidget):
                 [
                     ("Update index", self.rebuildUserIndexRequested),
                     ("Clear", self.clearUserLibraryRequested),
+                ],
+            )
+        )
+        layout.addWidget(
+            self._management_row(
+                "Local peak SQL index",
+                [
+                    ("Rebuild peak index", self.rebuildLocalPeakIndexRequested),
                 ],
             )
         )

@@ -451,6 +451,20 @@ def gaussian_values(x, center: float, fwhm: float):
     return np.exp(-0.5 * ((x - center) / sigma) ** 2)
 
 
+def lorentzian_values(x, center: float, fwhm: float):
+    width = max(fwhm, 1e-8)
+    return 1.0 / (1.0 + 4.0 * ((x - center) / width) ** 2)
+
+
+def pseudo_voigt_values(x, center: float, fwhm: float, eta: float):
+    eta = float(np.clip(eta, 0.0, 1.0))
+    if eta <= 1e-8:
+        return gaussian_values(x, center, fwhm)
+    if eta >= 1.0 - 1e-8:
+        return lorentzian_values(x, center, fwhm)
+    return (1.0 - eta) * gaussian_values(x, center, fwhm) + eta * lorentzian_values(x, center, fwhm)
+
+
 def _two_theta_from_d(d_spacing: float, wavelength: float) -> float | None:
     argument = wavelength / (2.0 * d_spacing)
     if argument <= 0.0 or argument >= 1.0:
@@ -477,6 +491,7 @@ def calculated_profile_from_peaks(
     peaks: list[HKLPeak],
     x_grid,
     fwhm: float = 0.12,
+    eta: float = 0.0,
     wavelength: float | None = CU_KA1_WAVELENGTH,
     include_kalpha2: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -493,7 +508,7 @@ def calculated_profile_from_peaks(
         right = np.searchsorted(x, center + half_width, side="right")
         if right <= left:
             return
-        y[left:right] += intensity * gaussian_values(x[left:right], center, fwhm)
+        y[left:right] += intensity * pseudo_voigt_values(x[left:right], center, fwhm, eta)
 
     lines = radiation_lines_from_wavelength(wavelength, include_kalpha2=include_kalpha2)
     for peak in peaks:
@@ -516,11 +531,12 @@ class CalculatedPatternService:
         two_theta_min = float(kwargs.pop("two_theta_min", 5.0))
         two_theta_max = float(kwargs.pop("two_theta_max", 120.0))
         fwhm = float(kwargs.pop("fwhm", 0.12))
+        eta = float(kwargs.pop("eta", 0.0))
         wavelength = float(kwargs.get("wavelength", CU_KA1_WAVELENGTH))
         primary_wavelength = radiation_lines_from_wavelength(wavelength, include_kalpha2=True)[0][0]
         kwargs["wavelength"] = primary_wavelength
         peaks = calculate_hkl_sticks(structure, two_theta_min=two_theta_min, two_theta_max=two_theta_max, **kwargs)
         if x_grid is None:
             x_grid = np.linspace(two_theta_min, two_theta_max, 5000)
-        x, y = calculated_profile_from_peaks(peaks, x_grid, fwhm=fwhm, wavelength=wavelength)
+        x, y = calculated_profile_from_peaks(peaks, x_grid, fwhm=fwhm, eta=eta, wavelength=wavelength)
         return x, y, peaks

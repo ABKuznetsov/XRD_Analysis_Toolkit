@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
+from numbers import Real
 import re
 from pathlib import Path
 import shutil
@@ -57,11 +59,12 @@ class LocalPhaseCache:
 
     def status_row(self) -> list[str]:
         cached = self.cached_count()
+        peak_indexed = self.peak_indexed_count()
         size = sum(path.stat().st_size for path in self.cif_dir.glob("*.cif") if path.is_file())
         return [
             "Local phase cache",
             "Ready",
-            f"{cached} cached CIF files",
+            f"{cached} cached CIF files, {peak_indexed} peak-indexed phases",
             str(cached),
             f"{size / (1024 * 1024):.1f}",
             "sqlite+cif",
@@ -71,6 +74,10 @@ class LocalPhaseCache:
     def cached_count(self) -> int:
         with self._connect() as connection:
             return int(connection.execute("select count(*) from phases where cif_path != ''").fetchone()[0])
+
+    def peak_indexed_count(self) -> int:
+        with self._connect() as connection:
+            return int(connection.execute("select count(distinct source || ':' || entry_id) from phase_peaks").fetchone()[0])
 
     def search_is_fresh(self, source: str, query_key: str, max_age_seconds: float = 7 * 24 * 60 * 60) -> bool:
         with self._connect() as connection:
@@ -225,6 +232,122 @@ class LocalPhaseCache:
                 break
         return results
 
+    def search_by_peaks(
+        self,
+        positions: list[float],
+        *,
+        text: str = "",
+        elements: list[str] | None = None,
+        excluded_elements: list[str] | None = None,
+        sources: list[str] | None = None,
+        tolerance_two_theta: float = 0.35,
+        limit: int = 100,
+    ) -> list[CachedPhaseEntry]:
+        peak_positions = [
+            float(position)
+            for position in positions
+            if isinstance(position, Real) and math.isfinite(float(position))
+        ]
+        if not peak_positions:
+            return self.search(
+                text=text,
+                elements=elements,
+                excluded_elements=excluded_elements,
+                sources=sources,
+                limit=limit,
+            )
+        selected_positions = peak_positions[:80]
+        required = {element.strip() for element in elements or [] if element.strip()}
+        excluded = {element.strip() for element in excluded_elements or [] if element.strip()}
+        allowed_sources = {source.strip() for source in sources or [] if source.strip()}
+        text = text.strip().lower()
+        where = ["1 = 1"]
+        params: list[object] = []
+        if allowed_sources:
+            placeholders = ", ".join("?" for _ in allowed_sources)
+            where.append(f"p.source in ({placeholders})")
+            params.extend(sorted(allowed_sources))
+        for element in sorted(required):
+            where.append(
+                "exists ("
+                "select 1 from phase_elements pe "
+                "where pe.source = p.source and pe.entry_id = p.entry_id and pe.element = ?"
+                ")"
+            )
+            params.append(element)
+        for element in sorted(excluded):
+            where.append(
+                "not exists ("
+                "select 1 from phase_elements pe "
+                "where pe.source = p.source and pe.entry_id = p.entry_id and pe.element = ?"
+                ")"
+            )
+            params.append(element)
+        if text:
+            like_text = f"%{text}%"
+            compact_formula = self._formula_key(text)
+            sorted_formula = self._sorted_formula_key(text)
+            where.append(
+                "("
+                "lower(p.entry_id) like ? or "
+                "lower(p.formula) like ? or "
+                "lower(p.name) like ? or "
+                "lower(p.spacegroup) like ? or "
+                "p.formula_key like ? or "
+                "p.formula_key like ?"
+                ")"
+            )
+            params.extend([like_text, like_text, like_text, like_text, f"%{compact_formula}%", f"%{sorted_formula}%"])
+        query_peak_sql = " union all ".join("select ? as query_index, ? as query_position" for _ in selected_positions)
+        query_params: list[object] = []
+        for index, position in enumerate(selected_positions):
+            query_params.extend([index, position])
+        tolerance = max(float(tolerance_two_theta), 0.02)
+        with self._connect() as connection:
+            deadline = time.monotonic() + 2.0
+
+            def abort_slow_query() -> int:
+                return int(time.monotonic() > deadline)
+
+            connection.set_progress_handler(abort_slow_query, 5000)
+            try:
+                rows = connection.execute(
+                    f"""
+                    with query_peaks as ({query_peak_sql})
+                    select p.source, p.entry_id, p.formula, p.name, p.spacegroup, p.source_text, p.cif_path, p.elements,
+                           p.a, p.b, p.c, p.alpha, p.beta, p.gamma, p.volume,
+                           p.atoms_json, p.iic, p.peaks_json, p.derived_version,
+                           count(distinct q.query_index) as observed_hits,
+                           count(distinct pp.peak_index) as peak_hits,
+                           min(abs(pp.two_theta - q.query_position)) as best_delta,
+                           sum(max(pp.intensity, 0.0)) as matched_intensity
+                    from phases p
+                    join phase_peaks pp on pp.source = p.source and pp.entry_id = p.entry_id
+                    join query_peaks q
+                      on pp.two_theta between q.query_position - ? and q.query_position + ?
+                    where {" and ".join(where)}
+                    group by p.source, p.entry_id
+                    order by observed_hits desc, peak_hits desc, matched_intensity desc, best_delta asc, p.updated_at desc
+                    limit ?
+                    """,
+                    (*query_params, tolerance, tolerance, *params, max(limit * 3, limit)),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+            finally:
+                connection.set_progress_handler(None, 0)
+        results = []
+        seen = set()
+        for row in rows:
+            dedupe_key = self._dedupe_key(row)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            results.append(self._row_to_entry(row))
+            if len(results) >= limit:
+                break
+        return results
+
     def download_cod_entry(self, entry: CodEntry, cod_online: CodOnlineService) -> Path:
         self.upsert_cod_entries([entry])
         cif_path = cod_online.download_cif(entry.cod_id, self.cif_dir)
@@ -277,6 +400,28 @@ class LocalPhaseCache:
             ).fetchone()
         return self._row_to_entry(row) if row else None
 
+    def entries_with_peaks(self, sources: list[str] | None = None, limit: int | None = None) -> list[CachedPhaseEntry]:
+        where = ["peaks_json != ''"]
+        params: list[object] = []
+        allowed_sources = [source.strip() for source in sources or [] if source.strip()]
+        if allowed_sources:
+            placeholders = ", ".join("?" for _ in allowed_sources)
+            where.append(f"source in ({placeholders})")
+            params.extend(sorted(allowed_sources))
+        sql = f"""
+            select source, entry_id, formula, name, spacegroup, source_text, cif_path, elements,
+                   a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, derived_version
+            from phases
+            where {" and ".join(where)}
+            order by updated_at desc
+        """
+        if limit is not None:
+            sql += " limit ?"
+            params.append(max(0, int(limit)))
+        with self._connect() as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [self._row_to_entry(row) for row in rows]
+
     def diffraction_rows(self, source: str, entry_id: str, limit: int = 60) -> list[list[str]]:
         entry = self.get(source, entry_id)
         if entry is None or not entry.peaks_json:
@@ -297,6 +442,7 @@ class LocalPhaseCache:
                 str(peak.get("multiplicity", "")),
             ])
         return rows
+
     def build_index(self) -> int:
         count = 0
         for cif_path in self.cif_dir.glob("*.cif"):
@@ -534,6 +680,24 @@ class LocalPhaseCache:
                 )
                 """
             )
+            connection.execute(
+                """
+                create table if not exists phase_peaks (
+                    source text not null,
+                    entry_id text not null,
+                    peak_index integer not null,
+                    two_theta real not null,
+                    d real,
+                    intensity real not null default 0,
+                    raw_intensity real not null default 0,
+                    h integer,
+                    k integer,
+                    l integer,
+                    multiplicity integer,
+                    primary key (source, entry_id, peak_index)
+                )
+                """
+            )
             existing = {row[1] for row in connection.execute("pragma table_info(phases)").fetchall()}
             for column in ["a", "b", "c", "alpha", "beta", "gamma", "volume"]:
                 if column not in existing:
@@ -553,10 +717,16 @@ class LocalPhaseCache:
             connection.execute("create index if not exists idx_phases_formula_key on phases(formula_key)")
             connection.execute("create index if not exists idx_phases_elements on phases(elements)")
             connection.execute("create index if not exists idx_phase_elements_element on phase_elements(element, source, entry_id)")
+            connection.execute("create index if not exists idx_phase_peaks_twotheta on phase_peaks(two_theta, source, entry_id)")
+            connection.execute("create index if not exists idx_phase_peaks_phase on phase_peaks(source, entry_id)")
             element_count = connection.execute("select count(*) from phase_elements").fetchone()[0]
             if not element_count:
                 for row in connection.execute("select source, entry_id, elements from phases").fetchall():
                     self._replace_phase_elements(connection, row["source"], row["entry_id"], row["elements"])
+            peak_count = connection.execute("select count(*) from phase_peaks").fetchone()[0]
+            if not peak_count:
+                for row in connection.execute("select source, entry_id, peaks_json from phases where peaks_json != ''").fetchall():
+                    self._replace_phase_peaks(connection, row["source"], row["entry_id"], row["peaks_json"])
 
     def _connect(self) -> sqlite3.Connection:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -571,6 +741,7 @@ class LocalPhaseCache:
         with self._connect() as connection:
             connection.execute(f"delete from phases where source in ({placeholders})", sources)
             connection.execute(f"delete from phase_elements where source in ({placeholders})", sources)
+            connection.execute(f"delete from phase_peaks where source in ({placeholders})", sources)
             connection.execute(f"delete from search_cache where source in ({placeholders})", sources)
 
     def _remove_cache_dirs(self, names: list[str]) -> None:
@@ -657,6 +828,7 @@ class LocalPhaseCache:
             ),
         )
         self._replace_phase_elements(connection, entry.source, entry.entry_id, " ".join(sorted(formula_elements(entry.formula))))
+        self._replace_phase_peaks(connection, entry.source, entry.entry_id, entry.peaks_json)
 
     def _replace_phase_elements(
         self,
@@ -675,6 +847,62 @@ class LocalPhaseCache:
                 "insert or ignore into phase_elements(source, entry_id, element) values(?, ?, ?)",
                 rows,
             )
+
+    def _replace_phase_peaks(
+        self,
+        connection: sqlite3.Connection,
+        source: str,
+        entry_id: str,
+        peaks_json: str,
+    ) -> None:
+        connection.execute("delete from phase_peaks where source = ? and entry_id = ?", (source, entry_id))
+        if not peaks_json:
+            return
+        try:
+            peaks = json.loads(peaks_json)
+        except json.JSONDecodeError:
+            return
+        rows = []
+        for index, peak in enumerate(peaks if isinstance(peaks, list) else []):
+            try:
+                two_theta = float(peak.get("two_theta", 0.0))
+                if not math.isfinite(two_theta):
+                    continue
+                rows.append(
+                    (
+                        source,
+                        entry_id,
+                        int(index),
+                        two_theta,
+                        self._optional_float(peak.get("d")),
+                        max(float(peak.get("intensity", 0.0) or 0.0), 0.0),
+                        max(float(peak.get("raw_intensity", 0.0) or 0.0), 0.0),
+                        self._optional_int(peak.get("h")),
+                        self._optional_int(peak.get("k")),
+                        self._optional_int(peak.get("l")),
+                        self._optional_int(peak.get("multiplicity")),
+                    )
+                )
+            except (TypeError, ValueError):
+                continue
+        if rows:
+            connection.executemany(
+                """
+                insert or replace into phase_peaks(
+                    source, entry_id, peak_index, two_theta, d, intensity, raw_intensity,
+                    h, k, l, multiplicity
+                ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+
+    def rebuild_peak_index(self) -> int:
+        with self._connect() as connection:
+            connection.execute("delete from phase_peaks")
+            rows = connection.execute("select source, entry_id, peaks_json from phases where peaks_json != ''").fetchall()
+            for row in rows:
+                self._replace_phase_peaks(connection, row["source"], row["entry_id"], row["peaks_json"])
+        return self.peak_indexed_count()
 
     def _row_to_entry(self, row: sqlite3.Row) -> CachedPhaseEntry:
         return CachedPhaseEntry(
@@ -739,6 +967,19 @@ class LocalPhaseCache:
         if not tokens:
             return re.sub(r"\s+", "", (formula or "").lower())
         return "".join(f"{element.lower()}{amount}" for element, amount in sorted(tokens))
+
+    def _optional_float(self, value) -> float | None:
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return None
+        return result if math.isfinite(result) else None
+
+    def _optional_int(self, value) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     def _normalize_text(self, text: str) -> str:
         return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()

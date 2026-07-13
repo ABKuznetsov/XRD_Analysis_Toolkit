@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +17,7 @@ from xrd_finder.finder.models import (
     FinderResult,
     ObservedPeak,
 )
+from xrd_finder.finder.matching import XrdMatchingOptions, XrdSearchMatchResult, search_match_result
 from xrd_finder.finder.observed_pattern_processor import ObservedPatternData, ObservedPatternProcessor
 from xrd_finder.finder.profile_calculator import CachedProfileCalculator, array_fingerprint
 from xrd_finder.services.calculated_pattern_service import (
@@ -103,11 +104,20 @@ class FinderService:
         )
         for candidate in finder_input.candidates:
             try:
-                peaks = self.profile_calculator.candidate_sticks(
-                    candidate.cif_path,
-                    context=context,
-                    use_lp=True,
-                )
+                if candidate.structure is not None:
+                    peaks = self.calculated_pattern_service.calculate_sticks(
+                        candidate.structure,
+                        two_theta_min=context.two_theta_min,
+                        two_theta_max=context.two_theta_max,
+                        wavelength=context.primary_wavelength,
+                        use_lp=True,
+                    )
+                else:
+                    peaks = self.profile_calculator.candidate_sticks(
+                        candidate.cif_path,
+                        context=context,
+                        use_lp=True,
+                    )
             except Exception:
                 continue
             candidate_data.append((candidate, peaks))
@@ -118,7 +128,7 @@ class FinderService:
             if trusted_zero is not None
             else self._estimate_global_zero_shift(candidate_data, observed.peak_positions)
         )
-        profiles = []
+        prepared_profiles = []
         for candidate, peaks in candidate_data:
             cell_scale = self._estimate_phase_cell_scale(peaks, observed.peak_positions, global_zero, context.primary_wavelength)
             phase_context = context.with_alignment(global_zero, cell_scale)
@@ -128,23 +138,42 @@ class FinderService:
                 if finder_input.snap_peak_positions
                 else reference_peaks
             )
+            prepared_profiles.append((candidate, reference_peaks, adjusted, phase_context, cell_scale))
+
+        fitted_fwhm, fitted_eta = self._optimized_profile_parameters(
+            observed.target_y,
+            [peaks for _candidate, _reference_peaks, peaks, _phase_context, _cell_scale in prepared_profiles],
+            x_grid,
+            context,
+        )
+        profiles = []
+        for candidate, reference_peaks, adjusted, phase_context, cell_scale in prepared_profiles:
+            phase_fwhm, phase_eta = self._optimized_phase_profile_parameters(
+                observed.target_y,
+                adjusted,
+                x_grid,
+                replace(context, fwhm=fitted_fwhm, profile_eta=fitted_eta),
+            )
+            fitted_context = replace(phase_context, fwhm=phase_fwhm, profile_eta=phase_eta)
             profile = self.profile_calculator.profile_from_peaks(
                 adjusted,
                 x_grid,
-                context=phase_context,
+                context=fitted_context,
             )
-            profiles.append((candidate, reference_peaks, adjusted, profile, cell_scale))
+            profiles.append((candidate, reference_peaks, adjusted, profile, cell_scale, phase_fwhm, phase_eta))
 
-        scales = self._fit_scales(observed.target_y, [profile for _candidate, _reference_peaks, _peaks, profile, _cell_scale in profiles])
+        scales = self._fit_scales(observed.target_y, [profile for _candidate, _reference_peaks, _peaks, profile, _cell_scale, _phase_fwhm, _phase_eta in profiles])
         total_scale = float(np.sum(scales)) if len(scales) else 0.0
         calculated_total = np.zeros_like(x_grid)
         results = []
         assignment_phase_sets = []
-        for (candidate, reference_peaks, peaks, profile, cell_scale), scale in zip(profiles, scales):
+        phase_fwhm_values = []
+        for (candidate, reference_peaks, peaks, profile, cell_scale, phase_fwhm, phase_eta), scale in zip(profiles, scales):
             scaled_profile = profile * float(scale)
             calculated_total += scaled_profile
-            matched, total = self._count_matches(peaks, observed.peak_positions)
-            score = float(matched / max(total, 1))
+            if float(scale) > 1e-9:
+                phase_fwhm_values.append(float(phase_fwhm))
+            match_result = self._match_result(peaks, observed.peak_positions)
             candidate_result = FinderCandidateResult(
                 candidate_key=self._candidate_key(candidate),
                 entry_id=candidate.entry_id,
@@ -153,11 +182,14 @@ class FinderService:
                 source=candidate.source,
                 scale=float(scale),
                 quantity_percent=float(scale / total_scale * 100.0) if total_scale else 0.0,
-                score=score,
-                matched_peaks=matched,
-                total_peaks=total,
-                status=self._status(score, matched, total),
+                score=match_result.score,
+                matched_peaks=match_result.matched_peaks,
+                total_peaks=match_result.total_peaks,
+                mean_delta_two_theta=match_result.mean_delta_two_theta,
+                status=match_result.status,
                 cell_scale=float(cell_scale),
+                fwhm=float(phase_fwhm),
+                profile_eta=float(phase_eta),
                 two_theta=x_grid.tolist(),
                 profile=scaled_profile.tolist(),
                 peak_two_theta=[float(peak.two_theta) for peak in peaks],
@@ -166,6 +198,9 @@ class FinderService:
                 peak_h=[int(getattr(peak, "h", 0)) for peak in peaks],
                 peak_k=[int(getattr(peak, "k", 0)) for peak in peaks],
                 peak_l=[int(getattr(peak, "l", 0)) for peak in peaks],
+                matched_reference_two_theta=[float(match.reference_two_theta) for match in match_result.matches],
+                matched_observed_two_theta=[float(match.observed_two_theta) for match in match_result.matches],
+                matched_delta_two_theta=[float(match.delta_two_theta) for match in match_result.matches],
             )
             results.append(candidate_result)
             if float(scale) > 1e-9:
@@ -174,7 +209,7 @@ class FinderService:
         assigned_peaks = self.assignment_builder.assign_observed_peaks(
             observed.peaks,
             assignment_phase_sets,
-            tolerance=max(0.28, min(0.55, observed.fwhm * 2.8)),
+            tolerance=max(0.08, min(0.22, (float(np.nanmedian(phase_fwhm_values)) if phase_fwhm_values else fitted_fwhm) * 1.15)),
         )
 
         return FinderResult(
@@ -183,7 +218,8 @@ class FinderService:
             background=observed.background.tolist(),
             calculated_total=(calculated_total + observed.background).tolist(),
             global_zero_shift=float(global_zero),
-            fwhm=float(observed.fwhm),
+            fwhm=float(np.nanmedian(phase_fwhm_values)) if phase_fwhm_values else float(fitted_fwhm),
+            profile_eta=float(fitted_eta),
             candidates=results,
             observed_peaks=assigned_peaks,
         )
@@ -232,8 +268,33 @@ class FinderService:
         return (
             source_key,
             bool(finder_input.subtract_background),
+            self._array_pair_signature(finder_input.background_x, finder_input.background_y),
             int(finder_input.smoothing_window),
             None if finder_input.fwhm is None else round(float(finder_input.fwhm), 6),
+        )
+
+    def _array_pair_signature(self, x_values, y_values) -> tuple[object, ...] | None:
+        if x_values is None or y_values is None:
+            return None
+        try:
+            x = np.asarray(x_values, dtype=float)
+            y = np.asarray(y_values, dtype=float)
+        except Exception:
+            return None
+        if len(x) != len(y) or len(x) == 0:
+            return None
+        finite = np.isfinite(x) & np.isfinite(y)
+        if not np.any(finite):
+            return None
+        x = x[finite]
+        y = y[finite]
+        return (
+            int(len(x)),
+            round(float(x[0]), 6),
+            round(float(x[-1]), 6),
+            round(float(np.nanmin(y)), 6),
+            round(float(np.nanmax(y)), 6),
+            round(float(np.nanmean(y)), 6),
         )
 
     def _candidate_key(self, candidate: FinderCandidateInput) -> str:
@@ -532,6 +593,92 @@ class FinderService:
             scales = np.ones(len(profiles), dtype=float)
         return scales
 
+    def _optimized_profile_parameters(
+        self,
+        target_y: np.ndarray,
+        peak_sets: list[list[HKLPeak]],
+        x_grid: np.ndarray,
+        context: CalculationContext,
+    ) -> tuple[float, float]:
+        base = float(context.fwhm)
+        if not peak_sets:
+            return base, float(context.profile_eta)
+        candidates = np.unique(
+            np.clip(
+                np.concatenate([
+                    np.linspace(max(0.045, base * 0.55), min(0.40, base * 1.45), 7),
+                    np.asarray([0.06, 0.085, 0.12, 0.17, 0.24], dtype=float),
+                ]),
+                0.04,
+                0.45,
+            )
+        )
+        eta_candidates = (0.0, 0.25, 0.5, 0.7)
+        weights = self._fit_weights(target_y)
+        best_fwhm = base
+        best_eta = float(context.profile_eta)
+        best_score = float("inf")
+        for fwhm in candidates:
+            for eta in eta_candidates:
+                trial_context = replace(context, fwhm=float(fwhm), profile_eta=float(eta))
+                profiles = [
+                    self.profile_calculator.profile_from_peaks(peaks, x_grid, context=trial_context)
+                    for peaks in peak_sets
+                    if peaks
+                ]
+                if not profiles:
+                    continue
+                scales = self._fit_scales(target_y, profiles)
+                calculated = np.zeros_like(target_y, dtype=float)
+                for profile, scale in zip(profiles, scales):
+                    calculated += profile * float(scale)
+                residual = (np.asarray(target_y, dtype=float) - calculated) * weights
+                score = float(np.nanmean(residual * residual))
+                if score < best_score:
+                    best_score = score
+                    best_fwhm = float(fwhm)
+                    best_eta = float(eta)
+        return float(np.clip(best_fwhm, 0.04, 0.45)), float(np.clip(best_eta, 0.0, 0.85))
+
+    def _optimized_phase_profile_parameters(
+        self,
+        target_y: np.ndarray,
+        peaks: list[HKLPeak],
+        x_grid: np.ndarray,
+        context: CalculationContext,
+    ) -> tuple[float, float]:
+        base_fwhm = float(context.fwhm)
+        base_eta = float(context.profile_eta)
+        if not peaks:
+            return base_fwhm, base_eta
+        candidates = np.unique(
+            np.clip(
+                np.asarray([base_fwhm * 0.55, base_fwhm * 0.75, base_fwhm, base_fwhm * 1.35, base_fwhm * 1.75], dtype=float),
+                0.04,
+                0.50,
+            )
+        )
+        eta_candidates = tuple(np.unique(np.clip(np.asarray([base_eta, 0.0, 0.35, 0.65], dtype=float), 0.0, 0.85)))
+        weights = self._fit_weights(target_y)
+        best_fwhm = base_fwhm
+        best_eta = base_eta
+        best_score = float("inf")
+        for fwhm in candidates:
+            for eta in eta_candidates:
+                trial_context = replace(context, fwhm=float(fwhm), profile_eta=float(eta))
+                profile = self.profile_calculator.profile_from_peaks(peaks, x_grid, context=trial_context)
+                scale = self._fit_scales(target_y, [profile])
+                if not len(scale):
+                    continue
+                calculated = profile * float(scale[0])
+                residual = (np.asarray(target_y, dtype=float) - calculated) * weights
+                score = float(np.nanmean(residual * residual))
+                if score < best_score:
+                    best_score = score
+                    best_fwhm = float(fwhm)
+                    best_eta = float(eta)
+        return float(np.clip(best_fwhm, 0.04, 0.50)), float(np.clip(best_eta, 0.0, 0.85))
+
     def _fit_weights(self, target_y: np.ndarray) -> np.ndarray:
         y = np.asarray(target_y, dtype=float)
         if len(y) == 0:
@@ -553,25 +700,16 @@ class FinderService:
             weights[left:right] *= 2.5
         return weights / max(float(np.nanmedian(weights)), 1e-9)
 
-    def _count_matches(self, peaks: list[HKLPeak], observed_positions: np.ndarray) -> tuple[int, int]:
-        strong = sorted(
-            [peak for peak in peaks if peak.intensity >= self.heuristics.match_peak_intensity_min],
-            key=lambda peak: peak.intensity,
-            reverse=True,
-        )[:30]
-        matched = 0
-        for peak in strong:
-            if len(observed_positions):
-                index = nearest_peak_index(observed_positions, float(peak.two_theta))
-                if abs(float(observed_positions[index]) - float(peak.two_theta)) <= self.heuristics.match_tolerance:
-                    matched += 1
-        return matched, len(strong)
-
-    def _status(self, score: float, matched: int, total: int) -> str:
-        if matched < 2:
-            return "weak"
-        if score >= self.heuristics.good_score:
-            return "good"
-        if score >= self.heuristics.ok_score:
-            return "ok"
-        return "weak"
+    def _match_result(self, peaks: list[HKLPeak], observed_positions: np.ndarray) -> XrdSearchMatchResult:
+        return search_match_result(
+            peaks,
+            observed_positions,
+            XrdMatchingOptions(
+                tolerance_two_theta=self.heuristics.match_tolerance,
+                intensity_min=self.heuristics.match_peak_intensity_min,
+                max_reference_peaks=30,
+                good_score=self.heuristics.good_score,
+                ok_score=self.heuristics.ok_score,
+                min_matched_peaks=2,
+            ),
+        )

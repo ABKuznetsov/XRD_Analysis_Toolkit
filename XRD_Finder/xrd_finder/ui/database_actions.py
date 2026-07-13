@@ -45,6 +45,7 @@ class PhaseFinderDatabaseActionsMixin:
         self.database_panel.materialsProjectToggled.connect(self._set_materials_project_enabled)
         self.database_panel.saveMaterialsProjectRequested.connect(self._save_materials_project_settings)
         self.database_panel.rebuildUserIndexRequested.connect(self._build_local_phase_cache_index)
+        self.database_panel.rebuildLocalPeakIndexRequested.connect(self._rebuild_local_peak_index)
         self.database_panel.clearUserLibraryRequested.connect(self._clear_user_phase_library)
         self.database_panel.indexCodFolderRequested.connect(self._index_cod_cif_folder)
         self.database_panel.indexCodZipRequested.connect(self._index_cod_zip_archive)
@@ -156,6 +157,20 @@ class PhaseFinderDatabaseActionsMixin:
             self.local_phase_cache.build_index,
             success,
             lambda message, _details: QMessageBox.warning(self, "Build local index failed", message),
+        )
+
+    def _rebuild_local_peak_index(self) -> None:
+        def success(result) -> None:
+            count = int(result or 0)
+            self._refresh_database_rows()
+            QMessageBox.information(self, "Rebuild peak index", f"Indexed peaks for {count} local phases.")
+
+        self._run_background_task(
+            "Rebuild peak index",
+            "Rebuilding local SQL peak index...",
+            self.local_phase_cache.rebuild_peak_index,
+            success,
+            lambda message, _details: QMessageBox.warning(self, "Rebuild peak index failed", message),
         )
 
     def _confirm_clear_database(self, title: str, database_name: str) -> bool:

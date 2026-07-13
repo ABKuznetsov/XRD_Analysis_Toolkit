@@ -23,6 +23,7 @@ class PhaseFinderPlotActionsMixin:
         menu.addAction(self._layer_action("Calculated total", "total_profile", enabled=True))
         menu.addAction(self._layer_action("Individual profiles", "phase_profiles", enabled=True))
         menu.addAction(self._layer_action("Background", "background", enabled=True))
+        menu.addAction(self._layer_action("Difference curve", "difference", enabled=True))
         menu.addAction(self._layer_action("Phase tick marks", "phase_ticks", enabled=True))
         menu.addAction(self._layer_action("Assignment markers", "coverage_markers", enabled=True))
         hkl_action = menu.addAction("HKL labels")
@@ -92,6 +93,7 @@ class PhaseFinderPlotActionsMixin:
         "calculated_profile": ("layer_total_profile_visible", "layer_total_profile_checkbox"),
         "phase_profiles": ("layer_phase_profiles_visible", "layer_phase_profiles_checkbox"),
         "background": ("layer_background_visible", "layer_background_checkbox"),
+        "difference": ("layer_difference_visible", "layer_difference_checkbox"),
         "phase_ticks": ("layer_phase_ticks_visible", "layer_phase_ticks_checkbox"),
         "coverage_markers": ("layer_coverage_markers_visible", "layer_coverage_markers_checkbox"),
         "peak_labels": ("layer_peak_labels_visible", "layer_peak_labels_checkbox"),
@@ -258,6 +260,7 @@ class PhaseFinderPlotActionsMixin:
         self._set_layer_visible("total_profile", visible)
         self._set_layer_visible("phase_profiles", visible)
         self._set_layer_visible("background", visible)
+        self._set_layer_visible("difference", visible)
         self._set_layer_visible("peak_positions", visible)
         self._set_layer_visible("phase_ticks", visible)
         self._set_layer_visible("peak_links", visible)
@@ -275,6 +278,7 @@ class PhaseFinderPlotActionsMixin:
         "total_profile",
         "phase_profiles",
         "background",
+        "difference",
         "peak_positions",
         "phase_ticks",
         "peak_links",
@@ -401,6 +405,9 @@ class PhaseFinderPlotActionsMixin:
             checkbox.blockSignals(previous)
 
     def _plot_item_label(self, item) -> str:
+        custom_label = getattr(item, "_xrd_legend_label", "")
+        if custom_label:
+            return str(custom_label).strip()
         opts = getattr(item, "opts", None)
         if isinstance(opts, dict):
             label = opts.get("name") or ""
@@ -413,6 +420,54 @@ class PhaseFinderPlotActionsMixin:
             except Exception:
                 return ""
         return ""
+
+    def _legend_label_for_layer(self, layer: str, label: str) -> str:
+        if layer in {
+            "preview_peak_positions",
+            "peak_positions",
+            "preview_peak_links",
+            "peak_links",
+            "phase_ticks",
+            "coverage_markers",
+            "peak_labels",
+            "hkl",
+            "preview_hkl",
+        }:
+            return ""
+        if label.startswith("preview peaks "):
+            return ""
+        if label.startswith("phase "):
+            return label[6:].strip() or label
+        if label.startswith("PDF-2 reference "):
+            return label.replace("PDF-2 reference ", "PDF-2 ", 1).strip()
+        if label.startswith("RRUFF reference "):
+            return label.replace("RRUFF reference ", "RRUFF ", 1).strip()
+        return label
+
+    def _legend_sample_item(self, layer: str, item):
+        if layer != "phase_profiles":
+            return item
+        opts = getattr(item, "opts", {}) or {}
+        pen = opts.get("pen") if isinstance(opts, dict) else None
+        if pen is None:
+            return item
+        try:
+            color = pen.color()
+        except Exception:
+            color = "#ffffff"
+        try:
+            width = max(float(pen.widthF()), 2.8)
+        except Exception:
+            width = 2.8
+        return pg.PlotDataItem(
+            [0.0, 1.0],
+            [0.0, 0.0],
+            pen=pg.mkPen(color, width=width),
+            symbol="o",
+            symbolSize=8,
+            symbolBrush=color,
+            symbolPen=pg.mkPen(color, width=1.4),
+        )
 
     def _rebuild_visible_legend(self) -> None:
         settings = getattr(self, "plot_view_settings", None)
@@ -432,6 +487,7 @@ class PhaseFinderPlotActionsMixin:
             "background",
             "total_profile",
             "calculated_profile",
+            "difference",
             "unknown_peaks",
             "legend_info",
         ]
@@ -444,10 +500,11 @@ class PhaseFinderPlotActionsMixin:
                 except Exception:
                     continue
                 label = self._plot_item_label(item)
+                label = self._legend_label_for_layer(layer, label)
                 if not label or label in seen:
                     continue
                 try:
-                    legend.addItem(item, label)
+                    legend.addItem(self._legend_sample_item(layer, item), label)
                     seen.add(label)
                 except Exception:
                     pass

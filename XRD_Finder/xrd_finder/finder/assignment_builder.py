@@ -16,7 +16,7 @@ def nearest_index(sorted_values: np.ndarray, value: float) -> int:
     return before if abs(float(sorted_values[before]) - value) <= abs(float(sorted_values[index]) - value) else index
 
 
-def sorted_usable_peaks(peaks: list[HKLPeak], intensity_min: float = 0.8) -> tuple[list[HKLPeak], np.ndarray]:
+def sorted_usable_peaks(peaks: list[HKLPeak], intensity_min: float = 5.0) -> tuple[list[HKLPeak], np.ndarray]:
     usable = sorted((peak for peak in peaks if peak.intensity >= intensity_min), key=lambda peak: peak.two_theta)
     positions = np.fromiter((float(peak.two_theta) for peak in usable), dtype=float, count=len(usable))
     return usable, positions
@@ -42,7 +42,7 @@ def nearest_phase_peak(
     peaks: list[HKLPeak],
     tolerance: float,
 ) -> tuple[HKLPeak, float] | None:
-    usable, positions = sorted_usable_peaks(peaks, intensity_min=0.8)
+    usable, positions = sorted_usable_peaks(peaks, intensity_min=5.0)
     return nearest_peak_from_sorted(observed_two_theta, usable, positions, tolerance)
 
 
@@ -55,7 +55,7 @@ class AssignmentBuilder:
     ) -> list[ObservedPeak]:
         assigned = []
         prepared_phase_peaks = [
-            (candidate, *sorted_usable_peaks(peaks, intensity_min=0.8))
+            (candidate, *sorted_usable_peaks(peaks, intensity_min=5.0))
             for candidate, peaks in phase_peak_sets
         ]
         for observed in observed_peaks:

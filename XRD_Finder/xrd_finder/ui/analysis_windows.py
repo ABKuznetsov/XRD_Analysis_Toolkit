@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 from PySide6.QtWidgets import (
@@ -23,6 +24,8 @@ from PySide6.QtWidgets import (
     QWidget,
     QDialog,
 )
+from scipy.ndimage import gaussian_filter1d
+from scipy.optimize import nnls
 import numpy as np
 import pyqtgraph as pg
 from scipy.signal import find_peaks
@@ -53,6 +56,7 @@ from xrd_finder.services.local_phase_cache import LocalPhaseCache
 from xrd_finder.services.match_pdf2_service import MatchPdf2Service
 from xrd_finder.services.materials_project_service import MaterialsProjectService
 from xrd_finder.services.preprocessing_service import estimate_background
+from xrd_finder.services.refinement_service import RefinementService
 from xrd_finder.services.rruff_service import RruffService
 from xrd_finder.ui.pattern_plot_helpers import (
     ensure_right_legend,
@@ -503,6 +507,7 @@ class PhaseFinderWindow(
         self.oqmd = OqmdService()
         self.calculated_pattern_service = CalculatedPatternService()
         self.finder_service = FinderService(self.calculated_pattern_service)
+        self.refinement_service = RefinementService(self.calculated_pattern_service)
         self.candidate_search_service = CandidateSearchService(
             self.local_phase_cache,
             self.cod_online,
@@ -537,6 +542,7 @@ class PhaseFinderWindow(
             "total_profile": [],
             "phase_profiles": [],
             "background": [],
+            "difference": [],
             "peak_positions": [],
             "phase_ticks": [],
             "peak_links": [],
@@ -558,6 +564,9 @@ class PhaseFinderWindow(
         self.cursor_position_line = None
         self.cursor_position_proxy = None
         self.cursor_position_status_label: QLabel | None = None
+        self.scoring_status_label: QLabel | None = None
+        self._scoring_source = "Auto"
+        self._auto_scoring_cache: dict[tuple[object, ...], object] = {}
         self.legend_item = None
         self.active_overlay_entry_id: str | None = None
         self.match_candidates: list[dict[str, str]] = []
@@ -569,13 +578,18 @@ class PhaseFinderWindow(
         self.match_zero_shifts: dict[str, float] = {}
         self.match_cell_scales: dict[str, float] = {}
         self.match_alignment_scores: dict[str, str] = {}
+        self._last_match_profile_fwhm: float | None = None
+        self._last_match_profile_eta: float | None = None
         self._observed_probability_cache: tuple[tuple[object, ...], np.ndarray, np.ndarray, list[tuple[float, float]]] | None = None
         self._candidate_peak_cache: dict[tuple[str, float, float, float], list] = {}
+        self._candidate_json_peak_cache: dict[tuple[object, ...], list[HKLPeak]] = {}
         self._candidate_probability_cache: dict[tuple[object, ...], float] = {}
         self._candidate_gain_profile_cache: dict[tuple[object, ...], np.ndarray] = {}
+        self._candidate_preview_token = 0
         self.show_all_selected_patterns = False
         self.pattern_stack_offset_percent = 10
         self.normalize_observed_patterns = False
+        self.auto_refine_cells_on_add = False
         self.observed_pattern_plot_context: dict[str, dict[str, float]] = {}
         self.observed_pattern_colors: dict[str, str] = {}
         self.active_profile_pattern_id: str | None = None
@@ -667,8 +681,17 @@ class PhaseFinderWindow(
             if not key or key[0] != pattern_id
         }
 
-    def _finder_cache_key(self, pattern, candidates: list[dict[str, str]]) -> tuple[object, ...]:
-        processed_observed = self._pattern_processed_observed_data(pattern)
+    def _finder_cache_key(
+        self,
+        pattern,
+        candidates: list[dict[str, str]],
+        *,
+        snap_peak_positions: bool = True,
+    ) -> tuple[object, ...]:
+        processed_observed = self._pattern_finder_observed_data(pattern)
+        background_data = self._pattern_finder_background_data(pattern)
+        background_signature = self._finder_background_signature(background_data)
+        structure_overrides = self._finder_candidate_structure_overrides(pattern, candidates)
         if processed_observed is None or len(processed_observed) == 0:
             observed_signature = None
         else:
@@ -680,8 +703,9 @@ class PhaseFinderWindow(
                 float(x_values[-1]),
                 float(np.nanmin(y_values)),
                 float(np.nanmax(y_values)),
-                bool(getattr(pattern, "processed_background_removed", False)),
+                bool(self._pattern_finder_background_removed(pattern)),
                 bool(self.normalize_observed_patterns),
+                getattr(self, "_scoring_source", "Auto"),
             )
         candidate_signature = []
         for candidate in candidates:
@@ -695,16 +719,25 @@ class PhaseFinderWindow(
                 candidate.get("Formula", ""),
                 candidate.get("Phase", "") or candidate.get("Name", ""),
                 cif_path,
+                self._structure_cell_signature(structure_overrides.get(self._candidate_key(candidate))),
             ))
         return (
             pattern.id,
             str(getattr(pattern, "source_path", "")),
             float(getattr(pattern, "wavelength", None) or CU_KA1_WAVELENGTH),
             observed_signature,
+            background_signature,
+            bool(snap_peak_positions),
             tuple(candidate_signature),
         )
 
-    def _finder_result_for_pattern(self, pattern, candidates: list[dict[str, str]]):
+    def _finder_result_for_pattern(
+        self,
+        pattern,
+        candidates: list[dict[str, str]],
+        *,
+        snap_peak_positions: bool = True,
+    ):
         finder_candidates, candidate_by_key = build_finder_candidate_inputs(
             candidates,
             self._candidate_cif_path,
@@ -714,11 +747,17 @@ class PhaseFinderWindow(
         )
         if not finder_candidates:
             return None, candidate_by_key
-        cache_key = self._finder_cache_key(pattern, candidates)
+        cache_key = self._finder_cache_key(pattern, candidates, snap_peak_positions=snap_peak_positions)
         result = self.match_profile_result_cache.get(cache_key)
         if result is not None:
             return result, candidate_by_key
-        processed_observed = self._pattern_processed_observed_data(pattern)
+        processed_observed = self._pattern_finder_observed_data(pattern)
+        background_data = self._pattern_finder_background_data(pattern)
+        structure_overrides = self._finder_candidate_structure_overrides(pattern, candidates)
+        for finder_candidate in finder_candidates:
+            structure = structure_overrides.get(finder_candidate.entry_id)
+            if structure is not None:
+                finder_candidate.structure = structure
         result = self.finder_service.run(
             FinderInput(
                 pattern_path=pattern.source_path,
@@ -726,14 +765,112 @@ class PhaseFinderWindow(
                 wavelength=pattern.wavelength,
                 observed_x=processed_observed[:, 0].tolist() if processed_observed is not None else None,
                 observed_y=processed_observed[:, 1].tolist() if processed_observed is not None else None,
-                subtract_background=not bool(getattr(pattern, "processed_background_removed", False)),
+                background_x=background_data[:, 0].tolist() if background_data is not None else None,
+                background_y=background_data[:, 1].tolist() if background_data is not None else None,
+                subtract_background=not bool(self._pattern_finder_background_removed(pattern)),
+                snap_peak_positions=bool(snap_peak_positions),
             )
         )
         self.match_profile_result_cache[cache_key] = result
         self._trim_match_profile_result_cache()
         return result, candidate_by_key
 
+    def _finder_candidate_structure_overrides(self, pattern, candidates: list[dict[str, str]]) -> dict[str, object]:
+        if pattern is None:
+            return {}
+        linked_phase_ids = set(getattr(pattern, "linked_phase_ids", []) or [])
+        if not linked_phase_ids:
+            return {}
+        phase_by_id = {phase.id: phase for phase in self.project.phases if phase.id in linked_phase_ids}
+        structure_by_id = {structure.id: structure for structure in self.project.structures}
+        phase_by_source_path = {
+            self._compound_card_path_key(getattr(phase, "source_path", "")): phase
+            for phase in phase_by_id.values()
+            if self._compound_card_path_key(getattr(phase, "source_path", ""))
+        }
+        phase_by_name_formula = {
+            (str(phase.name or "").casefold(), str(phase.formula or "").casefold()): phase
+            for phase in phase_by_id.values()
+        }
+        overrides: dict[str, object] = {}
+        for candidate in candidates:
+            phase = None
+            if self._candidate_source(candidate) == "USER" and candidate.get("Entry") in phase_by_id:
+                phase = phase_by_id.get(candidate.get("Entry", ""))
+            if phase is None:
+                try:
+                    phase = phase_by_source_path.get(
+                        self._compound_card_path_key(str(self._candidate_cif_path(candidate)))
+                    )
+                except Exception:
+                    phase = None
+            if phase is None:
+                phase = phase_by_name_formula.get(
+                    (
+                        self._candidate_phase_name(candidate).casefold(),
+                        str(candidate.get("Formula", "") or "").casefold(),
+                    )
+                )
+            if phase is None:
+                continue
+            structure = structure_by_id.get(phase.structure_id or "") or next(
+                (item for item in self.project.structures if item.phase_id == phase.id),
+                None,
+            )
+            if structure is not None:
+                overrides[self._candidate_key(candidate)] = structure
+        return overrides
+
+    def _structure_cell_signature(self, structure) -> tuple[object, ...] | None:
+        if structure is None:
+            return None
+        cell = getattr(structure, "cell", None)
+        if cell is None:
+            return None
+        return tuple(
+            None if getattr(cell, name, None) is None else round(float(getattr(cell, name)), 8)
+            for name in ("a", "b", "c", "alpha", "beta", "gamma", "volume")
+        )
+
+    def _pattern_finder_background_data(self, pattern) -> np.ndarray | None:
+        if pattern is None or self._pattern_finder_background_removed(pattern):
+            return None
+        points = getattr(pattern, "estimated_background_with_halo_points", None)
+        if not points:
+            points = getattr(pattern, "estimated_background_points", None)
+        if not points:
+            return None
+        try:
+            values = np.asarray(points, dtype=float)
+        except Exception:
+            return None
+        if values.ndim != 2 or values.shape[1] < 2 or len(values) < 2:
+            return None
+        values = values[:, :2]
+        mask = np.isfinite(values[:, 0]) & np.isfinite(values[:, 1])
+        if np.count_nonzero(mask) < 2:
+            return None
+        return values[mask]
+
+    def _finder_background_signature(self, background_data: np.ndarray | None) -> tuple[object, ...] | None:
+        if background_data is None or len(background_data) == 0:
+            return None
+        x_values = np.asarray(background_data[:, 0], dtype=float)
+        y_values = np.asarray(background_data[:, 1], dtype=float)
+        return (
+            int(len(background_data)),
+            round(float(x_values[0]), 6),
+            round(float(x_values[-1]), 6),
+            round(float(np.nanmin(y_values)), 6),
+            round(float(np.nanmax(y_values)), 6),
+            round(float(np.nanmean(y_values)), 6),
+        )
+
     def _create_cursor_readout_panel(self) -> None:
+        status_panel = QWidget()
+        status_layout = QHBoxLayout(status_panel)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(4)
         self.cursor_position_status_label = QLabel("2theta: -    I: -")
         self.cursor_position_status_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.cursor_position_status_label.setStyleSheet(
@@ -741,19 +878,41 @@ class PhaseFinderWindow(
             "color: #d7e3f4; font-weight: 700; padding: 6px 8px;"
         )
         self.cursor_position_status_label.setMinimumHeight(30)
+        self.cursor_position_status_label.setMinimumWidth(118)
+        self.scoring_status_label = QLabel(self._scoring_source_status_text())
+        self.scoring_status_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.scoring_status_label.setStyleSheet(
+            "background: #1b3030; border: 1px solid #3f6a6a; border-radius: 3px; "
+            "color: #d7fff4; font-weight: 700; padding: 6px 8px;"
+        )
+        self.scoring_status_label.setMinimumHeight(30)
+        self.scoring_status_label.setToolTip("Profile used for match/gain scoring.")
+        status_layout.addWidget(self.cursor_position_status_label, 1)
+        status_layout.addWidget(self.scoring_status_label, 0)
         sidebar_layout = self.sidebar.layout()
         if sidebar_layout is not None:
-            sidebar_layout.addWidget(self.cursor_position_status_label)
+            sidebar_layout.addWidget(status_panel)
+
+    def _scoring_source_status_text(self) -> str:
+        return f"Score: {getattr(self, '_scoring_source', 'Auto')}"
+
+    def _set_scoring_source_status(self, source: str) -> None:
+        self._scoring_source = source
+        if getattr(self, "scoring_status_label", None) is not None:
+            self.scoring_status_label.setText(self._scoring_source_status_text())
 
     def _create_action_bar(self) -> None:
         self.finder_action_bar = FinderActionBar()
         self.finder_action_bar.smoothRequested.connect(self._smooth_active_pattern_plot)
+        self.finder_action_bar.cropRequested.connect(self._crop_xrd_patterns_plot)
         self.finder_action_bar.subtractBackgroundRequested.connect(self._subtract_active_background_plot)
         self.finder_action_bar.resetDataRequested.connect(self._reset_observed_preprocessing)
         self.finder_action_bar.searchRequested.connect(self._search_pdf2_text)
+        self.finder_action_bar.autoSearchRequested.connect(self._auto_search_candidates)
         self.finder_action_bar.patternDisplayModeChanged.connect(self._set_pattern_display_mode)
         self.finder_action_bar.patternOffsetPercentChanged.connect(self._set_pattern_stack_offset)
         self.finder_action_bar.normalizePatternsChanged.connect(self._set_pattern_normalization)
+        self.finder_action_bar.autoRefineCellsChanged.connect(self._set_auto_refine_cells_on_add)
         self.finder_action_bar.resetViewRequested.connect(self._reset_match_plot_view)
         self.search_input = self.finder_action_bar.search_input
         self.center_layout.addWidget(self.finder_action_bar)
@@ -810,6 +969,9 @@ class PhaseFinderWindow(
     def _create_right_tabs(self) -> None:
         self.right_tabs.addTab(self._composition_tab(), "Elements")
         self.compound_card = CompoundCardWidget()
+        self.compound_card.pawleyFitRequested.connect(self._fit_active_sample_pawley_cells)
+        if hasattr(self, "_update_compound_card_sample"):
+            self._update_compound_card_sample()
         self.right_tabs.addTab(self.compound_card, "Card")
         self.right_tabs.addTab(self._database_tab(), "Databases")
         self.right_tabs.addTab(self._plot_view_tab(), "View")
@@ -865,12 +1027,14 @@ class PhaseFinderWindow(
         self.legend_item.setVisible(bool(self.plot_view_settings.legend_visible))
         if reset_plot_range:
             self._apply_plot_view_settings(self.plot_view_settings)
-            self.match_plot.setXRange(0, 1, padding=0.02)
-            self.match_plot.setYRange(0, 1, padding=0.02)
+            self.match_plot.setXRange(0, 1, padding=0.0)
+            self.match_plot.setYRange(0, 1, padding=0.0)
         self._reset_selected_elements()
         self._set_candidate_rows(candidate_rows)
         self._update_match_table()
         if self.compound_card is not None:
+            if hasattr(self, "_update_compound_card_sample"):
+                self._update_compound_card_sample()
             self.compound_card.set_candidate(None)
         if refresh_observed:
             self._refresh_observed_pattern_plot()
@@ -994,6 +1158,180 @@ class PhaseFinderWindow(
     def _show_quick_help(self) -> None:
         QMessageBox.information(self, PHASE_FINDER_HELP_TITLE, PHASE_FINDER_HELP_TEXT)
 
+    def _fit_active_sample_pawley_cells(self, *, show_messages: bool = True, recalculate: bool = True) -> bool:
+        pattern = self._active_pattern()
+        if pattern is None:
+            if show_messages:
+                QMessageBox.information(self, "Pawley cell fit", "Select an XRD sample first.")
+            return False
+        linked_phase_ids = list(getattr(pattern, "linked_phase_ids", []) or [])
+        if not linked_phase_ids:
+            if show_messages:
+                QMessageBox.information(self, "Pawley cell fit", "Add candidate phases to this sample first.")
+            return False
+        observed = self._pattern_scoring_observed_data(pattern)
+        if observed is None or len(observed) < 5:
+            if show_messages:
+                QMessageBox.information(self, "Pawley cell fit", "No observed profile is available for this sample.")
+            return False
+        phase_by_id = {phase.id: phase for phase in self.project.phases}
+        structure_by_id = {structure.id: structure for structure in self.project.structures}
+        phase_structures = []
+        for phase_id in linked_phase_ids:
+            phase = phase_by_id.get(phase_id)
+            if phase is None:
+                continue
+            structure = structure_by_id.get(phase.structure_id or "")
+            if structure is None:
+                structure = next((item for item in self.project.structures if item.phase_id == phase.id), None)
+            if structure is None:
+                continue
+            phase_structures.append((phase.id, phase.name, structure))
+        if not phase_structures:
+            if show_messages:
+                QMessageBox.information(self, "Pawley cell fit", "Linked phases do not have CIF structures.")
+            return False
+        phase_peak_matches = self._active_pawley_peak_matches(pattern, phase_structures)
+        self.setCursor(Qt.CursorShape.WaitCursor)
+        try:
+            results = self.refinement_service.fit_pawley_cells(
+                observed[:, 0],
+                observed[:, 1],
+                phase_structures,
+                wavelength=self._active_wavelength(),
+                fwhm=0.18,
+                phase_peak_matches=phase_peak_matches,
+            )
+        except Exception as exc:
+            if show_messages:
+                QMessageBox.warning(self, "Pawley cell fit", str(exc))
+            return False
+        finally:
+            self.unsetCursor()
+        structure_by_phase_id = {
+            phase_id: structure
+            for phase_id, _phase_name, structure in phase_structures
+        }
+        summary = []
+        for result in results:
+            if not result.success:
+                summary.append(f"{result.phase_name}: skipped ({result.message or 'not enough matched peaks'})")
+                continue
+            structure = structure_by_phase_id.get(result.phase_id)
+            if structure is None:
+                continue
+            structure.cell = result.refined_cell
+            summary.append(
+                f"{result.phase_name}: {result.matched_peaks} peaks, RMS {result.rms_delta_two_theta:.4g} deg\n"
+                f"{self._pawley_cell_change_text(result.initial_cell, result.refined_cell)}"
+            )
+            self.project.refinements.append(
+                {
+                    "method": "pawley_cell",
+                    "pattern_id": pattern.id,
+                    "phase_id": result.phase_id,
+                    "phase_name": result.phase_name,
+                    "matched_peaks": result.matched_peaks,
+                    "rms_delta_two_theta": result.rms_delta_two_theta,
+                    "max_delta_two_theta": result.max_delta_two_theta,
+                    "cell": {
+                        "a": result.refined_cell.a,
+                        "b": result.refined_cell.b,
+                        "c": result.refined_cell.c,
+                        "alpha": result.refined_cell.alpha,
+                        "beta": result.refined_cell.beta,
+                        "gamma": result.refined_cell.gamma,
+                        "volume": result.refined_cell.volume,
+                    },
+                }
+            )
+        self.project.touch()
+        self.project_changed.emit()
+        if hasattr(self, "_invalidate_match_profile_cache"):
+            self._invalidate_match_profile_cache(pattern.id)
+        if hasattr(self, "_update_compound_card_sample"):
+            self._update_compound_card_sample()
+        if recalculate:
+            self._recalculate_match_profile(auto_zoom=False)
+        if show_messages and summary:
+            QMessageBox.information(self, "Pawley cell fit", "\n".join(summary[:8]))
+        return any(result.success for result in results)
+
+    def _set_auto_refine_cells_on_add(self, enabled: bool) -> None:
+        self.auto_refine_cells_on_add = bool(enabled)
+
+    def _pawley_cell_change_text(self, initial_cell: CellParameters, refined_cell: CellParameters) -> str:
+        parts = []
+        for name in ("a", "b", "c", "alpha", "beta", "gamma"):
+            before = getattr(initial_cell, name, None)
+            after = getattr(refined_cell, name, None)
+            if before is None or after is None:
+                continue
+            parts.append(f"{name} {float(before):.5g}->{float(after):.5g}")
+        return "; ".join(parts)
+
+    def _active_pawley_peak_matches(self, pattern, phase_structures) -> dict[str, list[tuple[float, float]]]:
+        candidates = self._profile_candidates_for_pattern(pattern)
+        if not candidates:
+            return {}
+        try:
+            result, _candidate_by_key = self._finder_result_for_pattern(pattern, candidates, snap_peak_positions=False)
+        except Exception:
+            return {}
+        if result is None:
+            return {}
+        phase_ids = {phase_id for phase_id, _phase_name, _structure in phase_structures}
+        phase_by_source_path = {
+            self._compound_card_path_key(phase.source_path): phase.id
+            for phase in self.project.phases
+            if phase.id in phase_ids and self._compound_card_path_key(getattr(phase, "source_path", ""))
+        }
+        phase_by_name_formula = {
+            (str(phase.name or "").casefold(), str(phase.formula or "").casefold()): phase.id
+            for phase in self.project.phases
+            if phase.id in phase_ids
+        }
+        phase_id_by_candidate_key: dict[str, str] = {}
+        for candidate in candidates:
+            phase_id = ""
+            if self._candidate_source(candidate) == "USER" and candidate.get("Entry") in phase_ids:
+                phase_id = candidate.get("Entry", "")
+            if not phase_id:
+                key = self._candidate_key(candidate)
+                structure = self.match_structures.get(key)
+                source_path = str(getattr(structure, "source_path", "") or "")
+                if source_path:
+                    phase_id = phase_by_source_path.get(self._compound_card_path_key(source_path), "")
+            if not phase_id:
+                try:
+                    phase_id = phase_by_source_path.get(self._compound_card_path_key(str(self._candidate_cif_path(candidate))), "")
+                except Exception:
+                    phase_id = ""
+            if not phase_id:
+                phase_id = phase_by_name_formula.get(
+                    (
+                        self._candidate_phase_name(candidate).casefold(),
+                        str(candidate.get("Formula", "") or "").casefold(),
+                    ),
+                    "",
+                )
+            if phase_id:
+                phase_id_by_candidate_key[self._candidate_key(candidate)] = phase_id
+        matches: dict[str, list[tuple[float, float]]] = {}
+        for candidate_result in getattr(result, "candidates", []) or []:
+            phase_id = phase_id_by_candidate_key.get(getattr(candidate_result, "candidate_key", ""))
+            if not phase_id:
+                continue
+            references = list(getattr(candidate_result, "matched_reference_two_theta", []) or [])
+            observed = list(getattr(candidate_result, "matched_observed_two_theta", []) or [])
+            pairs = [
+                (float(reference), float(observed_two_theta))
+                for reference, observed_two_theta in zip(references, observed)
+            ]
+            if pairs:
+                matches[phase_id] = pairs
+        return matches
+
     def _recalculate_match_profile(self, auto_zoom: bool = False) -> None:
         self._activate_current_profile_state()
         self._save_active_profile_state()
@@ -1022,6 +1360,9 @@ class PhaseFinderWindow(
                 if result is None:
                     continue
                 is_active = pattern.id == active_pattern_id
+                if is_active:
+                    self._last_match_profile_fwhm = float(getattr(result, "fwhm", 0.0) or 0.0)
+                    self._last_match_profile_eta = float(getattr(result, "profile_eta", 0.0) or 0.0)
                 metrics = (
                     self.match_scales,
                     self.match_quantities,
@@ -1254,6 +1595,10 @@ class PhaseFinderWindow(
         self._candidate_probability_cache.clear()
         self._candidate_gain_profile_cache.clear()
 
+    def _trim_candidate_json_peak_cache(self, limit: int = 5000) -> None:
+        while len(self._candidate_json_peak_cache) > limit:
+            self._candidate_json_peak_cache.pop(next(iter(self._candidate_json_peak_cache)), None)
+
     def _trim_candidate_probability_cache(self, limit: int = 5000) -> None:
         while len(self._candidate_probability_cache) > limit:
             self._candidate_probability_cache.pop(next(iter(self._candidate_probability_cache)), None)
@@ -1275,10 +1620,18 @@ class PhaseFinderWindow(
         pattern_id = getattr(pattern, "id", "") if pattern is not None else ""
         source_path = getattr(pattern, "source_path", "") if pattern is not None else ""
         wavelength = round(float(getattr(pattern, "wavelength", None) or CU_KA1_WAVELENGTH), 6)
-        processed = self._active_processed_observed_data()
+        processed = self._active_scoring_observed_data()
         data_len = int(len(processed)) if processed is not None else -1
         data_signature = self._processed_probability_signature(processed)
-        return (pattern_id, source_path, wavelength, self._active_background_removed(), data_len, data_signature)
+        return (
+            pattern_id,
+            source_path,
+            wavelength,
+            getattr(self, "_scoring_source", "Auto"),
+            self._active_background_removed(),
+            data_len,
+            data_signature,
+        )
 
     def _processed_probability_signature(self, processed) -> tuple[float, float, float]:
         if processed is None or not len(processed):
@@ -1297,23 +1650,30 @@ class PhaseFinderWindow(
             return (0.0, 0.0, 0.0)
 
     def _probability_observed_data(self) -> tuple[np.ndarray, np.ndarray, list[tuple[float, float]]] | None:
-        observed = self._active_observed_data()
+        observed = self._active_scoring_observed_data()
         if observed is None or not len(observed):
             return None
         key = self._active_probability_context_key()
         if self._observed_probability_cache is not None and self._observed_probability_cache[0] == key:
             return self._observed_probability_cache[1], self._observed_probability_cache[2], self._observed_probability_cache[3]
         try:
-            background = self._estimate_background(observed[:, 0], observed[:, 1])
-            corrected = np.clip(observed[:, 1] - background, 0.0, None)
+            if getattr(self, "_scoring_source", "Auto") == "Auto" or self._pattern_scoring_background_removed(self._active_pattern()):
+                corrected = np.asarray(observed[:, 1], dtype=float)
+            else:
+                background = self._estimate_background(observed[:, 0], observed[:, 1])
+                corrected = np.asarray(observed[:, 1], dtype=float) - np.asarray(background, dtype=float)
             records = self._observed_peak_records(observed[:, 0], corrected, limit=80)
         except Exception:
             return None
         self._observed_probability_cache = (key, np.asarray(observed[:, 0], dtype=float), corrected, records)
         return self._observed_probability_cache[1], self._observed_probability_cache[2], self._observed_probability_cache[3]
 
-    def _rank_candidate_rows_by_peak_probability(self, rows: list[list[str]]) -> list[list[str]]:
-        if not self._rank_by_peak_probability_enabled():
+    def _rank_candidate_rows_by_peak_probability(
+        self,
+        rows: list[list[str]],
+        force: bool = False,
+    ) -> list[list[str]]:
+        if not force and not self._rank_by_peak_probability_enabled():
             return rows
         probability_data = self._probability_observed_data()
         if probability_data is None:
@@ -1324,10 +1684,11 @@ class PhaseFinderWindow(
 
         rows_to_rank = rows[:60]
         tail_rows = rows[60:]
-        gain_context = self._candidate_gain_context() if len(rows_to_rank) <= 40 else None
         scored_rows = []
         for index, row in enumerate(rows_to_rank):
             scored_row = list(row)
+            scored_row[5] = ""
+            scored_row[6] = ""
             probability = self._candidate_row_peak_probability_from_records(
                 scored_row,
                 observed_records,
@@ -1335,60 +1696,102 @@ class PhaseFinderWindow(
             )
             if probability > 0:
                 scored_row[5] = f"{probability:.0f}%"
-            gain = self._candidate_row_integral_gain(scored_row, gain_context) if gain_context is not None else 0.0
+            scored_rows.append([0.0, probability, index, scored_row])
+
+        gain_indices = {
+            item[2]
+            for item in sorted(
+                (item for item in scored_rows if item[1] > 0.0),
+                key=lambda item: (-item[1], item[2]),
+            )[:24]
+        }
+        gain_context = self._candidate_gain_context() if gain_indices else None
+        gain_nonzero = 0
+        gain_checked = 0
+        for item in scored_rows:
+            if gain_context is None or item[2] not in gain_indices:
+                continue
+            scored_row = item[3]
+            gain_checked += 1
+            gain = self._candidate_row_integral_gain(scored_row, gain_context)
             if gain >= 0.05:
                 scored_row[6] = f"{gain:.1f}%" if gain < 10.0 else f"{gain:.0f}%"
+                gain_nonzero += 1
             elif gain > 0:
                 scored_row[6] = "<0.1%"
-            rank_score = gain if gain_context is not None else probability
-            scored_rows.append((rank_score, probability, index, scored_row))
-        if not any(score > 0 for score, _probability, _index, _row in scored_rows):
-            return [row for _score, _probability, _index, row in scored_rows] + tail_rows
+                gain_nonzero += 1
+            item[0] = gain
+        self._set_gain_debug_status(gain_context, gain_checked, gain_nonzero)
+        if not any(gain > 0 or probability > 0 for gain, probability, _index, _row in scored_rows):
+            return [row for _gain, _probability, _index, row in scored_rows] + tail_rows
         scored_rows.sort(key=lambda item: (-item[0], -item[1], item[2]))
-        return [row for _score, _probability, _index, row in scored_rows] + tail_rows
+        return [row for _gain, _probability, _index, row in scored_rows] + tail_rows
 
     def _candidate_gain_context(self):
-        if not self.match_candidates:
-            return None
-        observed = self._active_observed_data()
+        selected_candidates = list(self.match_candidates or [])
+        observed = self._active_scoring_observed_data()
         if observed is None or not len(observed):
+            self._last_gain_debug = "Gain: no observed data"
             return None
         try:
             x = np.asarray(observed[:, 0], dtype=float)
             y = np.asarray(observed[:, 1], dtype=float)
-            background = self._estimate_background(x, y)
-            corrected = np.clip(y - background, 0.0, None)
+            if (
+                getattr(self, "_scoring_source", "Auto") == "Auto"
+                or self._pattern_scoring_background_removed(self._active_pattern())
+            ):
+                corrected = np.clip(y, 0.0, None)
+            else:
+                background = self._estimate_background(x, y)
+                corrected = np.clip(y - background, 0.0, None)
             if len(corrected) == 0 or float(np.nanmax(corrected)) <= 0:
+                self._last_gain_debug = "Gain: corrected profile is empty"
                 return None
             noise_floor = self._gain_noise_floor(corrected)
             target = np.clip(corrected - noise_floor, 0.0, None)
             if float(np.nanmax(target)) <= 0:
+                self._last_gain_debug = f"Gain: target empty, noise floor {noise_floor:.4g}"
                 return None
-            fwhm = self._estimate_profile_fwhm(x, corrected)
+            fwhm = float(getattr(self, "_last_match_profile_fwhm", 0.0) or self._estimate_profile_fwhm(x, corrected))
+            eta = float(getattr(self, "_last_match_profile_eta", 0.0) or 0.0)
             weights = self._fit_weights(target)
             selected_profiles = []
-            for candidate in self.match_candidates:
-                profile = self._candidate_profile_for_gain(candidate, x, fwhm)
+            for candidate in selected_candidates:
+                profile = self._candidate_profile_for_gain(candidate, x, fwhm, eta)
                 if profile is not None:
                     selected_profiles.append(profile)
+            if selected_candidates and not selected_profiles:
+                self._last_gain_debug = "Gain: no selected phase profiles"
+                return None
             selected_scales = self._fit_nonnegative_scales(target, selected_profiles, weights)
             selected_total = self._scaled_profile_sum(selected_profiles, selected_scales, target)
-            before_error = self._weighted_integral_error(target, selected_total, weights)
-            total_area = self._weighted_integral_area(target, weights)
-            if total_area <= 0:
+            difference_curve = target - selected_total
+            residual_target = self._gain_residual_target(difference_curve, x, fwhm)
+            residual_weights = self._fit_weights(residual_target) if float(np.nanmax(residual_target)) > 0 else weights
+            before_error = self._weighted_gain_error(residual_target, np.zeros_like(residual_target), residual_weights)
+            residual_area = self._weighted_integral_area(residual_target, residual_weights)
+            if residual_area <= 0:
+                residual_max = float(np.nanmax(residual_target)) if len(residual_target) else 0.0
+                self._last_gain_debug = f"Gain: residual empty, max {residual_max:.4g}"
                 return None
             return {
                 "key": self._active_probability_context_key(),
                 "x": x,
                 "target": target,
-                "weights": weights,
+                "weights": residual_weights,
                 "fwhm": fwhm,
+                "eta": eta,
                 "selected_profiles": selected_profiles,
                 "selected_total": selected_total,
+                "difference_curve": difference_curve,
+                "residual_target": residual_target,
                 "before_error": before_error,
-                "total_area": total_area,
+                "residual_area": residual_area,
             }
         except Exception:
+            import traceback
+            self._last_gain_debug = "Gain: context exception"
+            print("Gain context exception:", traceback.format_exc(), flush=True)
             return None
 
     def _candidate_row_integral_gain(self, row: list[str], context) -> float:
@@ -1402,65 +1805,148 @@ class PhaseFinderWindow(
         }
         peaks = self._candidate_cached_json_peaks(candidate)
         if not peaks:
+            peaks = self._candidate_cif_peaks_for_gain(candidate)
+        if not peaks:
             return 0.0
-        profile = self._candidate_gain_profile(candidate, peaks, context)
-        if profile is None or float(np.nanmax(profile)) <= 0:
-            return 0.0
-        x = np.asarray(context["x"], dtype=float)
-        target = np.asarray(context["target"], dtype=float)
+        base_fwhm = float(context.get("fwhm", 0.18) or 0.18)
+        base_eta = float(context.get("eta", 0.0) or 0.0)
+        residual_target = np.asarray(context["residual_target"], dtype=float)
         weights = np.asarray(context["weights"], dtype=float)
-        residual = np.clip(target - np.asarray(context["selected_total"], dtype=float), 0.0, None)
-        if float(np.nanmax(residual)) <= 0:
-            return 0.0
-        peak_mask = self._candidate_gain_peak_mask(peaks, x, context["fwhm"])
-        if not np.any(peak_mask):
-            return 0.0
-        local_weights = weights * peak_mask.astype(float)
-        denominator = float(np.trapz(local_weights * profile * profile, dx=1.0))
-        if denominator <= 0:
-            return 0.0
-        scale = float(np.trapz(local_weights * profile * residual, dx=1.0) / denominator)
-        if scale <= 1e-8:
-            return 0.0
-        candidate_area = np.asarray(profile, dtype=float) * scale
-        local_residual = residual * peak_mask
-        local_candidate = candidate_area * peak_mask
-        explained = float(np.trapz(weights * np.minimum(local_candidate, local_residual), dx=1.0))
-        local_excess = float(np.trapz(weights * np.clip(local_candidate - local_residual, 0.0, None), dx=1.0))
-        outside_excess = float(np.trapz(weights * np.clip(candidate_area * (~peak_mask), 0.0, None), dx=1.0))
-        improvement = max(0.0, explained - 0.20 * local_excess - 0.08 * outside_excess)
-        residual_area = max(float(np.trapz(weights * residual, dx=1.0)), context["total_area"] * 0.02)
-        return float(np.clip(100.0 * improvement / residual_area, 0.0, 100.0))
+        best_gain = 0.0
+        for fwhm in np.unique(np.clip(np.asarray([base_fwhm * 0.65, base_fwhm, base_fwhm * 1.45], dtype=float), 0.04, 0.55)):
+            for eta in np.unique(np.clip(np.asarray([base_eta, 0.0, 0.35, 0.65], dtype=float), 0.0, 0.85)):
+                trial_context = dict(context)
+                trial_context["fwhm"] = float(fwhm)
+                trial_context["eta"] = float(eta)
+                profile = self._candidate_gain_profile(candidate, peaks, trial_context)
+                if profile is None or float(np.nanmax(profile)) <= 0:
+                    continue
+                gain = self._candidate_gain_value_for_profile(residual_target, np.asarray(profile, dtype=float), weights, context)
+                best_gain = max(best_gain, gain)
+        return float(np.clip(best_gain, 0.0, 100.0))
 
-    def _candidate_profile_for_gain(self, candidate: dict[str, str], x: np.ndarray, fwhm: float) -> np.ndarray | None:
+    def _candidate_cif_peaks_for_gain(self, candidate: dict[str, str]) -> list[HKLPeak]:
+        cif_path = self._candidate_local_cif_path(candidate)
+        if cif_path is None:
+            return []
+        try:
+            _phase, structure = create_phase_from_cif(cif_path)
+            if candidate.get("Phase"):
+                structure.name = candidate["Phase"]
+            structure.wavelength = self._active_wavelength()
+            return self._candidate_cached_peaks(cif_path, structure)
+        except Exception:
+            return []
+
+    def _set_gain_debug_status(self, context, checked: int, nonzero: int) -> None:
+        if context is None:
+            text = getattr(self, "_last_gain_debug", "Gain: no context")
+        else:
+            try:
+                residual_area = float(context.get("residual_area", 0.0) or 0.0)
+                residual_max = float(np.nanmax(context.get("residual_target", [0.0])))
+                text = f"Gain: {nonzero}/{checked}, area {residual_area:.3g}, max {residual_max:.3g}"
+            except Exception:
+                text = f"Gain: {nonzero}/{checked}"
+        self._last_gain_debug = text
+        print(text, flush=True)
+        if getattr(self, "scoring_status_label", None) is not None:
+            self.scoring_status_label.setText(f"{self._scoring_source_status_text()} | {text}")
+
+    def _candidate_gain_value_for_profile(self, residual_target: np.ndarray, candidate_profile: np.ndarray, weights: np.ndarray, context) -> float:
+        candidate_scale = self._fit_residual_candidate_scale(residual_target, candidate_profile, weights)
+        if candidate_scale <= 1.0e-8:
+            return 0.0
+        calculated = candidate_profile * candidate_scale
+        fit_weights = np.clip(weights, 0.0, None)
+        covered = np.minimum(residual_target, calculated)
+        excess = np.clip(calculated - residual_target, 0.0, None)
+        covered_area = self._weighted_integral_area(covered, fit_weights)
+        excess_area = self._weighted_integral_area(excess, fit_weights)
+        if covered_area <= 0.0:
+            return 0.0
+        residual_fraction = covered_area / max(float(context["residual_area"]), 1.0e-12)
+        support_fraction = covered_area / max(covered_area + 3.0 * excess_area, 1.0e-12)
+        return float(np.clip(100.0 * residual_fraction * support_fraction, 0.0, 100.0))
+
+    def _gain_residual_target(self, difference_curve: np.ndarray, x: np.ndarray, fwhm: float) -> np.ndarray:
+        values = np.asarray(difference_curve, dtype=float)
+        if len(values) == 0:
+            return values
+        raw_positive = np.clip(values, 0.0, None)
+        step = float(np.nanmedian(np.diff(np.asarray(x, dtype=float)))) if len(x) > 1 else 0.03
+        sigma = max(1.0, min(14.0, float(fwhm) / max(abs(step), 1.0e-6) / 4.0))
+        smooth = gaussian_filter1d(values, sigma=sigma, mode="nearest")
+        positive = np.clip(smooth, 0.0, None)
+        if float(np.nanmax(positive)) <= 0:
+            return raw_positive
+        floor = max(float(np.nanpercentile(positive, 35)) * 0.25, self._gain_noise_floor(positive) * 0.05)
+        residual = np.clip(positive - floor, 0.0, None)
+        if float(np.nanmax(residual)) <= 0 or self._weighted_integral_area(residual, np.ones_like(residual)) <= 0:
+            return positive
+        return residual
+
+    def _fit_residual_candidate_scale(
+        self,
+        residual_target: np.ndarray,
+        profile: np.ndarray,
+        weights: np.ndarray,
+    ) -> float:
+        target = np.asarray(residual_target, dtype=float)
+        candidate = np.asarray(profile, dtype=float)
+        fit_weights = np.clip(np.asarray(weights, dtype=float), 0.0, None)
+        usable = np.isfinite(target) & np.isfinite(candidate) & np.isfinite(fit_weights) & (fit_weights > 0.0)
+        if not np.any(usable) or float(np.nanmax(candidate[usable])) <= 0.0:
+            return 0.0
+        sqrt_weights = np.sqrt(fit_weights[usable])
+        try:
+            scales, _residual = nnls(
+                candidate[usable, None] * sqrt_weights[:, None],
+                target[usable] * sqrt_weights,
+            )
+        except Exception:
+            return 0.0
+        return max(0.0, float(scales[0])) if len(scales) else 0.0
+
+    def _candidate_profile_for_gain(self, candidate: dict[str, str], x: np.ndarray, fwhm: float, eta: float = 0.0) -> np.ndarray | None:
         peaks = self._candidate_cached_json_peaks(candidate)
         if not peaks:
+            peaks = self._candidate_cif_peaks_for_gain(candidate)
+        if not peaks:
             return None
-        return self._profile_from_gain_peaks(peaks, x, fwhm)
+        return self._profile_from_gain_peaks(peaks, x, fwhm, eta)
 
     def _candidate_gain_profile(self, candidate: dict[str, str], peaks: list[HKLPeak], context) -> np.ndarray | None:
+        peak_signature = (
+            len(peaks),
+            round(float(peaks[0].two_theta), 5) if peaks else 0.0,
+            round(float(peaks[-1].two_theta), 5) if peaks else 0.0,
+        )
         key = (
             context.get("key"),
             self._candidate_source(candidate),
             candidate.get("Entry", ""),
+            peak_signature,
             round(float(context.get("fwhm", 0.0)), 5),
+            round(float(context.get("eta", 0.0)), 4),
             len(context.get("x", [])),
         )
         cached = self._candidate_gain_profile_cache.get(key)
         if cached is not None:
             return cached
-        profile = self._profile_from_gain_peaks(peaks, context["x"], context["fwhm"])
+        profile = self._profile_from_gain_peaks(peaks, context["x"], context["fwhm"], context.get("eta", 0.0))
         if profile is not None:
             self._candidate_gain_profile_cache[key] = profile
             self._trim_candidate_gain_profile_cache()
         return profile
 
-    def _profile_from_gain_peaks(self, peaks: list[HKLPeak], x: np.ndarray, fwhm: float) -> np.ndarray | None:
+    def _profile_from_gain_peaks(self, peaks: list[HKLPeak], x: np.ndarray, fwhm: float, eta: float = 0.0) -> np.ndarray | None:
         try:
             _grid, profile = calculated_profile_from_peaks(
                 peaks,
                 x,
                 fwhm=fwhm,
+                eta=eta,
                 wavelength=self._active_wavelength(),
                 include_kalpha2=True,
             )
@@ -1500,10 +1986,25 @@ class PhaseFinderWindow(
         matrix = np.vstack(usable).T
         sqrt_weights = np.sqrt(np.clip(np.asarray(weights, dtype=float), 0.0, None))
         try:
-            scales, *_ = np.linalg.lstsq(matrix * sqrt_weights[:, None], target * sqrt_weights, rcond=None)
+            scales, _residual = nnls(matrix * sqrt_weights[:, None], target * sqrt_weights)
         except Exception:
-            return [0.0] * len(usable)
+            try:
+                scales, *_ = np.linalg.lstsq(matrix * sqrt_weights[:, None], target * sqrt_weights, rcond=None)
+            except Exception:
+                return [0.0] * len(usable)
         return [max(0.0, float(scale)) for scale in scales]
+
+    def _weighted_gain_error(
+        self,
+        target: np.ndarray,
+        calculated: np.ndarray,
+        weights: np.ndarray,
+        excess_penalty: float = 3.0,
+    ) -> float:
+        residual = np.asarray(calculated, dtype=float) - np.asarray(target, dtype=float)
+        asymmetric = np.where(residual > 0.0, residual * float(excess_penalty), -residual)
+        weighted = asymmetric * np.clip(np.asarray(weights, dtype=float), 0.0, None)
+        return float(np.trapezoid(weighted, dx=1.0))
 
     def _scaled_profile_sum(self, profiles: list[np.ndarray], scales: list[float], target: np.ndarray) -> np.ndarray:
         if not profiles or not scales:
@@ -1515,12 +2016,12 @@ class PhaseFinderWindow(
 
     def _weighted_integral_area(self, target: np.ndarray, weights: np.ndarray) -> float:
         weighted = np.asarray(target, dtype=float) * np.clip(np.asarray(weights, dtype=float), 0.0, None)
-        return float(np.trapz(weighted, dx=1.0))
+        return float(np.trapezoid(weighted, dx=1.0))
 
     def _weighted_integral_error(self, target: np.ndarray, calculated: np.ndarray, weights: np.ndarray) -> float:
         residual = np.abs(np.asarray(target, dtype=float) - np.asarray(calculated, dtype=float))
         weighted = residual * np.clip(np.asarray(weights, dtype=float), 0.0, None)
-        return float(np.trapz(weighted, dx=1.0))
+        return float(np.trapezoid(weighted, dx=1.0))
 
     def _candidate_row_peak_probability_from_records(
         self,
@@ -1537,8 +2038,9 @@ class PhaseFinderWindow(
         }
         if self._candidate_source(candidate) not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"}:
             return 0.0
-        cif_path = self._candidate_local_cif_path(candidate)
-        if cif_path is None:
+        peaks = self._candidate_cached_json_peaks(candidate)
+        cif_path = None if peaks else self._candidate_local_cif_path(candidate)
+        if not peaks and cif_path is None:
             return 0.0
         probability_key = self._candidate_probability_key(candidate, cif_path)
         cached_probability = self._candidate_probability_cache.get(probability_key)
@@ -1546,7 +2048,6 @@ class PhaseFinderWindow(
             return cached_probability
         try:
             structure = None
-            peaks = self._candidate_cached_json_peaks(candidate)
             if peaks:
                 structure = self._candidate_lightweight_structure(candidate)
             elif allow_cif_fallback:
@@ -1576,6 +2077,16 @@ class PhaseFinderWindow(
         entry = self.local_phase_cache.get(source, entry_id)
         if entry is None or not entry.peaks_json:
             return []
+        cache_key = (
+            source,
+            entry_id,
+            int(getattr(entry, "derived_version", 0) or 0),
+            len(entry.peaks_json),
+            entry.peaks_json[:32],
+        )
+        cached = self._candidate_json_peak_cache.get(cache_key)
+        if cached is not None:
+            return cached
         try:
             rows = json.loads(entry.peaks_json)
         except Exception:
@@ -1597,6 +2108,8 @@ class PhaseFinderWindow(
                 )
             except Exception:
                 continue
+        self._candidate_json_peak_cache[cache_key] = peaks
+        self._trim_candidate_json_peak_cache()
         return peaks
 
     def _candidate_lightweight_structure(self, candidate: dict[str, str]):
@@ -1609,12 +2122,24 @@ class PhaseFinderWindow(
         structure.wavelength = self._active_wavelength()
         return structure
 
-    def _candidate_probability_key(self, candidate: dict[str, str], cif_path: Path) -> tuple[object, ...]:
-        try:
-            stat = cif_path.stat()
-            file_key = (str(cif_path), int(stat.st_mtime), int(stat.st_size))
-        except Exception:
-            file_key = (str(cif_path), 0, 0)
+    def _candidate_probability_key(self, candidate: dict[str, str], cif_path: Path | None) -> tuple[object, ...]:
+        if cif_path is None:
+            source = self._candidate_source(candidate)
+            entry_id = candidate.get("Entry", "")
+            entry = self.local_phase_cache.get(source, entry_id) if source and entry_id else None
+            peaks_json = getattr(entry, "peaks_json", "") if entry is not None else ""
+            file_key = (
+                "cached-peaks",
+                int(getattr(entry, "derived_version", 0) or 0) if entry is not None else 0,
+                len(peaks_json),
+                peaks_json[:32],
+            )
+        else:
+            try:
+                stat = cif_path.stat()
+                file_key = (str(cif_path), int(stat.st_mtime), int(stat.st_size))
+            except Exception:
+                file_key = (str(cif_path), 0, 0)
         return (
             self._active_probability_context_key(),
             self._candidate_source(candidate),
@@ -1813,10 +2338,14 @@ class PhaseFinderWindow(
             return 0.0
         return strongest * (float(wavelength) / volume) ** 2
 
-    def _calculate_candidate_overlay(self, candidate: dict[str, str], show_errors: bool) -> None:
+    def _calculate_candidate_overlay(self, candidate: dict[str, str], show_errors: bool, preview_token: int | None = None) -> None:
+        if preview_token is not None and preview_token != getattr(self, "_candidate_preview_token", None):
+            return
         entry_id = candidate.get("Entry", "")
         view_range = self._plot_view_range()
         try:
+            if preview_token is not None and preview_token != getattr(self, "_candidate_preview_token", None):
+                return
             cif_path = self._candidate_cif_path(candidate)
             _phase, structure = create_phase_from_cif(cif_path)
             observed = self._active_observed_data()
@@ -1846,8 +2375,7 @@ class PhaseFinderWindow(
             )
             self._tag_transient_candidate_preview_items(before_counts)
             if observed is None:
-                self.match_plot.autoRange(padding=0.02)
-                self.match_plot_view_initialized = True
+                self._reset_match_plot_view()
             else:
                 self._restore_plot_view_range(view_range)
             if hasattr(self, "_apply_plot_layer_visibility_settings"):
@@ -1857,7 +2385,9 @@ class PhaseFinderWindow(
             if show_errors:
                 QMessageBox.warning(self, "Calculate pattern failed", str(exc))
 
-    def _preview_rruff_reference(self, candidate: dict[str, str], show_errors: bool) -> None:
+    def _preview_rruff_reference(self, candidate: dict[str, str], show_errors: bool, preview_token: int | None = None) -> None:
+        if preview_token is not None and preview_token != getattr(self, "_candidate_preview_token", None):
+            return
         entry_id = candidate.get("Entry", "")
         if not entry_id:
             return
@@ -1886,8 +2416,7 @@ class PhaseFinderWindow(
             if transient_preview:
                 self._tag_transient_candidate_preview_items(before_counts)
             if observed is None:
-                self.match_plot.autoRange(padding=0.02)
-                self.match_plot_view_initialized = True
+                self._reset_match_plot_view()
             if hasattr(self, "_apply_plot_layer_visibility_settings"):
                 self._apply_plot_layer_visibility_settings(self.plot_view_settings)
             self.active_overlay_entry_id = entry_id
@@ -1895,7 +2424,9 @@ class PhaseFinderWindow(
             if show_errors:
                 QMessageBox.warning(self, "RRUFF preview failed", str(exc))
 
-    def _preview_pdf2_reference(self, candidate: dict[str, str], show_errors: bool) -> None:
+    def _preview_pdf2_reference(self, candidate: dict[str, str], show_errors: bool, preview_token: int | None = None) -> None:
+        if preview_token is not None and preview_token != getattr(self, "_candidate_preview_token", None):
+            return
         entry_id = candidate.get("Entry", "")
         if not entry_id:
             return
@@ -1926,8 +2457,7 @@ class PhaseFinderWindow(
             if transient_preview:
                 self._tag_transient_candidate_preview_items(before_counts)
             if observed is None:
-                self.match_plot.autoRange(padding=0.02)
-                self.match_plot_view_initialized = True
+                self._reset_match_plot_view()
             else:
                 self._restore_plot_view_range(view_range)
             if hasattr(self, "_apply_plot_layer_visibility_settings"):
@@ -2017,6 +2547,9 @@ class PhaseFinderWindow(
         self._update_element_fields()
 
     def _reset_candidate_search_table(self) -> None:
+        self._auto_search_token = int(getattr(self, "_auto_search_token", 0)) + 1
+        if self.finder_action_bar is not None:
+            self.finder_action_bar.set_auto_search_busy(False)
         self._reset_selected_elements()
         if self.search_input is not None:
             self.search_input.clear()
@@ -2122,11 +2655,11 @@ class PhaseFinderWindow(
         else:
             self._search_pdf2_text()
 
-    def _set_candidate_rows(self, rows: list[list[str]]) -> None:
+    def _set_candidate_rows(self, rows: list[list[str]], force_rank: bool = False) -> None:
         self._candidate_rank_token += 1
         rows = [normalize_candidate_row(row) for row in rows]
-        if self._rank_by_peak_probability_enabled() and rows:
-            rows = self._rank_candidate_rows_by_peak_probability(rows)
+        if (force_rank or self._rank_by_peak_probability_enabled()) and rows:
+            rows = self._rank_candidate_rows_by_peak_probability(rows, force=force_rank)
         self.candidate_table.set_rows(rows, lambda row: row)
         if hasattr(self, "_update_profile_view_context"):
             self._update_profile_view_context()

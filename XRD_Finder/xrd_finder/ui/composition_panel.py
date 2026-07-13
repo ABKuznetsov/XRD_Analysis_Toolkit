@@ -105,7 +105,10 @@ class CompositionPanel(QWidget):
 
         reset_button = QPushButton("Reset table")
         reset_button.setMinimumHeight(34)
-        reset_button.setToolTip("Clear element filters and reset the candidate list.")
+        reset_button.setToolTip(
+            "Cancel Auto search, clear element filters, and reset the candidate list.\n"
+            "Selected phases and their calculated fit are preserved."
+        )
         reset_button.setStyleSheet(command_button_style("#5f6368", "#8a8d91"))
         reset_button.clicked.connect(self.resetRequested)
 
