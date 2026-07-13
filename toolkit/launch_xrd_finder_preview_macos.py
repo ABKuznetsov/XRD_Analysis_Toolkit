@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import platform
 import subprocess
+import ssl
 import sys
 import threading
 import time
@@ -54,24 +55,51 @@ def load_json(path: Path) -> dict:
         return {}
 
 
-def fetch_json(url: str, timeout: float = 8.0) -> dict:
+def create_ssl_context() -> ssl.SSLContext:
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
+def fetch_url_bytes(url: str, timeout: float = 30.0) -> bytes:
     request = Request(url, headers={"User-Agent": "XRD-Phase-Finder-macOS-Updater"})
-    with urlopen(request, timeout=timeout) as response:
-        data = response.read()
+    try:
+        with urlopen(request, timeout=timeout, context=create_ssl_context()) as response:
+            return response.read()
+    except Exception:
+        curl = Path("/usr/bin/curl")
+        if not curl.exists():
+            raise
+        process = subprocess.run(
+            [
+                str(curl),
+                "-fsSL",
+                "--connect-timeout",
+                str(max(1, int(timeout))),
+                "--max-time",
+                str(max(30, int(timeout))),
+                url,
+            ],
+            capture_output=True,
+            check=True,
+        )
+        return process.stdout
+
+
+def fetch_json(url: str, timeout: float = 8.0) -> dict:
+    data = fetch_url_bytes(url, timeout=timeout)
     return json.loads(data.decode("utf-8-sig"))
 
 
 def download_file(url: str, target: Path, expected_sha256: str = "") -> None:
-    request = Request(url, headers={"User-Agent": "XRD-Phase-Finder-macOS-Updater"})
     target.parent.mkdir(parents=True, exist_ok=True)
+    data = fetch_url_bytes(url, timeout=300)
     digest = hashlib.sha256()
-    with urlopen(request, timeout=300) as response, target.open("wb") as handle:
-        while True:
-            chunk = response.read(1024 * 512)
-            if not chunk:
-                break
-            handle.write(chunk)
-            digest.update(chunk)
+    digest.update(data)
+    target.write_bytes(data)
     if target.stat().st_size < 1024:
         target.unlink(missing_ok=True)
         raise RuntimeError("Downloaded installer is empty or incomplete.")
