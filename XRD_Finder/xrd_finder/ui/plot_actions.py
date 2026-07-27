@@ -6,8 +6,8 @@ from pathlib import Path
 import pyqtgraph as pg
 
 from xrd_finder.ui.pattern_plot_helpers import ensure_right_legend
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QAction, QImage, QPainter
 from PySide6.QtWidgets import QFileDialog, QMenu, QMessageBox
 
 
@@ -54,17 +54,24 @@ class PhaseFinderPlotActionsMixin:
         if not re.search(r"\.(png|jpe?g)$", path, flags=re.IGNORECASE):
             path += ".png"
         try:
-            from pyqtgraph.exporters import ImageExporter
-
-            exporter = ImageExporter(self.match_plot.plotItem)
-            params = exporter.parameters()
-            current_width = max(float(self.match_plot.width()), 1.0)
-            target_width = max(3200.0, current_width * 2.0)
-            params["width"] = target_width
-            exporter.export(path)
+            scale = 2.0
+            source_size = self.match_plot.size()
+            target_size = QSize(
+                max(1, int(round(source_size.width() * scale))),
+                max(1, int(round(source_size.height() * scale))),
+            )
+            image = QImage(target_size, QImage.Format.Format_ARGB32_Premultiplied)
+            image.fill(Qt.GlobalColor.white)
+            painter = QPainter(image)
+            try:
+                painter.scale(scale, scale)
+                self.match_plot.render(painter)
+            finally:
+                painter.end()
+            if not image.save(path):
+                raise RuntimeError("Qt high-resolution render could not be saved.")
         except Exception as exc:
-            if not self.match_plot.grab().save(path):
-                QMessageBox.warning(self, "Export image", f"Could not save current plot image:\n{exc}")
+            QMessageBox.warning(self, "Export image", f"Could not save current plot image:\n{exc}")
 
     def _layer_action(self, label: str, layer: str, checked: bool | None = None, enabled: bool = True):
         action = self._make_action(label)

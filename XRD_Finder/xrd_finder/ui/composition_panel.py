@@ -85,8 +85,10 @@ class CompositionPanel(QWidget):
         data_mode_row = QHBoxLayout()
         self.structural_data_checkbox.setChecked(True)
         self.structural_data_checkbox.setToolTip("Include sources with CIF or atomic coordinates that can be calculated.")
-        self.reference_patterns_checkbox.setChecked(True)
-        self.reference_patterns_checkbox.setToolTip("Include RRUFF and PDF-2 diffraction-line cards as reference overlays.")
+        self.reference_patterns_checkbox.setChecked(False)
+        self.reference_patterns_checkbox.setToolTip(
+            "Include enabled experimental/reference databases such as RRUFF and PDF-2."
+        )
         self.rank_by_probability_checkbox.setChecked(True)
         self.rank_by_probability_checkbox.setToolTip(
             "Estimate whether locally available structural candidates have peaks present in the active XRD pattern."

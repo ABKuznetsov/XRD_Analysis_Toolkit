@@ -12,7 +12,6 @@ class FinderProjectState:
     show_all_selected_patterns: bool = False
     pattern_stack_offset_percent: int = 10
     normalize_observed_patterns: bool = False
-    auto_refine_cells_on_add: bool = False
     grid_visible: bool = True
     show_hkl_labels: bool = False
     right_tab: str = "Elements"
@@ -36,5 +35,5 @@ class FinderProjectState:
     inorganics_checked: bool = True
     organics_checked: bool = False
     structural_data_checked: bool = True
-    reference_patterns_checked: bool = True
+    reference_patterns_checked: bool = False
     rank_by_probability_checked: bool = True

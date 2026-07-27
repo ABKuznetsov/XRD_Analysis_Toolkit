@@ -213,6 +213,8 @@ class PhaseFinderPlotViewActionsMixin:
         self._apply_plot_view_aspect()
         if self.project.patterns:
             self._refresh_observed_pattern_plot()
+            if getattr(self, "match_candidates", None):
+                self._recalculate_match_profile()
 
     def _apply_plot_layer_visibility_settings(self, settings: PlotViewSettings) -> None:
         layer_fields = {

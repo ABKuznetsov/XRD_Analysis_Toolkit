@@ -1,18 +1,19 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
-import re
+import math
 
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMenuBar,
     QMessageBox,
     QProgressDialog,
     QSizePolicy,
@@ -20,7 +21,6 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
-    QToolButton,
     QVBoxLayout,
     QWidget,
     QDialog,
@@ -37,6 +37,8 @@ from xrd_finder.core.project import Project
 from xrd_finder.core.finder_state import FinderProjectState
 from xrd_finder.core.structure import AtomSite, CellParameters, Structure
 from xrd_finder.finder import FinderInput, FinderService
+from xrd_finder.finder.models import candidate_structure_override
+from xrd_finder.finder.fingerprint_matching import fingerprint_match_score
 from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.io.xy_loader import load_xy
 from xrd_finder.io.project_io import load_project_manifest, save_project_manifest
@@ -80,20 +82,16 @@ from xrd_finder.ui.match_profile_renderer import build_finder_candidate_inputs, 
 from xrd_finder.ui.observed_pattern_actions import PhaseFinderObservedPatternActionsMixin
 from xrd_finder.ui.peak_marker_renderer import (
     add_peak_coverage_markers,
-    assignment_marker_label,
-    primary_assignment,
 )
 from xrd_finder.ui.peak_matching import (
+    ObservedLineRecord,
     PhaseAlignmentEstimate,
     estimate_phase_alignment,
     nearest_index as nearest_peak_index,
     observed_peak_positions,
     observed_peak_records,
     peak_presence_probability,
-    peak_presence_probability_from_records,
-    peak_probability_from_alignment,
 )
-from xrd_finder.ui.phase_finder_menu import build_phase_finder_menu_bar
 from xrd_finder.ui.plot_actions import PhaseFinderPlotActionsMixin
 from xrd_finder.ui.plot_view_actions import PhaseFinderPlotViewActionsMixin
 from xrd_finder.ui.preprocessing_actions import PhaseFinderPreprocessingActionsMixin
@@ -103,31 +101,9 @@ from xrd_finder.ui.project_controls import ProjectControlsWidget
 from xrd_finder.ui.project_tree import ProjectTree
 from xrd_finder.ui.reference_preview_renderer import draw_pdf2_reference, draw_rruff_reference
 from xrd_finder.ui.selected_phases_actions import PhaseFinderSelectedPhasesActionsMixin
-from xrd_finder.ui.structure_overlay import draw_structure_overlay, prepare_structure_overlay, shifted_peaks as shift_overlay_peaks
+from xrd_finder.ui.structure_overlay import draw_structure_overlay, prepare_structure_overlay
 from xrd_finder.ui.theme import is_dark_theme, window_style
 from xrd_finder.ui.xrd_plot import create_xrd_plot_widget
-
-
-ATOMIC_WEIGHTS = {
-    "H": 1.008, "D": 2.014, "C": 12.011, "N": 14.007, "O": 15.999, "F": 18.998,
-    "Na": 22.990, "Mg": 24.305, "Al": 26.982, "Si": 28.085, "P": 30.974, "S": 32.06,
-    "Cl": 35.45, "K": 39.098, "Ca": 40.078, "Ti": 47.867, "V": 50.942, "Cr": 51.996,
-    "Mn": 54.938, "Fe": 55.845, "Co": 58.933, "Ni": 58.693, "Cu": 63.546, "Zn": 65.38,
-    "Ga": 69.723, "Ge": 72.630, "As": 74.922, "Se": 78.971, "Br": 79.904, "Sr": 87.62,
-    "Y": 88.906, "Zr": 91.224, "Nb": 92.906, "Mo": 95.95, "Ag": 107.868, "Cd": 112.414,
-    "In": 114.818, "Sn": 118.710, "Sb": 121.760, "Te": 127.60, "I": 126.904, "Ba": 137.327,
-    "La": 138.905, "Ce": 140.116, "Pr": 140.908, "Nd": 144.242, "W": 183.84, "Pb": 207.2,
-    "Bi": 208.980,
-}
-
-ATOMIC_NUMBERS = {
-    "H": 1, "D": 1, "C": 6, "N": 7, "O": 8, "F": 9, "Na": 11, "Mg": 12, "Al": 13,
-    "Si": 14, "P": 15, "S": 16, "Cl": 17, "K": 19, "Ca": 20, "Ti": 22, "V": 23,
-    "Cr": 24, "Mn": 25, "Fe": 26, "Co": 27, "Ni": 28, "Cu": 29, "Zn": 30, "Ga": 31,
-    "Ge": 32, "As": 33, "Se": 34, "Br": 35, "Sr": 38, "Y": 39, "Zr": 40, "Nb": 41,
-    "Mo": 42, "Ag": 47, "Cd": 48, "In": 49, "Sn": 50, "Sb": 51, "Te": 52, "I": 53,
-    "Ba": 56, "La": 57, "Ce": 58, "Pr": 59, "Nd": 60, "W": 74, "Pb": 82, "Bi": 83,
-}
 
 
 class AnalysisWindow(QDialog):
@@ -591,7 +567,6 @@ class PhaseFinderWindow(
         self.show_all_selected_patterns = False
         self.pattern_stack_offset_percent = 10
         self.normalize_observed_patterns = False
-        self.auto_refine_cells_on_add = False
         self.observed_pattern_plot_context: dict[str, dict[str, float]] = {}
         self.observed_pattern_colors: dict[str, str] = {}
         self.active_profile_pattern_id: str | None = None
@@ -608,6 +583,7 @@ class PhaseFinderWindow(
         self._candidate_rank_rows: list[list[str]] = []
         self._candidate_rank_scores: dict[int, float] = {}
         self._candidate_rank_index = 0
+        self._candidate_hidden_match_by_key: dict[str, str] = {}
 
     def _candidate_copy_list(self, candidates: list[dict[str, str]]) -> list[dict[str, str]]:
         return [dict(candidate) for candidate in candidates]
@@ -757,7 +733,7 @@ class PhaseFinderWindow(
         background_data = self._pattern_finder_background_data(pattern)
         structure_overrides = self._finder_candidate_structure_overrides(pattern, candidates)
         for finder_candidate in finder_candidates:
-            structure = structure_overrides.get(finder_candidate.entry_id)
+            structure = candidate_structure_override(finder_candidate, structure_overrides)
             if structure is not None:
                 finder_candidate.structure = structure
         result = self.finder_service.run(
@@ -914,7 +890,6 @@ class PhaseFinderWindow(
         self.finder_action_bar.patternDisplayModeChanged.connect(self._set_pattern_display_mode)
         self.finder_action_bar.patternOffsetPercentChanged.connect(self._set_pattern_stack_offset)
         self.finder_action_bar.normalizePatternsChanged.connect(self._set_pattern_normalization)
-        self.finder_action_bar.autoRefineCellsChanged.connect(self._set_auto_refine_cells_on_add)
         self.finder_action_bar.resetViewRequested.connect(self._reset_match_plot_view)
         self.search_input = self.finder_action_bar.search_input
         self.center_layout.addWidget(self.finder_action_bar)
@@ -971,7 +946,7 @@ class PhaseFinderWindow(
     def _create_right_tabs(self) -> None:
         self.right_tabs.addTab(self._composition_tab(), "Elements")
         self.compound_card = CompoundCardWidget()
-        self.compound_card.pawleyFitRequested.connect(self._fit_active_sample_pawley_cells)
+        self.compound_card.cellFitRequested.connect(self._fit_active_sample_indexed_cells)
         if hasattr(self, "_update_compound_card_sample"):
             self._update_compound_card_sample()
         self.right_tabs.addTab(self.compound_card, "Card")
@@ -1094,48 +1069,6 @@ class PhaseFinderWindow(
         handle.failed.connect(fail)
         handle.start()
 
-    def _match_menu_bar(self) -> QMenuBar:
-        return build_phase_finder_menu_bar(self)
-
-    def _match_tool_bar(self) -> QWidget:
-        wrapper = QWidget()
-        layout = QHBoxLayout(wrapper)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-
-        buttons = [
-            "Open",
-            "Save",
-            "Overlay",
-            "FP",
-            "Peaks",
-            "BG",
-            "Search",
-            "Add",
-            "Undo",
-            "Redo",
-            "DB",
-            "Color",
-            "Export",
-            "Zoom",
-        ]
-        for label in buttons:
-            button = QToolButton()
-            button.setText(label)
-            button.setAutoRaise(True)
-            if label == "Search":
-                button.clicked.connect(self._search_pdf2_candidates)
-            if label == "Add":
-                button.clicked.connect(self._add_selected_candidate_to_match_list)
-            layout.addWidget(button)
-
-        search = QLineEdit()
-        search.setPlaceholderText("Formula, phase name, entry id, or DOI")
-        search.returnPressed.connect(self._search_pdf2_text)
-        self.search_input = search
-        layout.addWidget(search, 1)
-        return wrapper
-
     def _composition_tab(self) -> QWidget:
         panel = CompositionPanel(self.match_table, self._layout_state)
         panel.requiredElementToggled.connect(self._toggle_required_element)
@@ -1160,21 +1093,21 @@ class PhaseFinderWindow(
     def _show_quick_help(self) -> None:
         QMessageBox.information(self, PHASE_FINDER_HELP_TITLE, PHASE_FINDER_HELP_TEXT)
 
-    def _fit_active_sample_pawley_cells(self, *, show_messages: bool = True, recalculate: bool = True) -> bool:
+    def _fit_active_sample_indexed_cells(self, *, show_messages: bool = True, recalculate: bool = True) -> bool:
         pattern = self._active_pattern()
         if pattern is None:
             if show_messages:
-                QMessageBox.information(self, "Pawley cell fit", "Select an XRD sample first.")
+                QMessageBox.information(self, "Cell fit", "Select an XRD sample first.")
             return False
         linked_phase_ids = list(getattr(pattern, "linked_phase_ids", []) or [])
         if not linked_phase_ids:
             if show_messages:
-                QMessageBox.information(self, "Pawley cell fit", "Add candidate phases to this sample first.")
+                QMessageBox.information(self, "Cell fit", "Add candidate phases to this sample first.")
             return False
         observed = self._pattern_scoring_observed_data(pattern)
         if observed is None or len(observed) < 5:
             if show_messages:
-                QMessageBox.information(self, "Pawley cell fit", "No observed profile is available for this sample.")
+                QMessageBox.information(self, "Cell fit", "No observed profile is available for this sample.")
             return False
         phase_by_id = {phase.id: phase for phase in self.project.phases}
         structure_by_id = {structure.id: structure for structure in self.project.structures}
@@ -1191,22 +1124,24 @@ class PhaseFinderWindow(
             phase_structures.append((phase.id, phase.name, structure))
         if not phase_structures:
             if show_messages:
-                QMessageBox.information(self, "Pawley cell fit", "Linked phases do not have CIF structures.")
+                QMessageBox.information(self, "Cell fit", "Linked phases do not have CIF structures.")
             return False
-        phase_peak_matches = self._active_pawley_peak_matches(pattern, phase_structures)
+        wavelength = self._active_wavelength()
+        indexed_peak_matches = self._active_indexed_peak_matches(
+            pattern,
+            phase_structures,
+            wavelength=wavelength,
+        )
         self.setCursor(Qt.CursorShape.WaitCursor)
         try:
-            results = self.refinement_service.fit_pawley_cells(
-                observed[:, 0],
-                observed[:, 1],
+            results = self.refinement_service.fit_indexed_cells(
                 phase_structures,
-                wavelength=self._active_wavelength(),
-                fwhm=0.18,
-                phase_peak_matches=phase_peak_matches,
+                wavelength=wavelength,
+                indexed_peak_matches=indexed_peak_matches,
             )
         except Exception as exc:
             if show_messages:
-                QMessageBox.warning(self, "Pawley cell fit", str(exc))
+                QMessageBox.warning(self, "Cell fit", str(exc))
             return False
         finally:
             self.unsetCursor()
@@ -1223,13 +1158,20 @@ class PhaseFinderWindow(
             if structure is None:
                 continue
             structure.cell = result.refined_cell
+            source_path_key = self._compound_card_path_key(getattr(structure, "source_path", ""))
+            for match_structure in self.match_structures.values():
+                match_source_key = self._compound_card_path_key(
+                    getattr(match_structure, "source_path", "")
+                )
+                if source_path_key and match_source_key == source_path_key:
+                    match_structure.cell = deepcopy(result.refined_cell)
             summary.append(
                 f"{result.phase_name}: {result.matched_peaks} peaks, RMS {result.rms_delta_two_theta:.4g} deg\n"
-                f"{self._pawley_cell_change_text(result.initial_cell, result.refined_cell)}"
+                f"{self._cell_change_text(result.initial_cell, result.refined_cell)}"
             )
             self.project.refinements.append(
                 {
-                    "method": "pawley_cell",
+                    "method": "indexed_cell",
                     "pattern_id": pattern.id,
                     "phase_id": result.phase_id,
                     "phase_name": result.phase_name,
@@ -1256,13 +1198,10 @@ class PhaseFinderWindow(
         if recalculate:
             self._recalculate_match_profile(auto_zoom=False)
         if show_messages and summary:
-            QMessageBox.information(self, "Pawley cell fit", "\n".join(summary[:8]))
+            QMessageBox.information(self, "Cell fit", "\n".join(summary[:8]))
         return any(result.success for result in results)
 
-    def _set_auto_refine_cells_on_add(self, enabled: bool) -> None:
-        self.auto_refine_cells_on_add = bool(enabled)
-
-    def _pawley_cell_change_text(self, initial_cell: CellParameters, refined_cell: CellParameters) -> str:
+    def _cell_change_text(self, initial_cell: CellParameters, refined_cell: CellParameters) -> str:
         parts = []
         for name in ("a", "b", "c", "alpha", "beta", "gamma"):
             before = getattr(initial_cell, name, None)
@@ -1272,7 +1211,13 @@ class PhaseFinderWindow(
             parts.append(f"{name} {float(before):.5g}->{float(after):.5g}")
         return "; ".join(parts)
 
-    def _active_pawley_peak_matches(self, pattern, phase_structures) -> dict[str, list[tuple[float, float]]]:
+    def _active_indexed_peak_matches(
+        self,
+        pattern,
+        phase_structures,
+        *,
+        wavelength: float,
+    ) -> dict[str, list[tuple[int, int, int, float, float]]]:
         candidates = self._profile_candidates_for_pattern(pattern)
         if not candidates:
             return {}
@@ -1282,6 +1227,7 @@ class PhaseFinderWindow(
             return {}
         if result is None:
             return {}
+        global_zero_shift = float(getattr(result, "global_zero_shift", 0.0) or 0.0)
         phase_ids = {phase_id for phase_id, _phase_name, _structure in phase_structures}
         phase_by_source_path = {
             self._compound_card_path_key(phase.source_path): phase.id
@@ -1319,20 +1265,217 @@ class PhaseFinderWindow(
                 )
             if phase_id:
                 phase_id_by_candidate_key[self._candidate_key(candidate)] = phase_id
-        matches: dict[str, list[tuple[float, float]]] = {}
+        matches: dict[str, list[tuple[int, int, int, float, float]]] = {}
+        structure_by_phase_id = {
+            phase_id: structure
+            for phase_id, _phase_name, structure in phase_structures
+        }
+        phase_name_by_id = {
+            phase_id: phase_name
+            for phase_id, phase_name, _structure in phase_structures
+        }
+        observed_peaks = [
+            (
+                float(peak.two_theta),
+                float(peak.intensity),
+                float(getattr(peak, "fwhm", 0.0) or 0.0),
+            )
+            for peak in getattr(result, "observed_peaks", []) or []
+        ]
+        phase_order = {
+            phase_id: index
+            for index, (phase_id, _phase_name, _structure) in enumerate(phase_structures)
+        }
+        linked_results = []
         for candidate_result in getattr(result, "candidates", []) or []:
-            phase_id = phase_id_by_candidate_key.get(getattr(candidate_result, "candidate_key", ""))
+            # FinderInput.entry_id preserves the UI candidate key. The service-level
+            # candidate_key may prefix the source once more (for example
+            # "COD:COD:9008195"), so use entry_id first when linking back to a phase.
+            phase_id = phase_id_by_candidate_key.get(getattr(candidate_result, "entry_id", ""))
+            if not phase_id:
+                phase_id = phase_id_by_candidate_key.get(getattr(candidate_result, "candidate_key", ""))
             if not phase_id:
                 continue
+            linked_results.append((phase_order.get(phase_id, len(phase_order)), phase_id, candidate_result))
+
+        claimed_observed_peaks: list[tuple[float, float]] = []
+        for _phase_index, phase_id, candidate_result in sorted(linked_results, key=lambda item: item[0]):
+            available_observed_peaks = self.refinement_service.unclaimed_observed_peaks(
+                observed_peaks,
+                claimed_observed_peaks,
+            )
             references = list(getattr(candidate_result, "matched_reference_two_theta", []) or [])
             observed = list(getattr(candidate_result, "matched_observed_two_theta", []) or [])
-            pairs = [
-                (float(reference), float(observed_two_theta))
-                for reference, observed_two_theta in zip(references, observed)
-            ]
-            if pairs:
-                matches[phase_id] = pairs
-        return matches
+            peak_positions = list(getattr(candidate_result, "peak_reference_two_theta", []) or [])
+            if not peak_positions:
+                peak_positions = list(getattr(candidate_result, "peak_two_theta", []) or [])
+            h_values = list(getattr(candidate_result, "peak_h", []) or [])
+            k_values = list(getattr(candidate_result, "peak_k", []) or [])
+            l_values = list(getattr(candidate_result, "peak_l", []) or [])
+            intensities = list(getattr(candidate_result, "peak_intensity", []) or [])
+            if not peak_positions or not h_values or not k_values or not l_values:
+                continue
+            direct_matches = []
+            overlapping_matches = []
+            for reference_two_theta, observed_two_theta in zip(references, observed):
+                try:
+                    reference_value = float(reference_two_theta)
+                    observed_value = float(observed_two_theta)
+                except Exception:
+                    continue
+                nearest_index = min(
+                    range(len(peak_positions)),
+                    key=lambda index: abs(float(peak_positions[index]) - reference_value),
+                )
+                if abs(float(peak_positions[nearest_index]) - reference_value) > 0.25:
+                    continue
+                try:
+                    h = int(round(float(h_values[nearest_index])))
+                    k = int(round(float(k_values[nearest_index])))
+                    l = int(round(float(l_values[nearest_index])))
+                    intensity = float(intensities[nearest_index]) if nearest_index < len(intensities) else 1.0
+                except Exception:
+                    continue
+                if (h, k, l) == (0, 0, 0):
+                    continue
+                corrected_observed = observed_value - global_zero_shift
+                indexed_match = (
+                    h,
+                    k,
+                    l,
+                    corrected_observed,
+                    max(intensity, 1.0),
+                )
+                nearest_observed = (
+                    min(
+                        observed_peaks,
+                        key=lambda peak: abs(float(peak[0]) - observed_value),
+                    )
+                    if observed_peaks
+                    else None
+                )
+                if nearest_observed in available_observed_peaks:
+                    direct_matches.append(indexed_match)
+                else:
+                    overlapping_matches.append(indexed_match)
+            reference_peaks = []
+            for index, reference_two_theta in enumerate(peak_positions):
+                if index >= len(h_values) or index >= len(k_values) or index >= len(l_values):
+                    continue
+                try:
+                    reference_peaks.append(
+                        (
+                            int(round(float(h_values[index]))),
+                            int(round(float(k_values[index]))),
+                            int(round(float(l_values[index]))),
+                            float(reference_two_theta),
+                            float(intensities[index]) if index < len(intensities) else 1.0,
+                        )
+                    )
+                except Exception:
+                    continue
+            structure = structure_by_phase_id.get(phase_id)
+            if structure is not None:
+                direct_matches = self.refinement_service.complete_direct_indexed_matches(
+                    structure=structure,
+                    indexed_matches=direct_matches,
+                    reference_peaks=reference_peaks,
+                    observed_peaks=available_observed_peaks,
+                    global_zero_shift=global_zero_shift,
+                )
+                provisional = self.refinement_service.fit_indexed_cell(
+                    phase_id=phase_id,
+                    phase_name=phase_name_by_id.get(phase_id, ""),
+                    structure=structure,
+                    wavelength=wavelength,
+                    indexed_matches=direct_matches,
+                )
+                if provisional.success:
+                    accepted_overlaps = self.refinement_service.cell_consistent_indexed_matches(
+                        cell=provisional.refined_cell,
+                        indexed_matches=overlapping_matches,
+                        observed_peaks=observed_peaks,
+                        wavelength=wavelength,
+                    )
+                    phase_matches = direct_matches + accepted_overlaps
+                else:
+                    # A phase can be almost completely hidden by earlier phases.
+                    # In that case overlaps may supply the missing independent hkl,
+                    # but only near positions predicted by the reference cell.
+                    overlap_seed = self.refinement_service.cell_consistent_indexed_matches(
+                        cell=structure.cell,
+                        indexed_matches=overlapping_matches,
+                        observed_peaks=observed_peaks,
+                        wavelength=wavelength,
+                        tolerance_factor=2.2,
+                        minimum_tolerance=0.18,
+                        maximum_tolerance=0.60,
+                    )
+                    trial_matches = direct_matches + overlap_seed
+                    trial = self.refinement_service.fit_indexed_cell(
+                        phase_id=phase_id,
+                        phase_name=phase_name_by_id.get(phase_id, ""),
+                        structure=structure,
+                        wavelength=wavelength,
+                        indexed_matches=trial_matches,
+                    )
+                    if trial.success:
+                        retained_direct = self.refinement_service.cell_consistent_indexed_matches(
+                            cell=trial.refined_cell,
+                            indexed_matches=direct_matches,
+                            observed_peaks=observed_peaks,
+                            wavelength=wavelength,
+                        )
+                        if len(retained_direct) == len(direct_matches):
+                            accepted_overlaps = self.refinement_service.cell_consistent_indexed_matches(
+                                cell=trial.refined_cell,
+                                indexed_matches=overlapping_matches,
+                                observed_peaks=observed_peaks,
+                                wavelength=wavelength,
+                            )
+                            phase_matches = direct_matches + accepted_overlaps
+                        else:
+                            phase_matches = direct_matches
+                    else:
+                        phase_matches = direct_matches
+                final_fit = self.refinement_service.fit_indexed_cell(
+                    phase_id=phase_id,
+                    phase_name=phase_name_by_id.get(phase_id, ""),
+                    structure=structure,
+                    wavelength=wavelength,
+                    indexed_matches=phase_matches,
+                )
+                validation_cell = final_fit.refined_cell if final_fit.success else structure.cell
+                validated_matches = self.refinement_service.cell_consistent_indexed_matches(
+                    cell=validation_cell,
+                    indexed_matches=phase_matches,
+                    observed_peaks=observed_peaks,
+                    wavelength=wavelength,
+                )
+                if validated_matches:
+                    phase_matches = validated_matches
+                matches[phase_id] = phase_matches
+
+                # Only direct, still-unassigned observations become claimed.
+                # Overlapping reflections remain available to every later phase.
+                validated_direct = self.refinement_service.cell_consistent_indexed_matches(
+                    cell=validation_cell,
+                    indexed_matches=direct_matches,
+                    observed_peaks=observed_peaks,
+                    wavelength=wavelength,
+                )
+                for _h, _k, _l, corrected_two_theta, _weight in validated_direct:
+                    raw_two_theta = float(corrected_two_theta) + global_zero_shift
+                    if not observed_peaks:
+                        continue
+                    nearest_peak = min(
+                        observed_peaks,
+                        key=lambda peak: abs(float(peak[0]) - raw_two_theta),
+                    )
+                    claimed_observed_peaks.append(
+                        (float(nearest_peak[0]), max(float(nearest_peak[2]), 0.05))
+                    )
+        return {phase_id: phase_matches for phase_id, phase_matches in matches.items() if phase_matches}
 
     def _recalculate_match_profile(self, auto_zoom: bool = False) -> None:
         self._activate_current_profile_state()
@@ -1353,6 +1496,8 @@ class PhaseFinderWindow(
             return
 
         self._clear_calculated_overlay()
+        if hasattr(self, "_redraw_estimated_background_components_for_current_view"):
+            self._redraw_estimated_background_components_for_current_view()
         try:
             for pattern in patterns:
                 candidates = self._profile_candidates_for_pattern(pattern)
@@ -1420,6 +1565,7 @@ class PhaseFinderWindow(
                     style=self.plot_style,
                     show_hkl_labels=show_hkl_labels,
                     show_peak_labels=show_peak_labels,
+                    show_background_line=not self._pattern_has_saved_background_components(pattern),
                 )
         except Exception as exc:
             QMessageBox.warning(self, "Finder calculation failed", str(exc))
@@ -1431,6 +1577,16 @@ class PhaseFinderWindow(
             self._apply_plot_layer_visibility_settings(self.plot_view_settings)
         if auto_zoom:
             self._reset_match_plot_view()
+
+    def _pattern_has_saved_background_components(self, pattern) -> bool:
+        if pattern is None:
+            return False
+        if getattr(pattern, "processed_background_removed", False):
+            return False
+        return bool(
+            getattr(pattern, "estimated_background_points", None)
+            or getattr(pattern, "estimated_background_with_halo_points", None)
+        )
 
     def _should_autozoom_match_profile(self) -> bool:
         return not self.show_all_selected_patterns and len(self._patterns_to_display()) == 1
@@ -1459,13 +1615,20 @@ class PhaseFinderWindow(
     def _observed_peak_positions(self, x, corrected_y) -> np.ndarray:
         return observed_peak_positions(x, corrected_y)
 
-    def _observed_peak_records(self, x, corrected_y, limit: int = 24) -> list[tuple[float, float]]:
+    def _observed_peak_records(self, x, corrected_y, limit: int = 24) -> list[ObservedLineRecord]:
         return observed_peak_records(x, corrected_y, limit=limit)
 
     def _profile_fit_quality(self, observed_y: np.ndarray, background: np.ndarray, calculated_total: np.ndarray) -> float:
         observed_corrected = np.clip(np.asarray(observed_y, dtype=float) - np.asarray(background, dtype=float), 0.0, None)
         calculated_corrected = np.clip(np.asarray(calculated_total, dtype=float) - np.asarray(background, dtype=float), 0.0, None)
+        return self._corrected_profile_fit_quality(observed_corrected, calculated_corrected)
+
+    def _corrected_profile_fit_quality(self, observed_corrected: np.ndarray, calculated_corrected: np.ndarray) -> float:
+        observed_corrected = np.clip(np.asarray(observed_corrected, dtype=float), 0.0, None)
+        calculated_corrected = np.clip(np.asarray(calculated_corrected, dtype=float), 0.0, None)
         if len(observed_corrected) == 0 or float(np.nanmax(observed_corrected)) <= 0:
+            return 0.0
+        if len(calculated_corrected) != len(observed_corrected):
             return 0.0
         weights = self._fit_weights(observed_corrected)
         residual = observed_corrected - calculated_corrected
@@ -1502,48 +1665,6 @@ class PhaseFinderWindow(
             ),
             style=self.plot_style,
         )
-
-    def _add_assignment_markers(
-        self,
-        x: np.ndarray,
-        observed_y: np.ndarray,
-        observed_peaks,
-        phase_assignment_styles: dict[str, tuple[str, str]],
-    ) -> tuple[int, int]:
-        return add_peak_coverage_markers(
-            plot=self.match_plot,
-            plot_layers=self.plot_layers,
-            observed_peak_positions=self._observed_peak_positions,
-            x=x,
-            observed_y=observed_y,
-            corrected_y=np.zeros_like(observed_y),
-            phase_peak_sets=[],
-            observed_peak_assignments=observed_peaks,
-            phase_assignment_styles=phase_assignment_styles,
-            show_peak_labels=self._active_peak_labels_requested() if hasattr(self, "_active_peak_labels_requested") else False,
-            style=self.plot_style,
-        )
-
-    def _primary_assignment(self, assignments):
-        return primary_assignment(assignments)
-
-    def _assignment_marker_label(self, assignments) -> str:
-        return assignment_marker_label(assignments)
-
-    def _phase_label_prefix(self, phase_name: str) -> str:
-        words = [word for word in re.split(r"[^A-Za-z0-9]+", phase_name) if word]
-        if not words:
-            return "P"
-        if len(words) == 1:
-            return words[0][:1].upper()
-        return "".join(word[:1].upper() for word in words[:2])
-
-    def _phase_lane_label(self, candidate: dict[str, str]) -> str:
-        phase = self._candidate_phase_name(candidate) or "phase"
-        entry = candidate.get("Entry", "")
-        source = self._candidate_source(candidate)
-        code = f"{source}#{entry}" if source and entry else entry
-        return f"{phase}\n{code}" if code else phase
 
     def _add_peak_residual_links(
         self,
@@ -1586,9 +1707,6 @@ class PhaseFinderWindow(
     def _estimate_phase_alignment(self, peaks, observed_positions: np.ndarray, structure) -> PhaseAlignmentEstimate:
         return estimate_phase_alignment(peaks, observed_positions, structure)
 
-    def _peak_probability_from_alignment(self, alignment: PhaseAlignmentEstimate) -> float:
-        return peak_probability_from_alignment(alignment)
-
     def _peak_presence_probability(self, peaks, observed_x: np.ndarray, corrected_y: np.ndarray, structure) -> float:
         return peak_presence_probability(peaks, observed_x, corrected_y, structure)
 
@@ -1596,6 +1714,7 @@ class PhaseFinderWindow(
         self._observed_probability_cache = None
         self._candidate_probability_cache.clear()
         self._candidate_gain_profile_cache.clear()
+        self._candidate_hidden_match_by_key.clear()
 
     def _trim_candidate_json_peak_cache(self, limit: int = 5000) -> None:
         while len(self._candidate_json_peak_cache) > limit:
@@ -1625,6 +1744,7 @@ class PhaseFinderWindow(
         processed = self._active_scoring_observed_data()
         data_len = int(len(processed)) if processed is not None else -1
         data_signature = self._processed_probability_signature(processed)
+        background_signature = self._finder_background_signature(self._pattern_finder_background_data(pattern))
         return (
             pattern_id,
             source_path,
@@ -1633,6 +1753,7 @@ class PhaseFinderWindow(
             self._active_background_removed(),
             data_len,
             data_signature,
+            background_signature,
         )
 
     def _processed_probability_signature(self, processed) -> tuple[float, float, float]:
@@ -1674,6 +1795,7 @@ class PhaseFinderWindow(
         self,
         rows: list[list[str]],
         force: bool = False,
+        progress=None,
     ) -> list[list[str]]:
         if not force and not self._rank_by_peak_probability_enabled():
             return rows
@@ -1683,67 +1805,396 @@ class PhaseFinderWindow(
         _observed_x, _corrected, observed_records = probability_data
         if not observed_records:
             return rows
+        gain_records = observed_records
+        gain_context = self._candidate_gain_context() if self.match_candidates else None
+        if gain_context is not None:
+            residual_share = float(gain_context.get("residual_share", 0.0) or 0.0)
+            before_fit = float(gain_context.get("before_fit", 0.0) or 0.0)
+            remaining_fit = max(0.0, 100.0 - before_fit)
+            if before_fit >= 98.0 or (len(self.match_candidates) >= 5 and (residual_share < 0.025 or remaining_fit < 1.5)):
+                self._last_gain_debug = (
+                    f"Gain: fit {before_fit:.1f}%, remaining {remaining_fit:.1f}%; "
+                    "adding more phases is likely overfitting"
+                )
+                gain_records = []
+            else:
+                try:
+                    gain_records = self._gain_observed_records(gain_context, limit=80)
+                except Exception:
+                    gain_records = []
+        if gain_context is not None and gain_records:
+            if len(self.match_candidates) >= 5:
+                low_angle_gain_count = 0
+                for record in gain_records:
+                    position = self._record_position_value(record)
+                    if 5.0 <= position <= 60.0:
+                        low_angle_gain_count += 1
+                    if low_angle_gain_count >= 3:
+                        break
+                if low_angle_gain_count < 3:
+                    self._last_gain_debug = (
+                        f"Gain: residual exhausted ({low_angle_gain_count} uncovered peaks below 60 deg); "
+                        "adding more phases is likely overfitting"
+                    )
+                    gain_records = []
 
-        rows_to_rank = rows[:60]
-        tail_rows = rows[60:]
+        if force and not self.match_candidates:
+            rank_limit = min(len(rows), 1000)
+        elif force:
+            # Gain rows already passed the indexed peak preselection. Do not
+            # discard a valid residual phase merely because it was appended
+            # below an arbitrary ranking cutoff.
+            rank_limit = len(rows)
+        else:
+            rank_limit = 120
+        rows_to_rank = rows[:rank_limit]
+        tail_rows = rows[rank_limit:]
         scored_rows = []
+        selected_keys = {self._candidate_key(candidate) for candidate in (self.match_candidates or [])}
+        has_selected_phases = bool(self.match_candidates)
+        precomputed_gains: dict[int, float] = {}
+        active_gain_stage = ""
+        if has_selected_phases and gain_context is not None:
+            active_gain_stage = self._gain_stage_for_context(gain_context)
+            gain_context["gain_stage"] = active_gain_stage
+            for row_index, row in enumerate(rows_to_rank):
+                if progress is not None and row_index % 25 == 0:
+                    try:
+                        progress(row_index, len(rows_to_rank))
+                    except Exception:
+                        pass
+                candidate = {
+                    "Source": row[0] if len(row) > 0 else "",
+                    "Entry": row[1] if len(row) > 1 else "",
+                    "Formula": row[2] if len(row) > 2 else "",
+                    "Phase": row[3] if len(row) > 3 else "",
+                }
+                if self._candidate_key(candidate) in selected_keys:
+                    continue
+                precomputed_gains[row_index] = self._candidate_row_integral_gain(row, gain_context)
+            self._active_gain_stage = active_gain_stage
         for index, row in enumerate(rows_to_rank):
+            if progress is not None and not precomputed_gains and (index == 0 or index % 25 == 0):
+                try:
+                    progress(index, len(rows_to_rank))
+                except Exception:
+                    pass
+            elif progress is None and index > 0 and index % 50 == 0:
+                QApplication.processEvents()
             scored_row = list(row)
+            row_candidate = {
+                "Source": scored_row[0] if len(scored_row) > 0 else "",
+                "Entry": scored_row[1] if len(scored_row) > 1 else "",
+                "Formula": scored_row[2] if len(scored_row) > 2 else "",
+                "Phase": scored_row[3] if len(scored_row) > 3 else "",
+            }
+            row_key = self._candidate_key(row_candidate)
+            existing_match_text = scored_row[5] if len(scored_row) > 5 else ""
+            hidden_matches = getattr(self, "_candidate_hidden_match_by_key", None)
+            if hidden_matches is None:
+                hidden_matches = {}
+                self._candidate_hidden_match_by_key = hidden_matches
+            if existing_match_text:
+                hidden_matches[row_key] = existing_match_text
+            elif has_selected_phases:
+                existing_match_text = hidden_matches.get(row_key, "")
             scored_row[5] = ""
             scored_row[6] = ""
-            probability = self._candidate_row_peak_probability_from_records(
-                scored_row,
-                observed_records,
-                allow_cif_fallback=False,
-            )
-            if probability > 0:
+            if has_selected_phases:
+                probability = self._percent_text_value(existing_match_text)
+            else:
+                probability = self._candidate_row_peak_probability_from_records(
+                    scored_row,
+                    observed_records,
+                    allow_cif_fallback=False,
+                )
+            if probability > 0 and not has_selected_phases:
                 scored_row[5] = f"{probability:.0f}%"
-            scored_rows.append([0.0, probability, index, scored_row])
-
-        gain_indices = {
-            item[2]
-            for item in sorted(
-                (item for item in scored_rows if item[1] > 0.0),
-                key=lambda item: (-item[1], item[2]),
-            )[:24]
-        }
-        gain_context = self._candidate_gain_context() if gain_indices else None
-        gain_nonzero = 0
-        gain_checked = 0
-        for item in scored_rows:
-            if gain_context is None or item[2] not in gain_indices:
-                continue
-            scored_row = item[3]
-            gain_checked += 1
-            gain = self._candidate_row_integral_gain(scored_row, gain_context)
-            if gain >= 0.05:
+            gain = 0.0
+            if has_selected_phases:
+                gain = precomputed_gains.get(index, 0.0)
+            if gain > 0:
                 scored_row[6] = f"{gain:.1f}%" if gain < 10.0 else f"{gain:.0f}%"
-                gain_nonzero += 1
-            elif gain > 0:
-                scored_row[6] = "<0.1%"
-                gain_nonzero += 1
-            item[0] = gain
-        self._set_gain_debug_status(gain_context, gain_checked, gain_nonzero)
+            scored_rows.append([gain, probability, index, scored_row])
+        if progress is not None:
+            try:
+                progress(len(rows_to_rank), len(rows_to_rank))
+            except Exception:
+                pass
+
+        if getattr(self, "scoring_status_label", None) is not None:
+            match_nonzero = sum(1 for _gain, probability, _index, _row in scored_rows if probability > 0.0)
+            gain_nonzero = sum(1 for gain, _probability, _index, _row in scored_rows if gain > 0.0)
+            gain_text = ""
+            if self.match_candidates:
+                residual_share = float(gain_context.get("residual_share", 0.0) or 0.0) if gain_context is not None else 0.0
+                before_fit = float(gain_context.get("before_fit", 0.0) or 0.0) if gain_context is not None else 0.0
+                remaining_fit = max(0.0, 100.0 - before_fit)
+                if gain_context is not None:
+                    stage_label = {
+                        "direct": "Direct",
+                        "overlap": "Overlap",
+                        "hidden": "Hidden",
+                    }.get(active_gain_stage, "")
+                    if (before_fit >= 98.0 or residual_share < 0.025 or remaining_fit < 1.5) and gain_nonzero == 0:
+                        gain_text = f"Gain: fit {before_fit:.1f}%, remaining {remaining_fit:.1f}%"
+                    else:
+                        gain_text = (
+                            f"Gain {stage_label}: fit {before_fit:.1f}%, "
+                            f"remaining {remaining_fit:.1f}%, candidates {gain_nonzero}/{len(scored_rows)}"
+                        )
+                if not gain_text and gain_nonzero == 0:
+                    gain_text = getattr(self, "_last_gain_debug", "") or "Gain: no new phase signal"
+            suffix = gain_text or f"FP: match {match_nonzero}/{len(scored_rows)}, gain {gain_nonzero}/{len(scored_rows)}"
+            self.scoring_status_label.setText(f"{self._scoring_source_status_text()} | {suffix}")
         if not any(gain > 0 or probability > 0 for gain, probability, _index, _row in scored_rows):
             return [row for _gain, _probability, _index, row in scored_rows] + tail_rows
         scored_rows.sort(key=lambda item: (-item[0], -item[1], item[2]))
         return [row for _gain, _probability, _index, row in scored_rows] + tail_rows
 
+    def _percent_text_value(self, text: object) -> float:
+        try:
+            value = str(text).strip().replace("%", "").replace(",", ".")
+            return float(value) if value else 0.0
+        except Exception:
+            return 0.0
+
+    def _gain_observed_records(self, context, limit: int = 80) -> list[ObservedLineRecord]:
+        x = np.asarray(context["x"], dtype=float)
+        residual_target = np.asarray(context["residual_target"], dtype=float)
+        residual_records = self._observed_peak_records(x, residual_target, limit=limit * 2)
+        selected_total = np.asarray(context.get("selected_total", []), dtype=float)
+        target = np.asarray(context.get("target", []), dtype=float)
+        records = list(residual_records)
+        if not records:
+            return []
+        if len(selected_total) != len(x) or len(target) != len(x):
+            return records[:limit]
+        selected_peak_positions = np.asarray(context.get("selected_peak_positions", []), dtype=float)
+        selected_peak_positions = selected_peak_positions[np.isfinite(selected_peak_positions)]
+        selected_peak_positions.sort()
+        stick_tolerance = max(0.32, min(0.72, float(context.get("fwhm", 0.18) or 0.18) * 3.0))
+        explained_peak_indices, _properties = find_peaks(
+            np.clip(selected_total, 0.0, None),
+            prominence=max(float(np.nanpercentile(np.clip(selected_total, 0.0, None), 98)) * 0.015, 1.0),
+            distance=max(3, len(selected_total) // 1600),
+        )
+        if len(explained_peak_indices) == 0 and not len(selected_peak_positions):
+            return records[:limit]
+        explained_positions = x[explained_peak_indices]
+        explained_strength = selected_total[explained_peak_indices]
+        strength_floor = max(float(np.nanpercentile(explained_strength, 55)), 1.0) if len(explained_strength) else 1.0
+        keep_records: list[tuple[float, float]] = []
+        seen_positions: set[int] = set()
+        tolerance = max(0.34, min(0.85, float(context.get("fwhm", 0.18) or 0.18) * 2.7))
+        residual_positive = residual_target[np.isfinite(residual_target) & (residual_target > 0.0)]
+        residual_height_floor = (
+            max(
+                float(np.nanpercentile(residual_positive, 72)) * 0.28,
+                float(np.nanpercentile(residual_positive, 93)) * 0.045,
+                1.0,
+            )
+            if len(residual_positive)
+            else 1.0
+        )
+        for record in records:
+            position = self._record_position_value(record)
+            line_fwhm = max(float(getattr(record, "fwhm", 0.0) or 0.0), float(context.get("fwhm", 0.18) or 0.18))
+            line_stick_tolerance = max(0.24, min(0.95, line_fwhm * 1.45))
+            line_profile_tolerance = max(0.28, min(1.05, line_fwhm * 1.70))
+            if len(selected_peak_positions):
+                stick_index = int(np.searchsorted(selected_peak_positions, float(position)))
+                stick_deltas = []
+                if stick_index < len(selected_peak_positions):
+                    stick_deltas.append(abs(float(selected_peak_positions[stick_index]) - float(position)))
+                if stick_index > 0:
+                    stick_deltas.append(abs(float(selected_peak_positions[stick_index - 1]) - float(position)))
+                if stick_deltas and min(stick_deltas) <= max(stick_tolerance, line_stick_tolerance):
+                    continue
+            covered_by_profile = False
+            if len(explained_positions):
+                index = int(np.argmin(np.abs(explained_positions - float(position))))
+                delta = abs(float(explained_positions[index]) - float(position))
+                covered_by_profile = delta <= max(tolerance, line_profile_tolerance) and float(explained_strength[index]) >= strength_floor
+            if covered_by_profile:
+                target_index = int(np.argmin(np.abs(x - float(position))))
+                target_height = max(float(target[target_index]), 1.0)
+                residual_height = max(float(residual_target[target_index]), 0.0)
+                if residual_height <= max(target_height * 0.45, residual_height_floor):
+                    continue
+            else:
+                target_index = int(np.argmin(np.abs(x - float(position))))
+                residual_height = max(float(residual_target[target_index]), 0.0)
+                if residual_height <= residual_height_floor:
+                    continue
+            position_key = int(round(float(position) * 1000.0))
+            if position_key in seen_positions:
+                continue
+            seen_positions.add(position_key)
+            keep_records.append(record)
+            if len(keep_records) >= limit:
+                break
+        return keep_records
+
+    def _gain_stage_records(self, context, stage: str, limit: int = 80) -> list[ObservedLineRecord]:
+        if stage == "direct":
+            return self._gain_observed_records(context, limit=limit)
+
+        x = np.asarray(context.get("x", []), dtype=float)
+        target = np.asarray(context.get("target", []), dtype=float)
+        residual_target = np.asarray(context.get("residual_target", []), dtype=float)
+        if len(x) == 0 or len(target) != len(x) or len(residual_target) != len(x):
+            return []
+        if stage == "hidden":
+            return self._observed_peak_records(x, target, limit=limit)
+
+        selected_positions = np.asarray(context.get("selected_peak_positions", []), dtype=float)
+        selected_positions = selected_positions[np.isfinite(selected_positions)]
+        selected_positions.sort()
+        if not len(selected_positions):
+            return []
+        records = self._observed_peak_records(x, target, limit=limit * 3)
+        overlap_records: list[ObservedLineRecord] = []
+        base_fwhm = max(float(context.get("fwhm", 0.18) or 0.18), 0.05)
+        selected_total = np.asarray(context.get("selected_total", []), dtype=float)
+        if len(selected_total) != len(x):
+            return []
+        target_positive = target[np.isfinite(target) & (target > 0.0)]
+        residual_positive = residual_target[np.isfinite(residual_target) & (residual_target > 0.0)]
+        if not len(target_positive) or not len(residual_positive):
+            return []
+        deficit_floor = max(
+            float(np.nanpercentile(residual_positive, 65)) * 0.20,
+            float(np.nanpercentile(target_positive, 80)) * 0.025,
+            1.0,
+        )
+        for record in records:
+            position = self._record_position_value(record)
+            index = int(np.searchsorted(selected_positions, position))
+            neighbours = []
+            if index < len(selected_positions):
+                neighbours.append(abs(float(selected_positions[index]) - position))
+            if index > 0:
+                neighbours.append(abs(float(selected_positions[index - 1]) - position))
+            local_tolerance = max(
+                0.28,
+                min(
+                    0.85,
+                    max(float(getattr(record, "fwhm", 0.0) or 0.0), base_fwhm) * 1.7,
+                ),
+            )
+            if not neighbours or min(neighbours) > local_tolerance:
+                continue
+            half_width = max(local_tolerance, float(getattr(record, "fwhm", 0.0) or 0.0) * 1.25)
+            left = int(np.searchsorted(x, position - half_width, side="left"))
+            right = int(np.searchsorted(x, position + half_width, side="right"))
+            if right <= left:
+                continue
+            observed_height = float(np.nanmax(target[left:right]))
+            calculated_height = float(np.nanmax(selected_total[left:right]))
+            residual_height = float(np.nanmax(residual_target[left:right]))
+            deficit_height = max(observed_height - calculated_height, residual_height, 0.0)
+            deficit_fraction = deficit_height / max(observed_height, 1.0e-12)
+            if deficit_height < deficit_floor or deficit_fraction < 0.12:
+                continue
+            overlap_records.append(
+                ObservedLineRecord(
+                    two_theta=float(position),
+                    area=max(float(getattr(record, "area", 0.0) or 0.0) * deficit_fraction, deficit_height),
+                    fwhm=float(getattr(record, "fwhm", base_fwhm) or base_fwhm),
+                    height=deficit_height,
+                )
+            )
+            if len(overlap_records) >= limit:
+                break
+        overlap_records.sort(key=lambda item: float(item.area), reverse=True)
+        return overlap_records
+
+    def _gain_stage_for_context(self, context) -> str:
+        if len(self._gain_stage_records(context, "direct", limit=24)) >= 2:
+            return "direct"
+        if len(self._gain_stage_records(context, "overlap", limit=24)) >= 2:
+            return "overlap"
+        return "hidden"
+
+    def _gain_sql_candidate_rows(self, *, stage: str = "direct", context=None) -> list[list[str]]:
+        if context is None:
+            context = self._candidate_gain_context()
+        if context is None:
+            return []
+        context["gain_stage"] = stage
+        before_fit = float(context.get("before_fit", 0.0) or 0.0)
+        remaining_fit = max(0.0, 100.0 - before_fit)
+        residual_share = float(context.get("residual_share", 0.0) or 0.0)
+        if before_fit >= 98.0 or (len(self.match_candidates) >= 5 and (remaining_fit < 1.5 or residual_share < 0.025)):
+            self._last_gain_debug = (
+                f"Gain: fit {before_fit:.1f}%, remaining {remaining_fit:.1f}%; "
+                "adding more phases is likely overfitting"
+            )
+            return []
+        stage_records = self._gain_stage_records(context, stage, limit=80)
+        positions = []
+        for record in sorted(
+            stage_records,
+            key=lambda item: max(float(getattr(item, "area", 0.0) or 0.0), 0.0),
+            reverse=True,
+        ):
+            position = self._record_position_value(record)
+            if 5.0 <= position <= 60.0:
+                positions.append(position)
+            if len(positions) >= (10 if stage == "hidden" else 12):
+                break
+        if len(positions) < 2:
+            return []
+        options = self._candidate_search_options() if hasattr(self, "_candidate_search_options") else None
+        sources = options.local_sources if options is not None else self._local_cache_sources()
+        excluded = options.excluded_elements if options is not None else self._excluded_elements()
+        try:
+            entries = self.local_phase_cache.search_by_peaks(
+                positions,
+                excluded_elements=excluded,
+                sources=sources,
+                tolerance_two_theta=max(
+                    0.30,
+                    min(0.70, float(context.get("fwhm", 0.18) or 0.18) * 2.4),
+                ),
+                limit=700,
+            )
+        except Exception:
+            return []
+        rows = self.candidate_search_service.dedupe_candidate_rows(
+            self.candidate_search_service.cache_rows(entries)
+        )
+        if options is not None:
+            rows = self.candidate_search_service.filter_candidate_rows_by_excluded_elements(rows, options)
+        return rows
+
     def _candidate_gain_context(self):
         selected_candidates = list(self.match_candidates or [])
+        pattern = self._active_pattern()
         observed = self._active_scoring_observed_data()
         if observed is None or not len(observed):
             self._last_gain_debug = "Gain: no observed data"
             return None
         try:
-            x = np.asarray(observed[:, 0], dtype=float)
-            y = np.asarray(observed[:, 1], dtype=float)
-            if (
+            finder_background = self._pattern_finder_background_data(pattern)
+            finder_observed = self._pattern_finder_observed_data(pattern) if finder_background is not None else None
+            if finder_background is not None and finder_observed is not None and len(finder_observed):
+                x = np.asarray(finder_observed[:, 0], dtype=float)
+                y = np.asarray(finder_observed[:, 1], dtype=float)
+                background_x = np.asarray(finder_background[:, 0], dtype=float)
+                background_y = np.asarray(finder_background[:, 1], dtype=float)
+                background = np.interp(x, background_x, background_y, left=float(background_y[0]), right=float(background_y[-1]))
+                corrected = np.clip(y - background, 0.0, None)
+            else:
+                x = np.asarray(observed[:, 0], dtype=float)
+                y = np.asarray(observed[:, 1], dtype=float)
+            if finder_background is None and (
                 getattr(self, "_scoring_source", "Auto") == "Auto"
-                or self._pattern_scoring_background_removed(self._active_pattern())
+                or self._pattern_scoring_background_removed(pattern)
             ):
                 corrected = np.clip(y, 0.0, None)
-            else:
+            elif finder_background is None:
                 background = self._estimate_background(x, y)
                 corrected = np.clip(y - background, 0.0, None)
             if len(corrected) == 0 or float(np.nanmax(corrected)) <= 0:
@@ -1758,10 +2209,18 @@ class PhaseFinderWindow(
             eta = float(getattr(self, "_last_match_profile_eta", 0.0) or 0.0)
             weights = self._fit_weights(target)
             selected_profiles = []
+            selected_peak_positions = []
             for candidate in selected_candidates:
-                profile = self._candidate_profile_for_gain(candidate, x, fwhm, eta)
+                peaks = self._candidate_peaks_for_gain(candidate)
+                peaks = self._adjusted_gain_peaks(candidate, peaks)
+                profile = self._profile_from_gain_peaks(peaks, x, fwhm, eta) if peaks else None
                 if profile is not None:
                     selected_profiles.append(profile)
+                    selected_peak_positions.extend(
+                        float(getattr(peak, "two_theta", 0.0))
+                        for peak in peaks
+                        if float(getattr(peak, "intensity", 0.0) or 0.0) >= 1.0
+                    )
             if selected_candidates and not selected_profiles:
                 self._last_gain_debug = "Gain: no selected phase profiles"
                 return None
@@ -1772,6 +2231,14 @@ class PhaseFinderWindow(
             residual_weights = self._fit_weights(residual_target) if float(np.nanmax(residual_target)) > 0 else weights
             before_error = self._weighted_gain_error(residual_target, np.zeros_like(residual_target), residual_weights)
             residual_area = self._weighted_integral_area(residual_target, residual_weights)
+            target_area = self._weighted_integral_area(target, weights)
+            residual_share = residual_area / max(target_area, 1.0e-12)
+            before_fit = self._corrected_profile_fit_quality(target, selected_total)
+            residual_signal = self._gain_residual_signal_factor(target, residual_target, x)
+            if residual_signal <= 0.0:
+                residual_max = float(np.nanmax(residual_target)) if len(residual_target) else 0.0
+                self._last_gain_debug = f"Gain: residual below background, max {residual_max:.4g}"
+                return None
             if residual_area <= 0:
                 residual_max = float(np.nanmax(residual_target)) if len(residual_target) else 0.0
                 self._last_gain_debug = f"Gain: residual empty, max {residual_max:.4g}"
@@ -1781,14 +2248,20 @@ class PhaseFinderWindow(
                 "x": x,
                 "target": target,
                 "weights": residual_weights,
+                "target_weights": weights,
                 "fwhm": fwhm,
                 "eta": eta,
                 "selected_profiles": selected_profiles,
                 "selected_total": selected_total,
+                "selected_peak_positions": np.asarray(selected_peak_positions, dtype=float),
                 "difference_curve": difference_curve,
                 "residual_target": residual_target,
                 "before_error": before_error,
+                "before_fit": before_fit,
                 "residual_area": residual_area,
+                "target_area": target_area,
+                "residual_share": residual_share,
+                "residual_signal": residual_signal,
             }
         except Exception:
             import traceback
@@ -1810,66 +2283,418 @@ class PhaseFinderWindow(
             peaks = self._candidate_cif_peaks_for_gain(candidate)
         if not peaks:
             return 0.0
-        base_fwhm = float(context.get("fwhm", 0.18) or 0.18)
-        base_eta = float(context.get("eta", 0.0) or 0.0)
-        residual_target = np.asarray(context["residual_target"], dtype=float)
-        weights = np.asarray(context["weights"], dtype=float)
-        best_gain = 0.0
-        for fwhm in np.unique(np.clip(np.asarray([base_fwhm * 0.65, base_fwhm, base_fwhm * 1.45], dtype=float), 0.04, 0.55)):
-            for eta in np.unique(np.clip(np.asarray([base_eta, 0.0, 0.35, 0.65], dtype=float), 0.0, 0.85)):
-                trial_context = dict(context)
-                trial_context["fwhm"] = float(fwhm)
-                trial_context["eta"] = float(eta)
-                profile = self._candidate_gain_profile(candidate, peaks, trial_context)
-                if profile is None or float(np.nanmax(profile)) <= 0:
-                    continue
-                gain = self._candidate_gain_value_for_profile(residual_target, np.asarray(profile, dtype=float), weights, context)
-                best_gain = max(best_gain, gain)
-        return float(np.clip(best_gain, 0.0, 100.0))
+        peaks = self._aligned_candidate_gain_peaks(candidate, peaks, context)
+        stage = str(context.get("gain_stage", "direct") or "direct")
+        if stage in {"direct", "overlap"}:
+            line_gain = self._candidate_residual_line_gain(peaks, context)
+            if line_gain <= 0.0:
+                return 0.0
+            candidate_profile = self._candidate_gain_profile(candidate, peaks, context)
+            if candidate_profile is None:
+                return line_gain
+            # Residual sticks are the primary Gain evidence. The full profile
+            # only moderates that score: profile fitting may be underdetermined
+            # for strongly overlapping phases and must not erase valid direct
+            # matches altogether.
+            profile_gain = self._candidate_gain_value_for_profile(candidate_profile, context)
+            profile_support = float(np.clip(profile_gain / max(line_gain, 1.0e-6), 0.35, 1.0))
+            return line_gain * profile_support
+
+        observed_records = self._gain_stage_records(context, "hidden", limit=120)
+        presence = self._candidate_gain_presence_factor(
+            row,
+            observed_records,
+            observed_records,
+        )
+        if presence <= 0.0:
+            return 0.0
+        remaining_fit = max(0.0, 100.0 - float(context.get("before_fit", 0.0) or 0.0))
+        return float(np.clip(remaining_fit * presence * 0.45, 0.0, remaining_fit))
 
     def _candidate_cif_peaks_for_gain(self, candidate: dict[str, str]) -> list[HKLPeak]:
+        structure = None
+        pattern = self._active_pattern()
+        if pattern is not None:
+            structure = self._finder_candidate_structure_overrides(pattern, [candidate]).get(
+                self._candidate_key(candidate)
+            )
         cif_path = self._candidate_local_cif_path(candidate)
-        if cif_path is None:
-            return []
         try:
-            _phase, structure = create_phase_from_cif(cif_path)
+            if structure is None:
+                if cif_path is None:
+                    return []
+                _phase, structure = create_phase_from_cif(cif_path)
             if candidate.get("Phase"):
                 structure.name = candidate["Phase"]
             structure.wavelength = self._active_wavelength()
-            return self._candidate_cached_peaks(cif_path, structure)
+            if cif_path is not None:
+                return self._candidate_cached_peaks(cif_path, structure)
+            return self.calculated_pattern_service.calculate_sticks(
+                structure,
+                wavelength=self._active_wavelength(),
+                two_theta_min=5.0,
+                two_theta_max=120.0,
+                intensity_min=0.5,
+            )
         except Exception:
             return []
 
-    def _set_gain_debug_status(self, context, checked: int, nonzero: int) -> None:
-        if context is None:
-            text = getattr(self, "_last_gain_debug", "Gain: no context")
-        else:
-            try:
-                residual_area = float(context.get("residual_area", 0.0) or 0.0)
-                residual_max = float(np.nanmax(context.get("residual_target", [0.0])))
-                text = f"Gain: {nonzero}/{checked}, area {residual_area:.3g}, max {residual_max:.3g}"
-            except Exception:
-                text = f"Gain: {nonzero}/{checked}"
-        self._last_gain_debug = text
-        print(text, flush=True)
-        if getattr(self, "scoring_status_label", None) is not None:
-            self.scoring_status_label.setText(f"{self._scoring_source_status_text()} | {text}")
-
-    def _candidate_gain_value_for_profile(self, residual_target: np.ndarray, candidate_profile: np.ndarray, weights: np.ndarray, context) -> float:
-        candidate_scale = self._fit_residual_candidate_scale(residual_target, candidate_profile, weights)
+    def _candidate_gain_value_for_profile(self, candidate_profile: np.ndarray, context) -> float:
+        residual_target = np.asarray(context["residual_target"], dtype=float)
+        target = np.asarray(context["target"], dtype=float)
+        selected_total = np.asarray(context["selected_total"], dtype=float)
+        weights = np.asarray(context.get("target_weights", context["weights"]), dtype=float)
+        candidate_scale = self._fit_residual_candidate_scale(
+            target,
+            selected_total,
+            candidate_profile,
+            weights,
+        )
         if candidate_scale <= 1.0e-8:
             return 0.0
         calculated = candidate_profile * candidate_scale
-        fit_weights = np.clip(weights, 0.0, None)
         covered = np.minimum(residual_target, calculated)
         excess = np.clip(calculated - residual_target, 0.0, None)
-        covered_area = self._weighted_integral_area(covered, fit_weights)
-        excess_area = self._weighted_integral_area(excess, fit_weights)
+        covered_area = self._weighted_integral_area(covered, weights)
+        excess_area = self._weighted_integral_area(excess, weights)
         if covered_area <= 0.0:
             return 0.0
         residual_fraction = covered_area / max(float(context["residual_area"]), 1.0e-12)
         support_fraction = covered_area / max(covered_area + 3.0 * excess_area, 1.0e-12)
-        return float(np.clip(100.0 * residual_fraction * support_fraction, 0.0, 100.0))
+        gain = 100.0 * residual_fraction * support_fraction
+        remaining_fit = max(0.0, 100.0 - float(context.get("before_fit", 0.0) or 0.0))
+        return float(np.clip(min(gain, remaining_fit), 0.0, 100.0))
+
+    def _aligned_candidate_gain_peaks(
+        self,
+        candidate: dict[str, str],
+        peaks: list[HKLPeak],
+        context,
+    ) -> list[HKLPeak]:
+        key = self._candidate_key(candidate)
+        if key in self.match_zero_shifts or key in self.match_cell_scales:
+            return self._adjusted_gain_peaks(candidate, peaks)
+        x = np.asarray(context.get("x", []), dtype=float)
+        target = np.asarray(context.get("target", []), dtype=float)
+        if len(x) < 5 or len(target) != len(x):
+            return peaks
+        records = self._observed_peak_records(x, target, limit=140)
+        positions = self._record_positions(records)
+        if len(positions) < 3:
+            return peaks
+        alignment = self._estimate_phase_alignment(peaks, positions, None)
+        if alignment.matched_peaks < 3 or alignment.status == "weak":
+            return peaks
+        zero_shift = float(alignment.zero_shift)
+        if abs(zero_shift) < 1.0e-8:
+            return peaks
+        return [
+            HKLPeak(
+                h=int(getattr(peak, "h", 0) or 0),
+                k=int(getattr(peak, "k", 0) or 0),
+                l=int(getattr(peak, "l", 0) or 0),
+                d=float(getattr(peak, "d", 0.0) or 0.0),
+                two_theta=float(getattr(peak, "two_theta", 0.0) or 0.0) + zero_shift,
+                intensity=float(getattr(peak, "intensity", 0.0) or 0.0),
+                multiplicity=int(getattr(peak, "multiplicity", 1) or 1),
+                f2=float(getattr(peak, "f2", 0.0) or 0.0),
+                lp=float(getattr(peak, "lp", 1.0) or 1.0),
+                raw_intensity=float(getattr(peak, "raw_intensity", 0.0) or 0.0),
+            )
+            for peak in peaks
+        ]
+
+    def _candidate_gain_line_support(self, peaks: list[HKLPeak], context) -> float:
+        x = np.asarray(context.get("x", []), dtype=float)
+        target = np.asarray(context.get("target", []), dtype=float)
+        residual = np.asarray(context.get("residual_target", []), dtype=float)
+        if len(x) < 5 or len(target) != len(x) or len(residual) != len(x):
+            return 0.0
+        observed_records = self._observed_peak_records(x, target, limit=160)
+        residual_records = self._observed_peak_records(x, residual, limit=120)
+        if not observed_records:
+            return 0.0
+
+        x_min = float(np.nanmin(x))
+        x_max = float(np.nanmax(x))
+        in_range = [
+            peak
+            for peak in peaks
+            if x_min <= float(getattr(peak, "two_theta", 0.0) or 0.0) <= x_max
+            and float(getattr(peak, "intensity", 0.0) or 0.0) >= 2.0
+        ]
+        in_range.sort(key=lambda peak: float(getattr(peak, "intensity", 0.0) or 0.0), reverse=True)
+        strong = in_range[:40]
+        if len(strong) < 2:
+            return 0.0
+
+        weights = np.asarray(
+            [
+                math.sqrt(max(float(getattr(peak, "intensity", 0.0) or 0.0), 0.0))
+                / math.sqrt(index + 1.0)
+                for index, peak in enumerate(strong)
+            ],
+            dtype=float,
+        )
+        total_weight = max(float(np.sum(weights)), 1.0e-12)
+        base_fwhm = max(float(context.get("fwhm", 0.18) or 0.18), 0.05)
+
+        def matched_weight(records) -> tuple[float, int, list[tuple[HKLPeak, object]]]:
+            available = set(range(len(records)))
+            covered_weight = 0.0
+            covered_count = 0
+            pairs = []
+            for peak, weight in zip(strong, weights, strict=False):
+                position = float(getattr(peak, "two_theta", 0.0) or 0.0)
+                best_index = -1
+                best_delta = float("inf")
+                for record_index in available:
+                    record = records[record_index]
+                    delta = abs(self._record_position_value(record) - position)
+                    local_fwhm = max(float(getattr(record, "fwhm", 0.0) or 0.0), base_fwhm)
+                    tolerance = max(0.14, min(0.58, 0.10 + 0.85 * local_fwhm))
+                    if delta <= tolerance and delta < best_delta:
+                        best_index = record_index
+                        best_delta = delta
+                if best_index >= 0:
+                    available.remove(best_index)
+                    covered_weight += float(weight)
+                    covered_count += 1
+                    pairs.append((peak, records[best_index]))
+            return covered_weight, covered_count, pairs
+
+        observed_weight, observed_count, observed_pairs = matched_weight(observed_records)
+        residual_weight, residual_count, _residual_pairs = matched_weight(residual_records)
+        extra_weight = max(0.0, total_weight - observed_weight)
+
+        # Extra calculated lines are stronger evidence against a phase than peaks
+        # left in the experimental residual, while overlap remains possible.
+        observed_factor = observed_weight / max(observed_weight + 2.5 * extra_weight, 1.0e-12)
+        intensity_factor = self._candidate_gain_intensity_factor(observed_pairs)
+        residual_coverage = residual_weight / total_weight
+        residual_factor = 0.25 + 0.75 * min(1.0, residual_coverage / 0.35)
+        count_factor = min(1.0, 0.25 + 0.25 * residual_count)
+        if residual_count == 0:
+            count_factor = 0.20 if observed_count >= 4 else 0.08
+
+        density_penalty = 1.0
+        if len(in_range) > 55:
+            density_penalty = math.sqrt(55.0 / float(len(in_range)))
+        support = observed_factor * intensity_factor * residual_factor * count_factor * density_penalty
+        return float(np.clip(support, 0.0, 1.0))
+
+    def _candidate_gain_intensity_factor(self, pairs: list[tuple[HKLPeak, object]]) -> float:
+        if len(pairs) < 3:
+            return 0.0
+        ratios = []
+        weights = []
+        for peak, record in pairs:
+            theoretical = max(float(getattr(peak, "intensity", 0.0) or 0.0), 1.0e-6)
+            experimental = getattr(record, "area", None)
+            if experimental is None:
+                try:
+                    experimental = record[1]
+                except Exception:
+                    continue
+            experimental = max(float(experimental or 0.0), 1.0e-6)
+            ratios.append(math.log(experimental / theoretical))
+            weights.append(math.sqrt(theoretical))
+        if len(ratios) < 3:
+            return 0.0
+        values = np.asarray(ratios, dtype=float)
+        line_weights = np.asarray(weights, dtype=float)
+        center = float(np.median(values))
+        deviations = np.abs(values - center)
+        order = np.argsort(deviations)
+        # One or two systematic texture-enhanced directions should not reject
+        # an otherwise coherent phase.
+        keep_count = max(3, len(order) - min(2, max(0, len(order) // 5)))
+        keep = order[:keep_count]
+        mean_deviation = float(np.average(deviations[keep], weights=line_weights[keep]))
+        coherent_fraction = keep_count / max(len(values), 1)
+        return float(np.clip(math.exp(-mean_deviation / 0.95) * coherent_fraction, 0.05, 1.0))
+
+    def _candidate_residual_line_gain(self, peaks: list[HKLPeak], context) -> float:
+        if not peaks or context is None:
+            return 0.0
+        x = np.asarray(context.get("x", []), dtype=float)
+        target = np.asarray(context.get("target", []), dtype=float)
+        residual_target = np.asarray(context.get("residual_target", []), dtype=float)
+        if len(x) == 0 or len(target) != len(x) or len(residual_target) != len(x):
+            return 0.0
+        stage = str(context.get("gain_stage", "direct") or "direct")
+        residual_records = self._gain_stage_records(context, stage, limit=90)
+        target_records = self._observed_peak_records(x, target, limit=140)
+        if not residual_records or not target_records:
+            return 0.0
+        residual_records = sorted(
+            residual_records,
+            key=lambda record: max(float(getattr(record, "area", 0.0) or 0.0), 0.0),
+            reverse=True,
+        )
+        strong = [
+            peak
+            for peak in sorted(peaks, key=lambda peak: float(getattr(peak, "intensity", 0.0) or 0.0), reverse=True)
+            if float(getattr(peak, "intensity", 0.0) or 0.0) >= 3.0
+            and 5.0 <= float(getattr(peak, "two_theta", 0.0) or 0.0) <= 120.0
+        ][:42]
+        if len(strong) < 3:
+            return 0.0
+
+        base_fwhm = max(float(context.get("fwhm", 0.18) or 0.18), 0.05)
+        tolerance = max(0.26, min(0.72, base_fwhm * 2.4))
+        candidate_positions = np.asarray([float(getattr(peak, "two_theta", 0.0) or 0.0) for peak in strong], dtype=float)
+        candidate_weights = np.asarray(
+            [
+                max(float(getattr(peak, "intensity", 0.0) or 0.0) / 100.0, 0.025) ** 0.55 / math.sqrt(index + 1.0)
+                for index, peak in enumerate(strong)
+            ],
+            dtype=float,
+        )
+        candidate_ranks = np.arange(len(strong), dtype=int)
+        order = np.argsort(candidate_positions)
+        candidate_positions = candidate_positions[order]
+        candidate_weights = candidate_weights[order]
+        candidate_ranks = candidate_ranks[order]
+
+        useful_area = 0.0
+        matched_residual_count = 0
+        matched_major_residual_count = 0
+        matched_candidate_indices: set[int] = set()
+        matched_residual_pairs: list[tuple[HKLPeak, ObservedLineRecord]] = []
+        matched_top_count = 0
+        residual_area = sum(max(float(getattr(record, "area", 0.0) or 0.0), 0.0) for record in residual_records)
+        major_residual_limit = min(14, len(residual_records))
+        for residual_index, record in enumerate(residual_records):
+            position = self._record_position_value(record)
+            area = max(float(getattr(record, "area", 0.0) or 0.0), 0.0)
+            if area <= 0.0:
+                continue
+            best_delta = 999.0
+            best_index = -1
+            for candidate_index, candidate_position in enumerate(candidate_positions):
+                if candidate_index in matched_candidate_indices:
+                    continue
+                delta = abs(float(candidate_position) - float(position))
+                if delta < best_delta:
+                    best_delta = delta
+                    best_index = candidate_index
+            line_fwhm = max(float(getattr(record, "fwhm", 0.0) or 0.0), base_fwhm)
+            local_tolerance = max(tolerance, min(0.95, line_fwhm * 1.7))
+            if best_index < 0 or best_delta > local_tolerance:
+                continue
+            position_quality = max(0.0, 1.0 - best_delta / max(local_tolerance, 1.0e-6))
+            useful_area += area * (0.35 + 0.65 * position_quality)
+            matched_residual_count += 1
+            if residual_index < major_residual_limit:
+                matched_major_residual_count += 1
+            if int(candidate_ranks[best_index]) < 12:
+                matched_top_count += 1
+            matched_candidate_indices.add(best_index)
+            matched_residual_pairs.append((strong[int(candidate_ranks[best_index])], record))
+
+        if useful_area <= 0.0 or matched_residual_count < 2:
+            return 0.0
+        major_fraction = matched_major_residual_count / max(major_residual_limit, 1)
+        residual_coverage = useful_area / max(residual_area, 1.0e-12)
+
+        target_positions = self._record_positions(target_records)
+        selected_total = np.asarray(context.get("selected_total", []), dtype=float)
+        selected_positions = np.asarray(context.get("selected_peak_positions", []), dtype=float)
+        selected_positions = selected_positions[np.isfinite(selected_positions)]
+        selected_positions.sort()
+        target_positive = target[np.isfinite(target) & (target > 0.0)]
+        residual_positive = residual_target[np.isfinite(residual_target) & (residual_target > 0.0)]
+        if not len(target_positive) or not len(residual_positive):
+            return 0.0
+        target_floor = max(
+            float(np.nanpercentile(target_positive, 70)) * 0.22,
+            float(np.nanpercentile(target_positive, 92)) * 0.035,
+            1.0,
+        )
+        residual_floor = max(
+            float(np.nanpercentile(residual_positive, 70)) * 0.30,
+            float(np.nanpercentile(residual_positive, 92)) * 0.045,
+            1.0,
+        )
+
+        def local_max(values: np.ndarray, center: float, half_width: float) -> float:
+            if len(values) != len(x):
+                return 0.0
+            left = int(np.searchsorted(x, center - half_width, side="left"))
+            right = int(np.searchsorted(x, center + half_width, side="right"))
+            if right <= left:
+                return 0.0
+            return float(np.nanmax(values[left:right]))
+
+        absent_weight = 0.0
+        repeated_weight = 0.0
+        matched_weight = 0.0
+        observed_only_weight = 0.0
+        anchor_weight = 0.0
+        matched_anchor_weight = 0.0
+        absent_top_count = 0
+        checked_top_count = 0
+        local_signal_width = max(0.20, min(0.80, tolerance * 1.25))
+        for index, (position, weight) in enumerate(zip(candidate_positions, candidate_weights, strict=False)):
+            rank = int(candidate_ranks[index])
+            if rank < 12:
+                checked_top_count += 1
+                anchor_weight += float(weight)
+            if index in matched_candidate_indices:
+                matched_weight += float(weight)
+                if rank < 12:
+                    matched_anchor_weight += float(weight)
+                continue
+            target_peak = local_max(target, float(position), local_signal_width)
+            residual_peak = local_max(residual_target, float(position), local_signal_width)
+            selected_peak = local_max(selected_total, float(position), local_signal_width) if len(selected_total) == len(x) else 0.0
+            has_observed_signal = target_peak >= target_floor or residual_peak >= residual_floor
+            if len(selected_positions) and self._nearest_selected_line_delta(selected_positions, float(position)) <= tolerance:
+                if stage == "overlap":
+                    observed_only_weight += float(weight) * 0.15
+                else:
+                    repeated_weight += float(weight) * 0.80
+            elif selected_peak >= max(target_floor, target_peak * 0.35):
+                if stage == "overlap":
+                    observed_only_weight += float(weight) * 0.15
+                else:
+                    repeated_weight += float(weight) * 0.65
+            elif has_observed_signal or self._nearest_selected_line_delta(target_positions, float(position)) <= tolerance:
+                observed_only_weight += float(weight) * 0.50
+            else:
+                penalty = 3.25 if rank < 10 else 1.35
+                absent_weight += float(weight) * penalty
+                if rank < 12:
+                    absent_top_count += 1
+
+        support = matched_weight / max(matched_weight + 3.4 * absent_weight + 1.6 * repeated_weight + observed_only_weight, 1.0e-12)
+        anchor_support = matched_anchor_weight / max(anchor_weight, 1.0e-12)
+        intensity_factor = self._candidate_gain_intensity_factor(matched_residual_pairs)
+        if matched_top_count < 2 and anchor_support < 0.20:
+            return 0.0
+        if checked_top_count and absent_top_count >= max(3, int(math.ceil(checked_top_count * 0.34))):
+            if absent_weight > matched_weight * 1.15:
+                return 0.0
+        if (
+            major_fraction < 0.18
+            or residual_coverage < 0.035
+            or support < 0.22
+            or anchor_support < 0.16
+            or intensity_factor < 0.10
+        ):
+            return 0.0
+        before_fit = float(context.get("before_fit", 0.0) or 0.0)
+        remaining_fit = max(0.0, 100.0 - before_fit)
+        line_gain = (
+            remaining_fit
+            * min(1.0, residual_coverage)
+            * min(1.0, major_fraction / 0.38)
+            * min(1.0, support / 0.48)
+            * min(1.0, anchor_support / 0.42)
+            * (0.45 + 0.55 * intensity_factor)
+        )
+        return float(np.clip(line_gain, 0.0, remaining_fit))
 
     def _gain_residual_target(self, difference_curve: np.ndarray, x: np.ndarray, fwhm: float) -> np.ndarray:
         values = np.asarray(difference_curve, dtype=float)
@@ -1890,33 +2715,310 @@ class PhaseFinderWindow(
 
     def _fit_residual_candidate_scale(
         self,
-        residual_target: np.ndarray,
+        target: np.ndarray,
+        selected_total: np.ndarray,
         profile: np.ndarray,
         weights: np.ndarray,
     ) -> float:
-        target = np.asarray(residual_target, dtype=float)
+        target = np.asarray(target, dtype=float)
+        current = np.asarray(selected_total, dtype=float)
         candidate = np.asarray(profile, dtype=float)
         fit_weights = np.clip(np.asarray(weights, dtype=float), 0.0, None)
-        usable = np.isfinite(target) & np.isfinite(candidate) & np.isfinite(fit_weights) & (fit_weights > 0.0)
+        usable = (
+            np.isfinite(target)
+            & np.isfinite(current)
+            & np.isfinite(candidate)
+            & np.isfinite(fit_weights)
+            & (fit_weights > 0.0)
+        )
         if not np.any(usable) or float(np.nanmax(candidate[usable])) <= 0.0:
             return 0.0
-        sqrt_weights = np.sqrt(fit_weights[usable])
-        try:
-            scales, _residual = nnls(
-                candidate[usable, None] * sqrt_weights[:, None],
-                target[usable] * sqrt_weights,
-            )
-        except Exception:
+        residual = np.clip(target - current, 0.0, None)
+        weighted_profile = candidate * fit_weights
+        denominator = float(np.dot(weighted_profile[usable], candidate[usable]))
+        if denominator <= 1.0e-12:
             return 0.0
-        return max(0.0, float(scales[0])) if len(scales) else 0.0
+        initial = max(
+            0.0,
+            float(np.dot(weighted_profile[usable], residual[usable])) / denominator,
+        )
+        if initial <= 1.0e-12:
+            return 0.0
+        before_error = self._weighted_gain_error(
+            target,
+            current,
+            fit_weights,
+            excess_penalty=5.0,
+        )
+        best_scale = 0.0
+        best_error = before_error
+        for factor in np.linspace(0.05, 1.35, 27):
+            scale = initial * float(factor)
+            error = self._weighted_gain_error(
+                target,
+                current + candidate * scale,
+                fit_weights,
+                excess_penalty=5.0,
+            )
+            if error < best_error:
+                best_error = error
+                best_scale = scale
+        return float(best_scale)
 
-    def _candidate_profile_for_gain(self, candidate: dict[str, str], x: np.ndarray, fwhm: float, eta: float = 0.0) -> np.ndarray | None:
+    def _candidate_peaks_for_gain(self, candidate: dict[str, str]) -> list[HKLPeak]:
+        if self._candidate_source(candidate) == "PDF2":
+            return self._pdf2_peaks_for_candidate(candidate)
+        pattern = self._active_pattern()
+        if pattern is not None:
+            structure = self._finder_candidate_structure_overrides(pattern, [candidate]).get(
+                self._candidate_key(candidate)
+            )
+            if structure is not None:
+                try:
+                    cif_path = self._candidate_local_cif_path(candidate)
+                    if cif_path is not None:
+                        return self._candidate_cached_peaks(cif_path, structure)
+                    return self.calculated_pattern_service.calculate_sticks(
+                        structure,
+                        wavelength=self._active_wavelength(),
+                        two_theta_min=5.0,
+                        two_theta_max=120.0,
+                        intensity_min=0.5,
+                    )
+                except Exception:
+                    pass
         peaks = self._candidate_cached_json_peaks(candidate)
         if not peaks:
             peaks = self._candidate_cif_peaks_for_gain(candidate)
+        return peaks
+
+    def _adjusted_gain_peaks(self, candidate: dict[str, str], peaks: list[HKLPeak]) -> list[HKLPeak]:
         if not peaks:
+            return []
+        key = self._candidate_key(candidate)
+        zero_shift = float(self.match_zero_shifts.get(key, 0.0) or 0.0)
+        cell_scale = float(self.match_cell_scales.get(key, 1.0) or 1.0)
+        if abs(zero_shift) < 1.0e-8 and abs(cell_scale - 1.0) < 1.0e-8:
+            return peaks
+        wavelength = float(self._active_wavelength())
+        adjusted: list[HKLPeak] = []
+        for peak in peaks:
+            try:
+                d_value = float(getattr(peak, "d", 0.0) or 0.0)
+                if d_value > 0.0 and abs(cell_scale - 1.0) >= 1.0e-8:
+                    two_theta = self._two_theta_from_d_spacing(d_value * cell_scale, wavelength)
+                    if two_theta is None:
+                        continue
+                else:
+                    two_theta = float(getattr(peak, "two_theta", 0.0) or 0.0)
+                adjusted.append(
+                    HKLPeak(
+                        h=int(getattr(peak, "h", 0) or 0),
+                        k=int(getattr(peak, "k", 0) or 0),
+                        l=int(getattr(peak, "l", 0) or 0),
+                        d=d_value * cell_scale if d_value > 0.0 else d_value,
+                        two_theta=float(two_theta) + zero_shift,
+                        intensity=float(getattr(peak, "intensity", 0.0) or 0.0),
+                        multiplicity=int(getattr(peak, "multiplicity", 1) or 1),
+                        f2=float(getattr(peak, "f2", 0.0) or 0.0),
+                        lp=float(getattr(peak, "lp", 1.0) or 1.0),
+                        raw_intensity=float(getattr(peak, "raw_intensity", 0.0) or 0.0),
+                    )
+                )
+            except Exception:
+                continue
+        return adjusted
+
+    def _two_theta_from_d_spacing(self, d_spacing: float, wavelength: float) -> float | None:
+        d_spacing = float(d_spacing)
+        if d_spacing <= 0.0:
             return None
-        return self._profile_from_gain_peaks(peaks, x, fwhm, eta)
+        argument = float(wavelength) / (2.0 * d_spacing)
+        if not 0.0 < argument < 1.0:
+            return None
+        return float(np.rad2deg(2.0 * np.arcsin(argument)))
+
+    def _candidate_gain_novelty_factor(self, row: list[str], context) -> float:
+        candidate = {
+            "Source": row[0] if len(row) > 0 else "",
+            "Entry": row[1] if len(row) > 1 else "",
+            "Formula": row[2] if len(row) > 2 else "",
+            "Phase": row[3] if len(row) > 3 else "",
+        }
+        peaks = self._candidate_peaks_for_gain(candidate)
+        if not peaks:
+            return 0.0
+        selected_positions = np.asarray(context.get("selected_peak_positions", []), dtype=float)
+        selected_positions = selected_positions[np.isfinite(selected_positions)]
+        if len(selected_positions) == 0:
+            return 1.0
+        selected_positions.sort()
+        strong = [
+            peak
+            for peak in peaks
+            if float(getattr(peak, "intensity", 0.0) or 0.0) >= 3.0
+            and 5.0 <= float(getattr(peak, "two_theta", 0.0) or 0.0) <= 120.0
+        ]
+        strong = sorted(strong, key=lambda peak: float(getattr(peak, "intensity", 0.0) or 0.0), reverse=True)[:32]
+        if len(strong) < 3:
+            return 0.0
+        base_tolerance = max(0.26, min(0.75, float(context.get("fwhm", 0.18) or 0.18) * 2.2))
+        total_weight = 0.0
+        novel_weight = 0.0
+        novel_strong = 0
+        top_covered = 0
+        for index, peak in enumerate(strong):
+            position = float(getattr(peak, "two_theta", 0.0) or 0.0)
+            intensity = max(float(getattr(peak, "intensity", 0.0) or 0.0), 0.0)
+            weight = max(intensity / 100.0, 0.03) ** 0.55
+            total_weight += weight
+            nearest = self._nearest_selected_line_delta(selected_positions, position)
+            covered = nearest <= base_tolerance
+            if covered and index < 8:
+                top_covered += 1
+            if not covered:
+                novel_weight += weight
+                if index < 12:
+                    novel_strong += 1
+        if total_weight <= 0.0:
+            return 0.0
+        novelty = novel_weight / total_weight
+        if novel_strong < 2 or novelty < 0.12:
+            return 0.0
+        if top_covered >= 6:
+            novelty *= 0.35
+        return float(np.clip((novelty / 0.55) ** 1.35, 0.0, 1.0))
+
+    def _candidate_gain_line_gate(self, peaks: list[HKLPeak], gain_records: list[tuple[float, float]], context) -> float:
+        if not peaks or not gain_records:
+            return 0.0
+        gain_positions = self._record_positions(gain_records[:32])
+        if len(gain_positions) == 0:
+            return 0.0
+        strong = [
+            peak
+            for peak in sorted(peaks, key=lambda peak: float(getattr(peak, "intensity", 0.0) or 0.0), reverse=True)[:28]
+            if float(getattr(peak, "intensity", 0.0) or 0.0) >= 3.0
+        ]
+        if len(strong) < 3:
+            return 0.0
+        tolerance = max(0.28, min(0.75, float(context.get("fwhm", 0.18) or 0.18) * 2.4))
+        total_weight = 0.0
+        matched_weight = 0.0
+        matched_top = 0
+        candidate_positions = []
+        for index, peak in enumerate(strong):
+            position = float(getattr(peak, "two_theta", 0.0) or 0.0)
+            if not 5.0 <= position <= 120.0:
+                continue
+            candidate_positions.append(position)
+            intensity = max(float(getattr(peak, "intensity", 0.0) or 0.0), 0.0)
+            weight = max(intensity / 100.0, 0.02) ** 0.55 / math.sqrt(index + 1.0)
+            total_weight += weight
+            if self._nearest_selected_line_delta(gain_positions, position) <= tolerance:
+                matched_weight += weight
+                if index < 10:
+                    matched_top += 1
+        coverage = matched_weight / max(total_weight, 1.0e-12)
+        if not candidate_positions:
+            return 0.0
+        candidate_positions_array = np.asarray(candidate_positions, dtype=float)
+        candidate_positions_array.sort()
+        residual_top = list(gain_records[: min(14, len(gain_records))])
+        residual_top_matched = 0
+        residual_top_area = 0.0
+        residual_matched_area = 0.0
+        for record in residual_top:
+            area = max(float(getattr(record, "area", 0.0) or 0.0), 0.0)
+            residual_top_area += area
+            position = self._record_position_value(record)
+            if self._nearest_selected_line_delta(candidate_positions_array, position) <= tolerance:
+                residual_top_matched += 1
+                residual_matched_area += area
+        residual_fraction = residual_matched_area / max(residual_top_area, 1.0e-12)
+        if total_weight <= 0.0 or matched_top < 2 or coverage < 0.24:
+            return 0.0
+        if residual_top_matched < 2 or residual_fraction < 0.16:
+            return 0.0
+        return float(np.clip(0.45 * coverage + 0.55 * residual_fraction, 0.0, 1.0))
+
+    def _candidate_gain_presence_factor(
+        self,
+        row: list[str],
+        observed_records: list[tuple[float, float]],
+        gain_records: list[tuple[float, float]],
+    ) -> float:
+        candidate = {
+            "Source": row[0] if len(row) > 0 else "",
+            "Entry": row[1] if len(row) > 1 else "",
+            "Formula": row[2] if len(row) > 2 else "",
+            "Phase": row[3] if len(row) > 3 else "",
+        }
+        peaks = self._candidate_peaks_for_gain(candidate)
+        if not peaks or not observed_records or not gain_records:
+            return 0.0
+        strong = [
+            peak
+            for peak in sorted(peaks, key=lambda peak: float(getattr(peak, "intensity", 0.0) or 0.0), reverse=True)[:36]
+            if float(getattr(peak, "intensity", 0.0) or 0.0) >= 3.0
+        ]
+        if len(strong) < 3:
+            return 0.0
+        observed_positions = self._record_positions(observed_records)
+        gain_positions = self._record_positions(gain_records)
+        full_coverage, full_count = self._weighted_candidate_line_coverage(strong, observed_positions, tolerance=0.42)
+        gain_coverage, gain_count = self._weighted_candidate_line_coverage(strong[:24], gain_positions, tolerance=0.48)
+        required_count = 5 if len(strong) >= 12 else 4 if len(strong) >= 8 else 3
+        if full_count < required_count or gain_count < required_count:
+            return 0.0
+        if full_coverage < 0.18 or gain_coverage < 0.22:
+            return 0.0
+        return float(np.clip((0.25 + 0.75 * full_coverage) * (gain_coverage / 0.48) ** 1.15, 0.0, 1.0))
+
+    def _record_position_value(self, record) -> float:
+        value = getattr(record, "two_theta", None)
+        if value is not None:
+            return float(value)
+        return float(record[0])
+
+    def _record_positions(self, records: list[ObservedLineRecord]) -> np.ndarray:
+        positions = np.asarray([self._record_position_value(record) for record in records], dtype=float)
+        positions = positions[np.isfinite(positions)]
+        positions.sort()
+        return positions
+
+    def _weighted_candidate_line_coverage(
+        self,
+        peaks: list[HKLPeak],
+        positions: np.ndarray,
+        *,
+        tolerance: float,
+    ) -> tuple[float, int]:
+        if len(positions) == 0 or not peaks:
+            return 0.0, 0
+        total_weight = 0.0
+        covered_weight = 0.0
+        covered_count = 0
+        for index, peak in enumerate(peaks):
+            position = float(getattr(peak, "two_theta", 0.0) or 0.0)
+            intensity = max(float(getattr(peak, "intensity", 0.0) or 0.0), 0.0)
+            weight = math.sqrt(intensity) / math.sqrt(index + 1.0)
+            total_weight += weight
+            if self._nearest_selected_line_delta(positions, position) <= float(tolerance):
+                covered_weight += weight
+                covered_count += 1
+        return covered_weight / max(total_weight, 1.0e-12), covered_count
+
+    def _nearest_selected_line_delta(self, selected_positions: np.ndarray, position: float) -> float:
+        if len(selected_positions) == 0:
+            return 999.0
+        index = int(np.searchsorted(selected_positions, float(position)))
+        deltas = []
+        if index < len(selected_positions):
+            deltas.append(abs(float(selected_positions[index]) - float(position)))
+        if index > 0:
+            deltas.append(abs(float(selected_positions[index - 1]) - float(position)))
+        return min(deltas) if deltas else 999.0
 
     def _candidate_gain_profile(self, candidate: dict[str, str], peaks: list[HKLPeak], context) -> np.ndarray | None:
         peak_signature = (
@@ -1959,18 +3061,6 @@ class PhaseFinderWindow(
             return None
         return profile
 
-    def _candidate_gain_peak_mask(self, peaks: list[HKLPeak], x: np.ndarray, fwhm: float) -> np.ndarray:
-        if len(x) == 0:
-            return np.zeros(0, dtype=bool)
-        strong_peaks = [peak for peak in peaks if float(getattr(peak, "intensity", 0.0)) >= 3.0]
-        strong_peaks = sorted(strong_peaks, key=lambda peak: float(getattr(peak, "intensity", 0.0)), reverse=True)[:45]
-        half_width = max(0.18, float(fwhm) * 2.6)
-        mask = np.zeros(len(x), dtype=bool)
-        for peak in strong_peaks:
-            center = float(getattr(peak, "two_theta", 0.0))
-            mask |= np.abs(x - center) <= half_width
-        return mask
-
     def _gain_noise_floor(self, corrected: np.ndarray) -> float:
         y = np.asarray(corrected, dtype=float)
         finite = y[np.isfinite(y)]
@@ -1979,22 +3069,62 @@ class PhaseFinderWindow(
         median = float(np.nanmedian(finite))
         mad = float(np.nanmedian(np.abs(finite - median)))
         robust_sigma = 1.4826 * mad
-        return max(median + 2.5 * robust_sigma, float(np.nanpercentile(finite, 20)))
+        return max(median + 3.0 * robust_sigma, float(np.nanpercentile(finite, 20)))
+
+    def _gain_residual_signal_factor(self, target: np.ndarray, residual_target: np.ndarray, x: np.ndarray) -> float:
+        target_records = self._observed_peak_records(x, target, limit=80)
+        residual_records = self._observed_peak_records(x, residual_target, limit=80)
+        if not target_records or not residual_records:
+            return 0.0
+        target_area = sum(max(float(record.area), 0.0) for record in target_records)
+        residual_area = sum(max(float(record.area), 0.0) for record in residual_records)
+        if target_area <= 0.0:
+            return 0.0
+        strongest_residual = max(max(float(record.area), 0.0) for record in residual_records)
+        strongest_fraction = strongest_residual / target_area
+        residual_fraction = residual_area / target_area
+        if strongest_fraction < 0.025 and residual_fraction < 0.10:
+            return 0.0
+        signal = max(strongest_fraction / 0.08, residual_fraction / 0.30)
+        return float(np.clip(signal ** 0.85, 0.0, 1.0))
 
     def _fit_nonnegative_scales(self, target: np.ndarray, profiles: list[np.ndarray], weights: np.ndarray) -> list[float]:
-        usable = [np.asarray(profile, dtype=float) for profile in profiles if len(profile) == len(target) and float(np.nanmax(profile)) > 0]
+        target_values = np.clip(np.asarray(target, dtype=float), 0.0, None)
+        result = [0.0] * len(profiles)
+        usable: list[np.ndarray] = []
+        usable_indices: list[int] = []
+        for index, profile in enumerate(profiles):
+            values = np.asarray(profile, dtype=float)
+            if len(values) != len(target_values) or not np.any(np.isfinite(values)):
+                continue
+            values = np.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
+            if float(np.max(values)) <= 0.0:
+                continue
+            usable.append(values)
+            usable_indices.append(index)
         if not usable:
-            return []
-        matrix = np.vstack(usable).T
-        sqrt_weights = np.sqrt(np.clip(np.asarray(weights, dtype=float), 0.0, None))
+            return result
+        fit_weights = np.clip(np.asarray(weights, dtype=float), 0.0, None)
+        sqrt_weights = np.sqrt(fit_weights)
+        design = np.column_stack(usable)
         try:
-            scales, _residual = nnls(matrix * sqrt_weights[:, None], target * sqrt_weights)
+            scales, _residual = nnls(
+                design * sqrt_weights[:, None],
+                target_values * sqrt_weights,
+            )
         except Exception:
-            try:
-                scales, *_ = np.linalg.lstsq(matrix * sqrt_weights[:, None], target * sqrt_weights, rcond=None)
-            except Exception:
-                return [0.0] * len(usable)
-        return [max(0.0, float(scale)) for scale in scales]
+            scales = np.clip(
+                np.linalg.lstsq(
+                    design * sqrt_weights[:, None],
+                    target_values * sqrt_weights,
+                    rcond=None,
+                )[0],
+                0.0,
+                None,
+            )
+        for index, scale in zip(usable_indices, scales, strict=False):
+            result[index] = max(0.0, float(scale))
+        return result
 
     def _weighted_gain_error(
         self,
@@ -2020,17 +3150,13 @@ class PhaseFinderWindow(
         weighted = np.asarray(target, dtype=float) * np.clip(np.asarray(weights, dtype=float), 0.0, None)
         return float(np.trapezoid(weighted, dx=1.0))
 
-    def _weighted_integral_error(self, target: np.ndarray, calculated: np.ndarray, weights: np.ndarray) -> float:
-        residual = np.abs(np.asarray(target, dtype=float) - np.asarray(calculated, dtype=float))
-        weighted = residual * np.clip(np.asarray(weights, dtype=float), 0.0, None)
-        return float(np.trapezoid(weighted, dx=1.0))
-
     def _candidate_row_peak_probability_from_records(
         self,
         row: list[str],
         observed_records: list[tuple[float, float]],
         *,
         allow_cif_fallback: bool = True,
+        use_cache: bool = True,
     ) -> float:
         candidate = {
             "Source": row[0] if len(row) > 0 else "",
@@ -2038,15 +3164,16 @@ class PhaseFinderWindow(
             "Formula": row[2] if len(row) > 2 else "",
             "Phase": row[3] if len(row) > 3 else "",
         }
-        if self._candidate_source(candidate) not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"}:
+        source = self._candidate_source(candidate)
+        if source not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD", "PDF2"}:
             return 0.0
-        peaks = self._candidate_cached_json_peaks(candidate)
+        peaks = self._pdf2_peaks_for_candidate(candidate) if source == "PDF2" else self._candidate_cached_json_peaks(candidate)
         cif_path = None if peaks else self._candidate_local_cif_path(candidate)
         if not peaks and cif_path is None:
             return 0.0
         probability_key = self._candidate_probability_key(candidate, cif_path)
-        cached_probability = self._candidate_probability_cache.get(probability_key)
-        if cached_probability is not None:
+        cached_probability = self._candidate_probability_cache.get(probability_key) if use_cache else None
+        if use_cache and cached_probability is not None:
             return cached_probability
         try:
             structure = None
@@ -2060,9 +3187,14 @@ class PhaseFinderWindow(
                 peaks = self._candidate_cached_peaks(cif_path, structure)
             else:
                 return 0.0
-            probability = peak_presence_probability_from_records(peaks, observed_records, structure)
-            self._candidate_probability_cache[probability_key] = probability
-            self._trim_candidate_probability_cache()
+            probability = fingerprint_match_score(
+                peaks,
+                observed_records,
+                wavelength=float(self._active_wavelength()),
+            ).score
+            if use_cache:
+                self._candidate_probability_cache[probability_key] = probability
+                self._trim_candidate_probability_cache()
             return probability
         except Exception:
             return 0.0
@@ -2156,7 +3288,13 @@ class PhaseFinderWindow(
         except Exception:
             file_key = (str(cif_path), 0, 0)
         wavelength = round(float(self._active_wavelength()), 6)
-        cache_key = (file_key[0], wavelength, float(file_key[1]), float(file_key[2]))
+        cache_key = (
+            file_key[0],
+            wavelength,
+            float(file_key[1]),
+            float(file_key[2]),
+            self._structure_cell_signature(structure),
+        )
         cached = self._candidate_peak_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -2194,23 +3332,8 @@ class PhaseFinderWindow(
         except Exception:
             return 0.0
 
-    def _shift_overlay_peaks(self, peaks, zero_shift: float):
-        return shift_overlay_peaks(peaks, zero_shift)
-
     def _estimate_background(self, x, y, degree: int = 10, method: str = "auto") -> np.ndarray:
         return estimate_background(x, y, degree=degree, method=method)
-
-    def _estimate_theoretical_iic(self, profile: np.ndarray) -> float:
-        profile = np.asarray(profile, dtype=float)
-        if len(profile) == 0:
-            return 0.0
-        peak = float(np.nanmax(profile))
-        positive = np.clip(profile, 0.0, None)
-        integrator = getattr(np, "trapezoid", None) or getattr(np, "trapz", None)
-        area = float(integrator(positive)) if integrator is not None else float(np.sum(positive))
-        if peak <= 0 or area <= 0:
-            return 0.0
-        return area / peak
 
     def _estimate_candidate_corundum_iic(self, candidate: dict[str, str]) -> float:
         try:
@@ -2248,33 +3371,6 @@ class PhaseFinderWindow(
             return 0.0
         value = sample_total / corundum_total
         return float(np.clip(value, 0.0, 99.9))
-
-    def _corundum_absorption_correction(self, formula: str) -> float:
-        sample_proxy = self._formula_absorption_proxy(formula)
-        corundum_proxy = self._formula_absorption_proxy("Al2O3")
-        if sample_proxy <= 0 or corundum_proxy <= 0:
-            return 1.0
-        return float(np.clip(corundum_proxy / sample_proxy, 0.02, 8.0))
-
-    def _formula_absorption_proxy(self, formula: str) -> float:
-        counts = self._formula_counts(formula)
-        if not counts:
-            return 0.0
-        mass = sum(ATOMIC_WEIGHTS.get(element, 0.0) * count for element, count in counts.items())
-        if mass <= 0:
-            return 0.0
-        weighted_z = sum((ATOMIC_NUMBERS.get(element, 0) ** 3.0) * count for element, count in counts.items())
-        return float(weighted_z / mass)
-
-    def _formula_counts(self, formula: str) -> dict[str, float]:
-        counts: dict[str, float] = {}
-        if not formula:
-            return counts
-        for element, amount in re.findall(r"([A-Z][a-z]?|D)([0-9]*\.?[0-9]*)", formula):
-            if element not in ATOMIC_NUMBERS:
-                continue
-            counts[element] = counts.get(element, 0.0) + (float(amount) if amount else 1.0)
-        return counts
 
     def _corundum_peaks(self, wavelength: float, two_theta_min: float, two_theta_max: float):
         key = (round(float(wavelength), 6), round(float(two_theta_min), 3), round(float(two_theta_max), 3))
@@ -2513,7 +3609,7 @@ class PhaseFinderWindow(
         if self.structural_data_checkbox is not None:
             self.structural_data_checkbox.setChecked(True)
         if self.reference_patterns_checkbox is not None:
-            self.reference_patterns_checkbox.setChecked(True)
+            self.reference_patterns_checkbox.setChecked(False)
         self._update_element_fields()
 
     def _toggle_required_element(self, element: str) -> None:
@@ -2648,40 +3744,19 @@ class PhaseFinderWindow(
     def _element_symbols(self) -> list[str]:
         return self.element_table.element_symbols if self.element_table is not None else []
 
-    def _format_entry_first_peak(self, entry) -> str:
-        return ""
-
     def _search_pdf2_candidates(self) -> None:
         if self.selected_elements:
             self._search_from_controls()
         else:
             self._search_pdf2_text()
 
-    def _set_candidate_rows(self, rows: list[list[str]], force_rank: bool = False) -> None:
+    def _set_candidate_rows(self, rows: list[list[str]], force_rank: bool = False, rank_progress=None) -> None:
         self._candidate_rank_token += 1
         rows = [normalize_candidate_row(row) for row in rows]
         if (force_rank or self._rank_by_peak_probability_enabled()) and rows:
-            rows = self._rank_candidate_rows_by_peak_probability(rows, force=force_rank)
+            rows = self._rank_candidate_rows_by_peak_probability(rows, force=force_rank, progress=rank_progress)
         self.candidate_table.set_rows(rows, lambda row: row)
         if hasattr(self, "_update_profile_view_context"):
             self._update_profile_view_context()
         if rows and normalize_candidate_row(rows[0])[0]:
             self._update_compound_card(self._candidate_row_values(0))
-
-    def _format_first_peak_two_theta(self, candidate) -> str:
-        return ""
-
-    def _draw_candidate_markers(self, candidates) -> None:
-        for item in self.plot_layers.get("candidate_markers", []):
-            self.match_plot.removeItem(item)
-        self.plot_layers["candidate_markers"] = []
-
-    def _simple_tab(self, labels: list[str]) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        for label in labels:
-            checkbox = QCheckBox(label)
-            checkbox.setChecked(True)
-            layout.addWidget(checkbox)
-        layout.addStretch(1)
-        return widget

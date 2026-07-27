@@ -105,32 +105,53 @@ class FinderService:
         for candidate in finder_input.candidates:
             try:
                 if candidate.structure is not None:
+                    structure = candidate.structure
                     peaks = self.calculated_pattern_service.calculate_sticks(
-                        candidate.structure,
+                        structure,
                         two_theta_min=context.two_theta_min,
                         two_theta_max=context.two_theta_max,
                         wavelength=context.primary_wavelength,
                         use_lp=True,
                     )
                 else:
-                    peaks = self.profile_calculator.candidate_sticks(
+                    structure, peaks = self.profile_calculator.candidate_structure_and_sticks(
                         candidate.cif_path,
                         context=context,
                         use_lp=True,
                     )
             except Exception:
                 continue
-            candidate_data.append((candidate, peaks))
+            candidate_data.append((candidate, structure, peaks))
 
-        trusted_zero = self._estimate_global_zero_shift_from_trusted_assignments(candidate_data, observed.peaks)
+        alignment_data = [(candidate, peaks) for candidate, _structure, peaks in candidate_data]
+        # Adding an impurity candidate must not move the instrument alignment
+        # already established by the primary phase.
+        primary_alignment_data = alignment_data[:1]
+        trusted_zero = self._estimate_global_zero_shift_from_trusted_assignments(
+            primary_alignment_data,
+            observed.peaks,
+        )
         global_zero = (
             trusted_zero
             if trusted_zero is not None
-            else self._estimate_global_zero_shift(candidate_data, observed.peak_positions)
+            else self._estimate_global_zero_shift(primary_alignment_data, observed.peak_positions)
         )
         prepared_profiles = []
-        for candidate, peaks in candidate_data:
-            cell_scale = self._estimate_phase_cell_scale(peaks, observed.peak_positions, global_zero, context.primary_wavelength)
+        for candidate, structure, peaks in candidate_data:
+            # Indexed CIF phases keep their crystallographic metric. Applying one
+            # scalar to every d-spacing makes distinct anisotropic cells converge
+            # to the same apparent pattern. Their a/b/c/angles are refined later
+            # from matched hkl values by RefinementService.
+            cell_scale = (
+                1.0
+                if self._has_indexed_cell(structure, peaks)
+                else self._estimate_phase_cell_scale(
+                    peaks,
+                    observed.peak_positions,
+                    global_zero,
+                    context.primary_wavelength,
+                )
+            )
             phase_context = context.with_alignment(global_zero, cell_scale)
             reference_peaks = self._apply_peak_model(peaks, phase_context)
             adjusted = (
@@ -140,20 +161,28 @@ class FinderService:
             )
             prepared_profiles.append((candidate, reference_peaks, adjusted, phase_context, cell_scale))
 
+        # Keep the primary phase shape stable while later phases are tested
+        # against the positive residual.
+        primary_peak_sets = (
+            [prepared_profiles[0][2]]
+            if prepared_profiles
+            else []
+        )
         fitted_fwhm, fitted_eta = self._optimized_profile_parameters(
             observed.target_y,
-            [peaks for _candidate, _reference_peaks, peaks, _phase_context, _cell_scale in prepared_profiles],
+            primary_peak_sets,
             x_grid,
             context,
         )
         profiles = []
         for candidate, reference_peaks, adjusted, phase_context, cell_scale in prepared_profiles:
-            phase_fwhm, phase_eta = self._optimized_phase_profile_parameters(
-                observed.target_y,
+            phase_fwhm = self._estimate_phase_fwhm_from_signal(
                 adjusted,
-                x_grid,
-                replace(context, fwhm=fitted_fwhm, profile_eta=fitted_eta),
+                observed.x_grid,
+                observed.target_y,
+                base_fwhm=fitted_fwhm,
             )
+            phase_eta = fitted_eta
             fitted_context = replace(phase_context, fwhm=phase_fwhm, profile_eta=phase_eta)
             profile = self.profile_calculator.profile_from_peaks(
                 adjusted,
@@ -162,7 +191,14 @@ class FinderService:
             )
             profiles.append((candidate, reference_peaks, adjusted, profile, cell_scale, phase_fwhm, phase_eta))
 
-        scales = self._fit_scales(observed.target_y, [profile for _candidate, _reference_peaks, _peaks, profile, _cell_scale, _phase_fwhm, _phase_eta in profiles])
+        scales = self._fit_incremental_scales(
+            observed.target_y,
+            [
+                profile
+                for _candidate, _reference_peaks, _peaks, profile, _cell_scale, _phase_fwhm, _phase_eta
+                in profiles
+            ],
+        )
         total_scale = float(np.sum(scales)) if len(scales) else 0.0
         calculated_total = np.zeros_like(x_grid)
         results = []
@@ -209,7 +245,7 @@ class FinderService:
         assigned_peaks = self.assignment_builder.assign_observed_peaks(
             observed.peaks,
             assignment_phase_sets,
-            tolerance=max(0.08, min(0.22, (float(np.nanmedian(phase_fwhm_values)) if phase_fwhm_values else fitted_fwhm) * 1.15)),
+            tolerance=max(0.20, min(0.55, (float(np.nanmedian(phase_fwhm_values)) if phase_fwhm_values else fitted_fwhm) * 2.7)),
         )
 
         return FinderResult(
@@ -222,6 +258,18 @@ class FinderService:
             profile_eta=float(fitted_eta),
             candidates=results,
             observed_peaks=assigned_peaks,
+        )
+
+    @staticmethod
+    def _has_indexed_cell(structure, peaks: list[HKLPeak]) -> bool:
+        cell = getattr(structure, "cell", None)
+        if cell is None:
+            return False
+        if any(getattr(cell, name, None) is None for name in ("a", "b", "c", "alpha", "beta", "gamma")):
+            return False
+        return any(
+            (int(getattr(peak, "h", 0)), int(getattr(peak, "k", 0)), int(getattr(peak, "l", 0))) != (0, 0, 0)
+            for peak in peaks
         )
 
     def cache_info(self) -> dict[str, int]:
@@ -593,6 +641,24 @@ class FinderService:
             scales = np.ones(len(profiles), dtype=float)
         return scales
 
+    def _fit_incremental_scales(self, target_y: np.ndarray, profiles: list[np.ndarray]) -> np.ndarray:
+        """Jointly refit every selected phase after a phase is added.
+
+        Fixing the first phase before fitting the rest makes it absorb shared
+        reflections and can force a real later phase to zero. Weighted NNLS
+        lets earlier scales decrease when a newly selected phase explains both
+        shared and previously uncovered reflections. Exact duplicate columns
+        retain selection-order priority in scipy's NNLS solution.
+        """
+        if not profiles:
+            return np.array([], dtype=float)
+        target = np.clip(np.asarray(target_y, dtype=float), 0.0, None)
+        clean_profiles = [
+            np.clip(np.asarray(profile, dtype=float), 0.0, None)
+            for profile in profiles
+        ]
+        return self._fit_scales(target, clean_profiles)
+
     def _optimized_profile_parameters(
         self,
         target_y: np.ndarray,
@@ -639,6 +705,136 @@ class FinderService:
                     best_fwhm = float(fwhm)
                     best_eta = float(eta)
         return float(np.clip(best_fwhm, 0.04, 0.45)), float(np.clip(best_eta, 0.0, 0.85))
+
+    def _estimate_phase_fwhm_from_observed_peaks(
+        self,
+        peaks: list[HKLPeak],
+        observed_peaks: list[ObservedPeak],
+        *,
+        base_fwhm: float,
+    ) -> float:
+        if not peaks or not observed_peaks:
+            return float(np.clip(base_fwhm, 0.04, 0.80))
+        observed_positions = np.asarray([peak.two_theta for peak in observed_peaks], dtype=float)
+        if not len(observed_positions):
+            return float(np.clip(base_fwhm, 0.04, 0.80))
+        tolerance = max(0.18, min(0.65, float(base_fwhm) * 2.8))
+        widths = []
+        strong = sorted(
+            (peak for peak in peaks if float(getattr(peak, "intensity", 0.0) or 0.0) >= 4.0),
+            key=lambda peak: float(getattr(peak, "intensity", 0.0) or 0.0),
+            reverse=True,
+        )[:36]
+        for peak in strong:
+            position = float(peak.two_theta)
+            index = int(np.argmin(np.abs(observed_positions - position)))
+            delta = abs(float(observed_positions[index]) - position)
+            if delta > tolerance:
+                continue
+            observed_peak = observed_peaks[index]
+            width = float(getattr(observed_peak, "fwhm", base_fwhm) or base_fwhm)
+            if not np.isfinite(width):
+                continue
+            weight = max(float(getattr(peak, "intensity", 1.0) or 1.0), 1.0)
+            repeats = max(1, min(6, int(round(weight / 18.0))))
+            widths.extend([width] * repeats)
+        if len(widths) < 2:
+            return float(np.clip(base_fwhm, 0.04, 0.80))
+        return float(np.clip(np.nanmedian(np.asarray(widths, dtype=float)), 0.04, 0.80))
+
+    def _estimate_phase_fwhm_from_signal(
+        self,
+        peaks: list[HKLPeak],
+        x_grid: np.ndarray,
+        target_y: np.ndarray,
+        *,
+        base_fwhm: float,
+    ) -> float:
+        x = np.asarray(x_grid, dtype=float)
+        y = np.asarray(target_y, dtype=float)
+        fallback = float(np.clip(base_fwhm, 0.04, 0.80))
+        if not peaks or len(x) < 8 or len(x) != len(y) or float(np.nanmax(y)) <= 0.0:
+            return fallback
+        step_values = np.diff(x)
+        step_values = step_values[np.isfinite(step_values) & (step_values > 0.0)]
+        step = float(np.nanmedian(step_values)) if len(step_values) else 0.03
+        strong = sorted(
+            (peak for peak in peaks if float(getattr(peak, "intensity", 0.0) or 0.0) >= 4.0),
+            key=lambda peak: float(getattr(peak, "intensity", 0.0) or 0.0),
+            reverse=True,
+        )[:24]
+        widths: list[float] = []
+        for peak in strong:
+            width = self._local_signal_fwhm(
+                x,
+                y,
+                float(peak.two_theta),
+                search_radius=max(0.18, min(0.85, fallback * 3.0)),
+                window_radius=max(0.45, min(1.8, fallback * 7.0)),
+            )
+            if width is None:
+                continue
+            intensity = max(float(getattr(peak, "intensity", 1.0) or 1.0), 1.0)
+            repeats = max(1, min(7, int(round(intensity / 16.0))))
+            widths.extend([width] * repeats)
+        if len(widths) < 2:
+            return fallback
+        return float(np.clip(np.nanpercentile(np.asarray(widths, dtype=float), 60), 0.04, 0.80))
+
+    def _local_signal_fwhm(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        center: float,
+        *,
+        search_radius: float,
+        window_radius: float,
+    ) -> float | None:
+        search_mask = (x >= center - search_radius) & (x <= center + search_radius)
+        if int(np.count_nonzero(search_mask)) < 3:
+            return None
+        search_indices = np.flatnonzero(search_mask)
+        peak_index = int(search_indices[int(np.nanargmax(y[search_indices]))])
+        if abs(float(x[peak_index]) - float(center)) > search_radius:
+            return None
+        window_mask = (x >= float(x[peak_index]) - window_radius) & (x <= float(x[peak_index]) + window_radius)
+        window_indices = np.flatnonzero(window_mask)
+        if len(window_indices) < 5:
+            return None
+        local_y = y[window_indices]
+        edge_count = max(2, min(8, len(local_y) // 5))
+        edge_values = np.concatenate([local_y[:edge_count], local_y[-edge_count:]])
+        baseline = float(np.nanpercentile(edge_values, 35))
+        height = float(y[peak_index]) - baseline
+        if height <= max(float(np.nanpercentile(y, 95)) * 0.015, 1.0):
+            return None
+        half = baseline + 0.5 * height
+        left = peak_index
+        while left > 0 and y[left] > half and x[left] >= x[peak_index] - window_radius:
+            left -= 1
+        right = peak_index
+        while right < len(y) - 1 and y[right] > half and x[right] <= x[peak_index] + window_radius:
+            right += 1
+        if left == peak_index or right == peak_index:
+            return None
+        left_x = self._interpolated_crossing_x(x, y, left, left + 1, half)
+        right_x = self._interpolated_crossing_x(x, y, right, right - 1, half)
+        width = abs(float(right_x) - float(left_x))
+        if not np.isfinite(width):
+            return None
+        return float(np.clip(width, 0.04, 0.90))
+
+    @staticmethod
+    def _interpolated_crossing_x(x: np.ndarray, y: np.ndarray, index_a: int, index_b: int, level: float) -> float:
+        xa = float(x[index_a])
+        xb = float(x[index_b])
+        ya = float(y[index_a])
+        yb = float(y[index_b])
+        denominator = yb - ya
+        if abs(denominator) < 1.0e-12:
+            return xa
+        fraction = (float(level) - ya) / denominator
+        return xa + float(np.clip(fraction, 0.0, 1.0)) * (xb - xa)
 
     def _optimized_phase_profile_parameters(
         self,

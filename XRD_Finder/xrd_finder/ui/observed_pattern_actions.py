@@ -187,7 +187,20 @@ class PhaseFinderObservedPatternActionsMixin:
             color = self._observed_pattern_color(item.pattern.id)
             base_width = float(getattr(getattr(plot_style, "observed", None), "width", 1.35))
             width = base_width + 0.75 if active else max(base_width, 0.5)
-            curve_item = self.match_plot.plot(x_plot, y, pen=pg.mkPen(color, width=width))
+            settings = getattr(self, "plot_view_settings", None)
+            draw_mode = str(getattr(settings, "observed_draw_mode", "Line") or "Line")
+            show_line = draw_mode in {"Line", "Line + scatter"}
+            show_scatter = draw_mode in {"Scatter", "Line + scatter"}
+            marker_size = int(getattr(getattr(plot_style, "marker", None), "size", 7)) + (2 if active else 0)
+            curve_item = self.match_plot.plot(
+                x_plot,
+                y,
+                pen=pg.mkPen(color, width=width) if show_line else None,
+                symbol="o" if show_scatter else None,
+                symbolSize=marker_size if show_scatter else None,
+                symbolBrush=pg.mkBrush(color) if show_scatter else None,
+                symbolPen=pg.mkPen(color, width=1.0) if show_scatter else None,
+            )
             try:
                 curve_item._xrd_pattern_id = item.pattern.id
             except Exception:
@@ -196,11 +209,11 @@ class PhaseFinderObservedPatternActionsMixin:
             legend_proxy = self.match_plot.plot(
                 [],
                 [],
-                pen=pg.mkPen(color, width=width),
-                symbol="o" if active else None,
-                symbolSize=int(getattr(getattr(plot_style, "marker", None), "size", 7)) + (2 if active else 0),
-                symbolBrush=pg.mkBrush(color) if active else None,
-                symbolPen=pg.mkPen("#111111", width=1.2) if active else None,
+                pen=pg.mkPen(color, width=width) if show_line else None,
+                symbol="o" if show_scatter or active else None,
+                symbolSize=marker_size if show_scatter or active else None,
+                symbolBrush=pg.mkBrush(color) if show_scatter or active else None,
+                symbolPen=pg.mkPen(color, width=1.0) if show_scatter else pg.mkPen("#111111", width=1.2) if active else None,
                 name=(f"* {item.name}" if active else item.name),
             )
             try:
@@ -220,40 +233,91 @@ class PhaseFinderObservedPatternActionsMixin:
         if x_values and y_values and not self.match_plot_view_initialized:
             self._reset_match_plot_view()
 
+    def _redraw_estimated_background_components_for_current_view(self) -> None:
+        patterns = self._patterns_to_display()
+        loaded_patterns = apply_pattern_offsets(
+            load_observed_patterns(patterns, None, normalize=self.normalize_observed_patterns),
+            self.show_all_selected_patterns,
+            self.pattern_stack_offset_percent,
+        )
+        self._draw_estimated_background_components(loaded_patterns)
+
     def _draw_estimated_background_components(self, loaded_patterns) -> None:
         for item in loaded_patterns:
             pattern = item.pattern
             if getattr(pattern, "processed_background_removed", False):
                 continue
-            components = (
-                (getattr(pattern, "estimated_background_points", []), "#202124", "physical background"),
-                (
-                    getattr(pattern, "estimated_background_with_halo_points", []),
-                    "#1a73e8",
-                    "background + amorphous phase",
-                ),
+            physical = self._background_component_plot_values(
+                item,
+                getattr(pattern, "estimated_background_points", []),
             )
-            for points, color, label in components:
-                if not points:
+            total = self._background_component_plot_values(
+                item,
+                getattr(pattern, "estimated_background_with_halo_points", []),
+            )
+            if physical is not None and total is not None:
+                self._draw_amorphous_background_fill(pattern.id, physical, total)
+            for component, color, label, width in (
+                (physical, "#202124", "physical background", 1.8),
+                (total, "#1a73e8", "background + amorphous phase", 2.0),
+            ):
+                if component is None:
                     continue
-                values = np.asarray(points, dtype=float)
-                if values.ndim != 2 or values.shape[1] < 2 or len(values) < 2:
-                    continue
-                y = np.interp(item.x, values[:, 0], values[:, 1]) + float(item.offset)
-                x_plot, y_plot = self._crop_curve_to_ranges(item.x, y, self._valid_crop_ranges(pattern))
-                if len(x_plot) == 0:
-                    continue
-                curve = self.match_plot.plot(x_plot, y_plot, pen=pg.mkPen(color, width=1.8), name=label)
+                x_plot, y_plot = component
+                curve = self.match_plot.plot(x_plot, y_plot, pen=pg.mkPen(color, width=width), name=label)
                 try:
                     curve._xrd_pattern_id = pattern.id
                 except Exception:
                     pass
                 self.plot_layers["background"].append(curve)
 
+    def _background_component_plot_values(self, item, points) -> tuple[np.ndarray, np.ndarray] | None:
+        if not points:
+            return None
+        values = np.asarray(points, dtype=float)
+        if values.ndim != 2 or values.shape[1] < 2 or len(values) < 2:
+            return None
+        y = np.interp(item.x, values[:, 0], values[:, 1]) + float(item.offset)
+        x_plot, y_plot = self._crop_curve_to_ranges(item.x, y, self._valid_crop_ranges(item.pattern))
+        if len(x_plot) == 0:
+            return None
+        return x_plot, y_plot
+
+    def _draw_amorphous_background_fill(
+        self,
+        pattern_id: str,
+        physical: tuple[np.ndarray, np.ndarray],
+        total: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        physical_x, physical_y = physical
+        total_x, total_y = total
+        if len(physical_x) < 2 or len(total_x) < 2:
+            return
+        if len(physical_x) != len(total_x) or not np.allclose(physical_x, total_x, rtol=0.0, atol=1.0e-9):
+            total_y = np.interp(physical_x, total_x, total_y)
+            total_x = physical_x
+        lower = np.minimum(physical_y, total_y)
+        upper = np.maximum(physical_y, total_y)
+        lower_curve = pg.PlotDataItem(physical_x, lower, pen=pg.mkPen((0, 0, 0, 0)))
+        upper_curve = pg.PlotDataItem(total_x, upper, pen=pg.mkPen((0, 0, 0, 0)))
+        fill = pg.FillBetweenItem(lower_curve, upper_curve, brush=pg.mkBrush(26, 115, 232, 36))
+        for item in (lower_curve, upper_curve, fill):
+            try:
+                item._xrd_pattern_id = pattern_id
+            except Exception:
+                pass
+            self.match_plot.addItem(item)
+            self.plot_layers["background"].append(item)
+
 
     def _observed_pattern_color(self, pattern_id: str) -> str:
+        observed_color = getattr(getattr(getattr(self, "plot_style", None), "observed", None), "color", None) or "#202124"
+        active_pattern = self._active_pattern()
+        if not getattr(self, "show_all_selected_patterns", False):
+            return observed_color
+        if active_pattern is not None and pattern_id == getattr(active_pattern, "id", ""):
+            return observed_color
         palette = [
-            getattr(getattr(getattr(self, "plot_style", None), "observed", None), "color", None) or "#202124",
             "#d93025",
             "#1a73e8",
             "#188038",
@@ -335,17 +399,31 @@ class PhaseFinderObservedPatternActionsMixin:
                 )
             except Exception:
                 continue
-            y = scale_profile_to_reference(y, reference_max)
+            plot_style = getattr(self, "plot_style", None)
+            phase_scale = max(float(getattr(plot_style, "phase_profile_scale", 1.0)) if plot_style is not None else 1.0, 0.0)
+            y = scale_profile_to_reference(y, reference_max * phase_scale)
             if self.show_all_selected_patterns:
                 y = y + y_offset
                 y_offset += max(float(np.nanmax(y) - np.nanmin(y)), reference_max, 1.0) * (self.pattern_stack_offset_percent / 100.0)
             color = colors[index % len(colors)]
-            item = plot_profile(self.match_plot, x, y, color, f"calc: {phase.name}", width=1.35)
+            width = float(getattr(getattr(plot_style, "phase", None), "width", 1.35)) if plot_style is not None else 1.35
+            item = plot_profile(self.match_plot, x, y, color, f"calc: {phase.name}", width=width)
             self.plot_layers["calculated_profile"].append(item)
             if self.show_hkl_labels:
                 baseline = float(np.nanmin(y))
-                top = baseline + max(reference_max * 0.18, 1.0)
-                self.plot_layers["hkl"].extend(plot_hkl_sticks(self.match_plot, peaks, color, baseline, top, label=f"hkl: {phase.name}"))
+                tick_height = max(reference_max * 0.18, 1.0)
+                tick_width = float(getattr(getattr(plot_style, "stick", None), "width", 1.6)) if plot_style is not None else 1.6
+                self.plot_layers["hkl"].extend(
+                    plot_hkl_sticks(
+                        self.match_plot,
+                        peaks,
+                        color,
+                        baseline,
+                        tick_height,
+                        label=f"hkl: {phase.name}",
+                        width=tick_width,
+                    )
+                )
 
     def _plot_view_range(self) -> tuple[tuple[float, float], tuple[float, float]]:
         view_range = self.match_plot.plotItem.vb.viewRange()

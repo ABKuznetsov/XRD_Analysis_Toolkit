@@ -19,7 +19,6 @@ class PhaseFinderProjectStateActionsMixin:
             show_all_selected_patterns=bool(self.show_all_selected_patterns),
             pattern_stack_offset_percent=int(self.pattern_stack_offset_percent),
             normalize_observed_patterns=bool(self.normalize_observed_patterns),
-            auto_refine_cells_on_add=bool(getattr(self, "auto_refine_cells_on_add", False)),
             grid_visible=bool(self.grid_visible),
             show_hkl_labels=bool(self.show_hkl_labels),
             right_tab=right_tab,
@@ -43,7 +42,7 @@ class PhaseFinderProjectStateActionsMixin:
             inorganics_checked=self.inorganics_checkbox.isChecked() if self.inorganics_checkbox is not None else True,
             organics_checked=self.organics_checkbox.isChecked() if self.organics_checkbox is not None else False,
             structural_data_checked=self.structural_data_checkbox.isChecked() if self.structural_data_checkbox is not None else True,
-            reference_patterns_checked=self.reference_patterns_checkbox.isChecked() if self.reference_patterns_checkbox is not None else True,
+            reference_patterns_checked=self.reference_patterns_checkbox.isChecked() if self.reference_patterns_checkbox is not None else False,
             rank_by_probability_checked=self.rank_by_probability_checkbox.isChecked() if self.rank_by_probability_checkbox is not None else True,
         )
 
@@ -58,7 +57,6 @@ class PhaseFinderProjectStateActionsMixin:
         self.show_all_selected_patterns = bool(state.show_all_selected_patterns)
         self.pattern_stack_offset_percent = int(state.pattern_stack_offset_percent)
         self.normalize_observed_patterns = bool(getattr(state, "normalize_observed_patterns", False))
-        self.auto_refine_cells_on_add = bool(getattr(state, "auto_refine_cells_on_add", False))
         self.grid_visible = bool(state.grid_visible)
         self.show_hkl_labels = bool(state.show_hkl_labels)
         if self.finder_action_bar is not None:
@@ -66,7 +64,6 @@ class PhaseFinderProjectStateActionsMixin:
             self.finder_action_bar.pattern_display_mode.setCurrentText(mode)
             self.finder_action_bar.pattern_offset_slider.setValue(max(0, min(150, self.pattern_stack_offset_percent)))
             self.finder_action_bar.normalize_patterns_checkbox.setChecked(self.normalize_observed_patterns)
-            self.finder_action_bar.auto_refine_cells_checkbox.setChecked(self.auto_refine_cells_on_add)
         self._restore_filter_state(state)
         if state.candidate_rows:
             self._set_candidate_rows(self._candidate_state_rows(state.candidate_rows))

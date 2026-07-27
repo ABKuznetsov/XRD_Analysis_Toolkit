@@ -98,8 +98,17 @@ class PlotViewSettings:
     calculated_color: str = "#0b8043"
     background_color: str = "#9aa0a6"
     reference_color: str = "#1a73e8"
+    observed_draw_mode: str = "Line"
     observed_width: float = 1.35
     calculated_width: float = 1.6
+    background_width: float = 0.9
+    phase_profile_width: float = 1.1
+    reference_width: float = 1.2
+    stick_width: float = 1.6
+    phase_profile_scale: float = 1.0
+    preview_stick_fraction: float = 0.16
+    phase_tick_fraction: float = 0.045
+    difference_fraction: float = 0.24
     marker_size: int = 7
     marker_shape: str = "Circle"
 
@@ -127,11 +136,15 @@ def plot_style_from_view_settings(settings: PlotViewSettings) -> PlotStyle:
     return PlotStyle(
         observed=PlotLineStyle(width=settings.observed_width, color=settings.observed_color),
         calculated=PlotLineStyle(width=settings.calculated_width, color=settings.calculated_color),
-        phase=PlotLineStyle(width=max(settings.calculated_width - 0.1, 0.5)),
-        background=PlotLineStyle(width=max(settings.calculated_width - 0.7, 0.5), color=settings.background_color),
-        reference=PlotLineStyle(width=settings.calculated_width, color=settings.reference_color),
-        stick=PlotLineStyle(width=max(settings.calculated_width + 1.1, 0.5)),
+        phase=PlotLineStyle(width=max(settings.phase_profile_width, 0.2)),
+        background=PlotLineStyle(width=max(settings.background_width, 0.2), color=settings.background_color),
+        reference=PlotLineStyle(width=max(settings.reference_width, 0.2), color=settings.reference_color),
+        stick=PlotLineStyle(width=max(settings.stick_width, 0.2)),
         marker=PlotMarkerStyle(size=settings.marker_size, symbol=marker_symbol),
+        phase_profile_scale=max(float(settings.phase_profile_scale), 0.0),
+        preview_stick_fraction=max(float(settings.preview_stick_fraction), 0.0),
+        phase_tick_fraction=max(float(settings.phase_tick_fraction), 0.0),
+        difference_fraction=max(float(settings.difference_fraction), 0.0),
     )
 
 
@@ -270,6 +283,11 @@ class PlotViewSettingsWidget(QScrollArea):
                 color: #eaf2ff;
                 padding: 8px;
                 font-weight: 700;
+            }
+            QLabel#lineGroupTitle {
+                color: #d8dee7;
+                font-weight: 700;
+                padding: 8px 2px 2px 2px;
             }
             QTableWidget#profileCandidateTable {
                 background: #1b2026;
@@ -769,10 +787,14 @@ class PlotViewSettingsWidget(QScrollArea):
 
     def _lines_section(self) -> QWidget:
         widget = QWidget()
-        form = QFormLayout(widget)
-        self._style_form(form)
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
         self.observed_color_input = QLineEdit("#202124")
         self.observed_color_input.textChanged.connect(self._emit_settings)
+        self.observed_draw_mode_combo = QComboBox()
+        self.observed_draw_mode_combo.addItems(["Line", "Scatter", "Line + scatter"])
+        self.observed_draw_mode_combo.currentTextChanged.connect(self._emit_settings)
         self.calculated_color_input = QLineEdit("#0b8043")
         self.calculated_color_input.textChanged.connect(self._emit_settings)
         self.background_color_input = QLineEdit("#9aa0a6")
@@ -781,17 +803,78 @@ class PlotViewSettingsWidget(QScrollArea):
         self.reference_color_input.textChanged.connect(self._emit_settings)
         self.observed_width_spin = self._double_spin(0.5, 5.0, 1.35, 0.1)
         self.calculated_width_spin = self._double_spin(0.5, 5.0, 1.6, 0.1)
-        style_row = QWidget()
-        row_layout = QHBoxLayout(style_row)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.addWidget(self.observed_width_spin)
-        row_layout.addWidget(self.calculated_width_spin)
-        form.addRow("Observed color", self._color_control(self.observed_color_input))
-        form.addRow("Calculated color", self._color_control(self.calculated_color_input))
-        form.addRow("Background color", self._color_control(self.background_color_input))
-        form.addRow("Reference color", self._color_control(self.reference_color_input))
-        form.addRow("Observed / calculated", style_row)
+        self.background_width_spin = self._double_spin(0.2, 5.0, 0.9, 0.1)
+        self.phase_profile_width_spin = self._double_spin(0.2, 5.0, 1.1, 0.1)
+        self.reference_width_spin = self._double_spin(0.2, 5.0, 1.2, 0.1)
+        self.stick_width_spin = self._double_spin(0.2, 6.0, 1.6, 0.1)
+        self.phase_profile_scale_spin = self._double_spin(0.0, 2.0, 1.0, 0.05)
+        self.preview_stick_height_spin = self._double_spin(0.02, 0.5, 0.16, 0.01)
+        self.phase_tick_height_spin = self._double_spin(0.01, 0.18, 0.045, 0.005)
+        self.difference_height_spin = self._double_spin(0.05, 0.6, 0.24, 0.01)
+        self._add_line_group(
+            layout,
+            "Observed profile",
+            [
+                ("Color", self._color_control(self.observed_color_input)),
+                ("Display", self.observed_draw_mode_combo),
+                ("Line width", self.observed_width_spin),
+            ],
+        )
+        self._add_line_group(
+            layout,
+            "Calculated total",
+            [
+                ("Color", self._color_control(self.calculated_color_input)),
+                ("Line width", self.calculated_width_spin),
+            ],
+        )
+        self._add_line_group(
+            layout,
+            "Individual phase profiles",
+            [
+                ("Line width", self.phase_profile_width_spin),
+                ("Profile scale", self.phase_profile_scale_spin),
+            ],
+        )
+        self._add_line_group(
+            layout,
+            "Reference lines and tick marks",
+            [
+                ("Preview stick height", self.preview_stick_height_spin),
+                ("Reference width", self.reference_width_spin),
+                ("Tick lane height", self.phase_tick_height_spin),
+                ("Stick width", self.stick_width_spin),
+            ],
+        )
+        self._add_line_group(
+            layout,
+            "Background",
+            [
+                ("Color", self._color_control(self.background_color_input)),
+                ("Line width", self.background_width_spin),
+            ],
+        )
+        self._add_line_group(
+            layout,
+            "Difference curve",
+            [
+                ("Lane height", self.difference_height_spin),
+            ],
+        )
+        layout.addStretch(1)
         return widget
+
+    def _add_line_group(self, layout: QVBoxLayout, title: str, rows: list[tuple[str, QWidget]]) -> None:
+        label = QLabel(title)
+        label.setObjectName("lineGroupTitle")
+        layout.addWidget(label)
+        group = QWidget()
+        form = QFormLayout(group)
+        self._style_form(form)
+        form.setContentsMargins(12, 2, 12, 6)
+        for row_label, control in rows:
+            form.addRow(row_label, control)
+        layout.addWidget(group)
 
     def _markers_section(self) -> QWidget:
         widget = QWidget()
@@ -966,8 +1049,17 @@ class PlotViewSettingsWidget(QScrollArea):
             calculated_color=self.calculated_color_input.text().strip() or "#0b8043",
             background_color=self.background_color_input.text().strip() or "#9aa0a6",
             reference_color=self.reference_color_input.text().strip() or "#1a73e8",
+            observed_draw_mode=self.observed_draw_mode_combo.currentText(),
             observed_width=float(self.observed_width_spin.value()),
             calculated_width=float(self.calculated_width_spin.value()),
+            background_width=float(self.background_width_spin.value()),
+            phase_profile_width=float(self.phase_profile_width_spin.value()),
+            reference_width=float(self.reference_width_spin.value()),
+            stick_width=float(self.stick_width_spin.value()),
+            phase_profile_scale=float(self.phase_profile_scale_spin.value()),
+            preview_stick_fraction=float(self.preview_stick_height_spin.value()),
+            phase_tick_fraction=float(self.phase_tick_height_spin.value()),
+            difference_fraction=float(self.difference_height_spin.value()),
             marker_size=int(self.marker_size_spin.value()),
             marker_shape=self.marker_shape_combo.currentText(),
         )
@@ -1072,11 +1164,20 @@ class PlotViewSettingsWidget(QScrollArea):
         self.layer_peak_labels_checkbox.setChecked(settings.layer_peak_labels_visible)
         self.layer_unknown_peaks_checkbox.setChecked(settings.layer_unknown_peaks_visible)
         self.observed_color_input.setText(settings.observed_color)
+        self.observed_draw_mode_combo.setCurrentText(settings.observed_draw_mode if settings.observed_draw_mode in {"Line", "Scatter", "Line + scatter"} else "Line")
         self.calculated_color_input.setText(settings.calculated_color)
         self.background_color_input.setText(settings.background_color)
         self.reference_color_input.setText(settings.reference_color)
         self.observed_width_spin.setValue(settings.observed_width)
         self.calculated_width_spin.setValue(settings.calculated_width)
+        self.background_width_spin.setValue(settings.background_width)
+        self.phase_profile_width_spin.setValue(settings.phase_profile_width)
+        self.reference_width_spin.setValue(settings.reference_width)
+        self.stick_width_spin.setValue(settings.stick_width)
+        self.phase_profile_scale_spin.setValue(settings.phase_profile_scale)
+        self.preview_stick_height_spin.setValue(settings.preview_stick_fraction)
+        self.phase_tick_height_spin.setValue(settings.phase_tick_fraction)
+        self.difference_height_spin.setValue(settings.difference_fraction)
         self.marker_size_spin.setValue(settings.marker_size)
         self.marker_shape_combo.setCurrentText(settings.marker_shape)
 

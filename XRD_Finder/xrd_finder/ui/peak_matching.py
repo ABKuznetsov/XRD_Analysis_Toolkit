@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, peak_prominences, peak_widths
 
 
 @dataclass(slots=True)
@@ -13,6 +13,18 @@ class PhaseAlignmentEstimate:
     total_peaks: int = 0
     score: float = float("inf")
     status: str = "unmatched"
+
+
+@dataclass(slots=True)
+class ObservedLineRecord:
+    two_theta: float
+    area: float
+    fwhm: float
+    height: float = 0.0
+
+    def __iter__(self):
+        yield self.two_theta
+        yield self.area
 
 
 def nearest_index(sorted_values: np.ndarray, value: float) -> int:
@@ -38,7 +50,7 @@ def observed_peak_positions(x, corrected_y) -> np.ndarray:
     return np.sort(x_values[peak_indices])
 
 
-def observed_peak_records(x, corrected_y, limit: int = 24) -> list[tuple[float, float]]:
+def observed_peak_records(x, corrected_y, limit: int = 24) -> list[ObservedLineRecord]:
     y = np.asarray(corrected_y, dtype=float)
     x_values = np.asarray(x, dtype=float)
     if len(y) < 5 or float(np.nanmax(y)) <= 0:
@@ -47,12 +59,19 @@ def observed_peak_records(x, corrected_y, limit: int = 24) -> list[tuple[float, 
     if len(peak_indices) == 0:
         return []
     prominences = properties.get("prominences", np.zeros_like(peak_indices, dtype=float))
+    widths = properties.get("widths", np.ones_like(peak_indices, dtype=float))
+    step = _median_step(x_values)
     records = [
-        (float(x_values[index]), max(float(y[index]), float(prominence), 0.0))
-        for index, prominence in zip(peak_indices, prominences, strict=False)
+        ObservedLineRecord(
+            two_theta=float(x_values[index]),
+            area=max(float(prominence) * max(float(width), 1.0) * step, float(prominence), 0.0),
+            fwhm=float(np.clip(float(width) * step, 0.05, 0.90)),
+            height=max(float(y[index]), float(prominence), 0.0),
+        )
+        for index, prominence, width in zip(peak_indices, prominences, widths, strict=False)
         if np.isfinite(x_values[index]) and np.isfinite(y[index]) and y[index] > 0
     ]
-    records.sort(key=lambda item: item[1], reverse=True)
+    records.sort(key=lambda item: item.height, reverse=True)
     return records[:limit]
 
 
@@ -76,6 +95,30 @@ def _observed_peak_indices(
         distance=distance,
         width=(1, max_width),
     )
+    height_floor = max(noise * 2.2, float(np.nanpercentile(finite, 65)) if len(finite) else 0.0)
+    height_distance = max(2, int(round(0.045 / max(step, 1.0e-6))))
+    height_indices, _height_properties = find_peaks(
+        y,
+        height=height_floor,
+        distance=height_distance,
+    )
+    if len(height_indices):
+        top_height = height_indices[np.argsort(y[height_indices])[-160:]]
+        combined = np.unique(np.concatenate([indices, top_height])).astype(int)
+        if len(combined):
+            combined_prominences = peak_prominences(y, combined)[0]
+            combined_widths = peak_widths(y, combined, rel_height=0.5)[0]
+            keep = (
+                np.isfinite(combined_prominences)
+                & np.isfinite(combined_widths)
+                & (combined_prominences >= max(noise * 1.15, 1.0))
+                & (combined_widths <= max_width)
+            )
+            indices = combined[keep]
+            properties = {
+                "prominences": combined_prominences[keep],
+                "widths": combined_widths[keep],
+            }
     return indices, properties
 
 

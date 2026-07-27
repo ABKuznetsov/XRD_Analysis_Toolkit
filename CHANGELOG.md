@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.2.0 - 2026-07-27
+
+### Added
+
+- Added indexed peak fingerprints for fast full-database candidate selection.
+- Added optional PDF-2 participation in automatic ranking through the reference-pattern filter.
+- Added staged direct, overlap and hidden-phase Gain ranking.
+- Added lightweight cell refinement, phase-specific profile widths and updated peak positions.
+- Added independent physical/amorphous background handling and expanded plot/export controls.
+
+### Changed
+
+- Reworked Match around strong experimental peak positions and relative intensities.
+- Reworked Gain to prioritize unexplained experimental evidence over generic profile similarity.
+- Improved candidate ranking responsiveness, phase persistence and sample-card phase data.
+
+### Fixed
+
+- Fixed background state loss while phases are added or changed.
+- Fixed phase and unknown markers appearing artificially above the experimental profile.
+- Fixed several stale Match/Gain values and candidate-table navigation issues.
+
 ## 1.1.2 - 2026-07-10
 
 ### Added

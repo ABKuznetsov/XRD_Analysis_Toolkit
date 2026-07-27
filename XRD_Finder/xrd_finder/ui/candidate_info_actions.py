@@ -35,19 +35,35 @@ class PhaseFinderCandidateInfoActionsMixin:
         if not candidate:
             return
         self._enrich_candidate_with_structure_info(candidate)
-        self._update_candidate_gain(candidate)
+        if self.match_candidates:
+            candidate["Match (%)"] = ""
         self._refresh_candidate_table_row(row, candidate)
         self.candidate_table.set_iic(row, candidate.get("I/Ic*", ""))
         self._update_compound_card(candidate)
         self._preview_candidate_row(row)
 
     def _update_candidate_gain(self, candidate: dict[str, str]) -> None:
-        if not self.match_candidates:
+        probability_data = self._probability_observed_data() if hasattr(self, "_probability_observed_data") else None
+        if probability_data is None:
             candidate.pop("Gain (%)", None)
             return
-        context = self._candidate_gain_context()
-        if context is None:
-            return
+        _observed_x, _corrected, observed_records = probability_data
+        gain_records = observed_records
+        gain_context = None
+        if self.match_candidates:
+            gain_context = self._candidate_gain_context()
+            if gain_context is None:
+                candidate.pop("Gain (%)", None)
+                return
+            gain_context["gain_stage"] = self._gain_stage_for_context(gain_context)
+            try:
+                gain_records = self._gain_stage_records(
+                    gain_context,
+                    gain_context["gain_stage"],
+                    limit=80,
+                )
+            except Exception:
+                gain_records = []
         row = [
             candidate.get("Source", ""),
             candidate.get("Entry", ""),
@@ -58,8 +74,26 @@ class PhaseFinderCandidateInfoActionsMixin:
             "",
             candidate.get("I/Ic*", "") or candidate.get("I/Ic", ""),
         ]
-        gain = self._candidate_row_integral_gain(row, context)
-        candidate["Gain (%)"] = f"{gain:.1f}%" if gain < 10.0 else f"{gain:.0f}%"
+        selected_keys = {self._candidate_key(item) for item in (self.match_candidates or [])}
+        if self._candidate_key(candidate) in selected_keys:
+            gain = 0.0
+        elif gain_context is not None:
+            gain = self._candidate_row_integral_gain(row, gain_context)
+        else:
+            gain = (
+                self._candidate_row_peak_probability_from_records(
+                    row,
+                    gain_records,
+                    allow_cif_fallback=False,
+                    use_cache=True,
+                )
+                if gain_records
+                else 0.0
+            )
+        if gain > 0:
+            candidate["Gain (%)"] = f"{gain:.1f}%" if gain < 10.0 else f"{gain:.0f}%"
+        else:
+            candidate.pop("Gain (%)", None)
 
     def _update_compound_card(self, candidate: dict[str, str] | None) -> None:
         if self.compound_card is not None:
@@ -376,21 +410,22 @@ class PhaseFinderCandidateInfoActionsMixin:
     def _refresh_candidate_table_row(self, row: int, candidate: dict[str, str]) -> None:
         if row < 0 or row >= self.candidate_table.rowCount():
             return
-        for header, value in {
+        values = {
             "Formula": candidate.get("Formula", ""),
             "Phase": candidate.get("Phase", ""),
             "Sp. gr.": candidate.get("Space group", ""),
-            "Match (%)": candidate.get("Match (%)", ""),
+            "Match (%)": "" if self.match_candidates else candidate.get("Match (%)", ""),
             "Gain (%)": candidate.get("Gain (%)", ""),
             "I/Ic": candidate.get("I/Ic*", "") or candidate.get("I/Ic", ""),
-        }.items():
+        }
+        for header, value in values.items():
             column = -1
             for index in range(self.candidate_table.columnCount()):
                 header_item = self.candidate_table.horizontalHeaderItem(index)
                 if header_item is not None and header_item.text() == header:
                     column = index
                     break
-            if column >= 0 and value:
+            if column >= 0 and (value or header == "Match (%)"):
                 self.candidate_table.setItem(row, column, QTableWidgetItem(value))
 
     def _show_candidate_context_menu(self, global_point) -> None:

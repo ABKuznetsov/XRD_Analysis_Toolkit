@@ -21,6 +21,8 @@ from PySide6.QtWidgets import (
 
 BACKGROUND_METHOD_LABELS = {
     "auto": "conservative XRD baseline",
+    "auto_physical_model": "auto physical baseline",
+    "auto_total_model": "auto physical + amorphous",
     "auto_with_broad": "XRD baseline + broad component",
     "exponential_1": "single-exponential baseline",
     "exponential_2": "double-exponential baseline",
@@ -403,6 +405,8 @@ class BackgroundRemovalPanel(QWidget):
         self._auto_model = auto_model
         self._auto_support_width = float(getattr(auto_model, "support_width_deg", 7.0))
         self._auto_smoothing = float(getattr(auto_model, "smoothing_deg", 4.0))
+        self._has_initial_state = isinstance(initial_state, dict)
+        self._auto_total_defaults_applied = False
         self._loading_settings = False
         self._active_target = "physical"
         self._target_settings = {
@@ -421,7 +425,7 @@ class BackgroundRemovalPanel(QWidget):
                 "floor_percentile": int(getattr(auto_plan, "floor_percentile", 15)),
             },
         }
-        if isinstance(initial_state, dict):
+        if self._has_initial_state:
             saved_settings = initial_state.get("target_settings")
             if isinstance(saved_settings, dict):
                 for target in ("physical", "total"):
@@ -439,6 +443,8 @@ class BackgroundRemovalPanel(QWidget):
 
         self._method = QComboBox()
         self._method.addItem("Auto conservative baseline", "auto")
+        self._method.addItem("Auto physical baseline", "auto_physical_model")
+        self._method.addItem("Auto physical + amorphous", "auto_total_model")
         self._method.addItem("Exponential", "exponential")
         self._method.addItem("Polynomial", "polynomial")
         self._method.addItem("AsLS", "asls")
@@ -467,7 +473,7 @@ class BackgroundRemovalPanel(QWidget):
         self._low_angle_end = _SliderRow(12, 35, 20)
         self._low_angle_width = _SliderRow(1, 15, 4)
         self._low_angle_strength = _SliderRow(0, 100, 100, "%")
-        if isinstance(initial_state, dict):
+        if self._has_initial_state:
             self._low_angle_end.set_value(int(initial_state.get("low_angle_end", 20)))
             self._low_angle_width.set_value(int(initial_state.get("low_angle_width", 4)))
             self._low_angle_strength.set_value(int(initial_state.get("low_angle_strength", 100)))
@@ -478,8 +484,8 @@ class BackgroundRemovalPanel(QWidget):
         self._exponential_terms.released.connect(self.previewRequested)
         self._snip_window.released.connect(self.previewRequested)
         self._floor.released.connect(self.previewRequested)
-        self._show_background.toggled.connect(self._method_changed)
-        self._show_total.toggled.connect(self._method_changed)
+        self._show_background.toggled.connect(self._display_changed)
+        self._show_total.toggled.connect(self._display_changed)
         self._low_angle_cuvette.toggled.connect(self._method_changed)
         self._low_angle_end.released.connect(self.previewRequested)
         self._low_angle_width.released.connect(self.previewRequested)
@@ -543,8 +549,24 @@ class BackgroundRemovalPanel(QWidget):
             return
         self._store_target_settings(self._active_target)
         target = self.target()
+        if target == "total" and not self._auto_total_defaults_applied:
+            self._apply_auto_total_defaults()
+            self._auto_total_defaults_applied = True
         self._load_target_settings(target, emit_preview=False)
         self._active_target = target
+        if target == "total" and not self._show_total.isChecked():
+            self._show_total.setChecked(True)
+        elif target == "physical" and not self._show_background.isChecked():
+            self._show_background.setChecked(True)
+        self._method_changed(emit_preview=True)
+
+    def _display_changed(self, *_args) -> None:
+        if self._loading_settings:
+            return
+        if self._show_total.isChecked() and not self._show_background.isChecked():
+            previous = self._show_background.blockSignals(True)
+            self._show_background.setChecked(True)
+            self._show_background.blockSignals(previous)
         self._method_changed(emit_preview=True)
 
     def _method_changed(self, *_args, emit_preview: bool = True) -> None:
@@ -617,6 +639,28 @@ class BackgroundRemovalPanel(QWidget):
         model = self._auto_model
         method = str(getattr(plan, "method", "auto"))
         floor_percentile = int(getattr(plan, "floor_percentile", 15))
+        active_target = self.target()
+        if active_target == "total":
+            self._target_settings = self._auto_total_target_settings(method, floor_percentile)
+            self._target.setCurrentIndex(max(0, self._target.findData("total")))
+            self._active_target = "total"
+            self._show_background.setChecked(True)
+            self._show_total.setChecked(True)
+            self._low_angle_cuvette.setChecked(False)
+            self._low_angle_end.set_value(20)
+            self._low_angle_width.set_value(4)
+            self._low_angle_strength.set_value(100)
+            settings = self._target_settings["total"]
+            self._method.setCurrentIndex(max(0, self._method.findData(str(settings["method"]))))
+            self._degree.set_value(int(settings["degree"]))
+            self._exponential_terms.set_value(int(settings["exponential_terms"]))
+            self._snip_window.set_value(int(settings["snip_window"]))
+            self._floor.set_value(int(settings["floor_percentile"]))
+            for blocker in blockers:
+                blocker.unblock()
+            self._method_changed(emit_preview=False)
+            self.previewRequested.emit()
+            return
         self._target_settings = {
             "physical": {
                 "method": method,
@@ -651,6 +695,31 @@ class BackgroundRemovalPanel(QWidget):
             blocker.unblock()
         self._method_changed(emit_preview=False)
         self.previewRequested.emit()
+
+    def _apply_auto_total_defaults(self) -> None:
+        plan = self._auto_plan
+        method = str(getattr(plan, "method", "auto"))
+        floor_percentile = int(getattr(plan, "floor_percentile", 15))
+        self._target_settings = self._auto_total_target_settings(method, floor_percentile)
+
+    def _auto_total_target_settings(self, physical_method: str, floor_percentile: int) -> dict[str, dict[str, int | str]]:
+        model = self._auto_model
+        return {
+            "physical": {
+                "method": "auto_physical_model" if model is not None else physical_method,
+                "degree": int(getattr(model, "amorphous_degree", self._default_degree)),
+                "exponential_terms": int(getattr(model, "exponential_terms", 3)),
+                "snip_window": 60,
+                "floor_percentile": int(floor_percentile),
+            },
+            "total": {
+                "method": "auto_total_model" if model is not None else "snip",
+                "degree": int(getattr(model, "amorphous_degree", self._default_degree)),
+                "exponential_terms": int(getattr(model, "exponential_terms", 3)),
+                "snip_window": max(8, int(round(float(getattr(model, "support_width_deg", 7.0)) * 18.0))),
+                "floor_percentile": int(floor_percentile),
+            },
+        }
 
     def target(self) -> str:
         return str(self._target.currentData())

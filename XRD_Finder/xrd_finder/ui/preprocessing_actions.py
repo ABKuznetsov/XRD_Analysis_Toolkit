@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
+from scipy.signal import find_peaks
 
 from xrd_finder.services.preprocessing_service import (
     auto_background_plan,
@@ -139,8 +140,9 @@ class PhaseFinderPreprocessingActionsMixin:
         original_background_points = [list(point) for point in pattern.estimated_background_points]
         original_background_with_halo_points = [list(point) for point in pattern.estimated_background_with_halo_points]
         source_label = pattern.processed_label or "Observed"
-        plan = auto_background_plan(x, y)
-        auto_model = select_background_model(x, y)
+        background_fit_y = self._background_estimation_signal(pattern, x, y)
+        plan = auto_background_plan(x, background_fit_y)
+        auto_model = select_background_model(x, background_fit_y)
         panel = BackgroundRemovalPanel(
             default_degree=plan.degree,
             auto_plan=plan,
@@ -154,13 +156,29 @@ class PhaseFinderPreprocessingActionsMixin:
 
         def settings_model_curve(settings: dict[str, int | str]) -> np.ndarray:
             method = str(settings["method"])
+            if method == "auto_physical_model":
+                physical = getattr(auto_model, "physical_background", None)
+                if physical is not None:
+                    values = np.asarray(physical, dtype=float)
+                    if len(values) == len(y):
+                        return values
+                method = "auto"
+            elif method == "auto_total_model":
+                physical = getattr(auto_model, "physical_background", None)
+                halo = getattr(auto_model, "amorphous_component", None)
+                if physical is not None and halo is not None:
+                    physical_values = np.asarray(physical, dtype=float)
+                    halo_values = np.asarray(halo, dtype=float)
+                    if len(physical_values) == len(y) and len(halo_values) == len(y):
+                        return physical_values + np.clip(halo_values, 0.0, None)
+                method = "snip"
             if method == "exponential":
                 method = f"exponential_{int(settings['exponential_terms'])}"
             elif method == "snip":
                 method = f"snip_{int(settings['snip_window'])}"
             if method == "constant":
-                return np.full_like(y, float(np.nanpercentile(y, int(settings["floor_percentile"]))))
-            return self._estimate_background(x, y, degree=int(settings["degree"]), method=method)
+                return np.full_like(y, float(np.nanpercentile(background_fit_y, int(settings["floor_percentile"]))))
+            return self._estimate_background(x, background_fit_y, degree=int(settings["degree"]), method=method)
 
         def estimate_components() -> tuple[np.ndarray, np.ndarray]:
             save_background_panel_state()
@@ -233,6 +251,77 @@ class PhaseFinderPreprocessingActionsMixin:
             cancel_background_removal,
             subtract_background_components,
         )
+
+    def _background_estimation_signal(self, pattern, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        x = np.asarray(x, dtype=float)
+        y = np.asarray(y, dtype=float)
+        fit_y = np.array(y, dtype=float, copy=True)
+        if len(x) < 12 or len(x) != len(y):
+            return fit_y
+
+        finite = np.isfinite(x) & np.isfinite(fit_y)
+        if int(np.count_nonzero(finite)) < max(8, len(x) // 5):
+            return fit_y
+
+        step_values = np.diff(x[finite])
+        step_values = step_values[np.isfinite(step_values) & (step_values > 0.0)]
+        step = float(np.nanmedian(step_values)) if len(step_values) else 0.03
+        mask = np.zeros(len(x), dtype=bool)
+        known_positions: list[float] = []
+        fwhm = 0.18
+
+        try:
+            candidates = self._profile_candidates_for_pattern(pattern) if hasattr(self, "_profile_candidates_for_pattern") else []
+            if candidates and hasattr(self, "_finder_result_for_pattern"):
+                result, _ = self._finder_result_for_pattern(pattern, candidates)
+                if result is not None:
+                    fwhm = float(getattr(result, "fwhm", fwhm) or fwhm)
+                    for candidate_result in getattr(result, "candidates", []) or []:
+                        for value in getattr(candidate_result, "peak_two_theta", []) or []:
+                            position = float(value)
+                            if np.isfinite(position) and float(x[0]) <= position <= float(x[-1]):
+                                known_positions.append(position)
+        except Exception:
+            known_positions = []
+
+        known_radius = max(0.12, min(0.75, fwhm * 2.6))
+        for position in known_positions:
+            mask |= np.abs(x - position) <= known_radius
+
+        local_y = fit_y[finite]
+        span = max(float(np.nanpercentile(local_y, 99) - np.nanpercentile(local_y, 5)), 1.0)
+        noise = self._background_signal_noise(local_y)
+        try:
+            peak_indices, _ = find_peaks(
+                fit_y,
+                prominence=max(4.5 * noise, 0.025 * span, 1.0),
+                distance=max(3, int(round(0.10 / max(step, 1.0e-6)))),
+            )
+            observed_radius = max(2, int(round(max(0.12, min(0.45, fwhm * 2.0)) / max(step, 1.0e-6))))
+            for peak_index in peak_indices:
+                left = max(0, int(peak_index) - observed_radius)
+                right = min(len(mask), int(peak_index) + observed_radius + 1)
+                mask[left:right] = True
+        except Exception:
+            pass
+
+        valid = finite & ~mask
+        if int(np.count_nonzero(valid)) < max(8, int(0.18 * len(x))):
+            return fit_y
+
+        interpolated = np.interp(x, x[valid], fit_y[valid])
+        suppressed = np.array(fit_y, copy=True)
+        suppressed[mask & finite] = interpolated[mask & finite]
+        return np.minimum(suppressed, fit_y)
+
+    @staticmethod
+    def _background_signal_noise(y: np.ndarray) -> float:
+        differences = np.diff(np.asarray(y, dtype=float))
+        if len(differences) == 0:
+            return 1.0
+        median = float(np.nanmedian(differences))
+        mad = float(np.nanmedian(np.abs(differences - median)))
+        return max(1.4826 * mad / np.sqrt(2.0), 1.0)
 
     def _crop_xrd_patterns_plot(self) -> None:
         patterns = []

@@ -134,12 +134,17 @@ class ObservedPatternProcessor:
         if len(indices) > 150:
             heights = properties.get("prominences", y[indices])
             indices = indices[np.argsort(heights)[-150:]]
+        width_values = peak_widths(y, indices, rel_height=0.5)[0] * step if len(indices) else np.array([], dtype=float)
         ordered = indices[np.argsort(np.asarray(x, dtype=float)[indices])]
+        width_by_index = {
+            int(index): float(np.clip(width, 0.05, 0.90))
+            for index, width in zip(indices, width_values, strict=False)
+        }
         return [
             ObservedPeak(
                 two_theta=float(x[index]),
                 intensity=float(y[index]),
-                fwhm=float(fwhm),
+                fwhm=float(width_by_index.get(int(index), fwhm)),
             )
             for index in ordered
         ]

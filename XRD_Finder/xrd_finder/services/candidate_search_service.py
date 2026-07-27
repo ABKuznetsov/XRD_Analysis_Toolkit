@@ -36,6 +36,7 @@ class CandidateSearchOptions:
 
 class CandidateSearchService:
     STRUCTURAL_RESULT_LIMIT = 500
+    LOCAL_INDEXED_RESULT_LIMIT = 5000
     ONLINE_RESULT_LIMIT = 300
     COMPUTATIONAL_RESULT_LIMIT = 150
     BACKGROUND_DOWNLOAD_LIMIT = 20
@@ -148,16 +149,15 @@ class CandidateSearchService:
             self._emit_search_progress(progress, f"RRUFF: found {len(rows)} candidates total", len(rows), 0, 5)
 
         if options.match_pdf2_enabled and options.reference_patterns_enabled:
-            rows.extend(
-                self.match_pdf2_rows(
-                    self.match_pdf2.search(
-                        text="" if query_elements else query,
-                        elements=query_elements or None,
-                        excluded_elements=options.excluded_elements,
-                        limit=self.STRUCTURAL_RESULT_LIMIT,
-                    )
+            pdf2_rows = self.match_pdf2_rows(
+                self.match_pdf2.search(
+                    text="" if query_elements else query,
+                    elements=query_elements or None,
+                    excluded_elements=options.excluded_elements,
+                    limit=self.STRUCTURAL_RESULT_LIMIT,
                 )
             )
+            rows = pdf2_rows + rows
             self._emit_search_progress(progress, f"PDF-2: found {len(rows)} candidates total", len(rows), 0, 6)
 
         if options.cod_online_enabled and options.structural_data_enabled:
@@ -285,15 +285,14 @@ class CandidateSearchService:
             )
             self._emit_search_progress(progress, f"RRUFF: found {len(rows)} candidates total", len(rows), 0, 3)
         if options.match_pdf2_enabled and options.reference_patterns_enabled:
-            rows.extend(
-                self.match_pdf2_rows(
-                    self.match_pdf2.search(
-                        elements=elements,
-                        excluded_elements=options.excluded_elements,
-                        limit=self.STRUCTURAL_RESULT_LIMIT,
-                    )
+            pdf2_rows = self.match_pdf2_rows(
+                self.match_pdf2.search(
+                    elements=elements,
+                    excluded_elements=options.excluded_elements,
+                    limit=self.STRUCTURAL_RESULT_LIMIT,
                 )
             )
+            rows = pdf2_rows + rows
             self._emit_search_progress(progress, f"PDF-2: found {len(rows)} candidates total", len(rows), 0, 4)
         if options.cod_online_enabled and options.structural_data_enabled:
             cod_key = self.search_cache_key("elements", elements, options.excluded_elements)
@@ -398,17 +397,38 @@ class CandidateSearchService:
                 elements=elements,
                 excluded_elements=options.excluded_elements,
                 sources=options.local_sources,
-                limit=self.STRUCTURAL_RESULT_LIMIT,
+                limit=self.LOCAL_INDEXED_RESULT_LIMIT,
             )
+            text_entries = []
+            if text or elements:
+                text_entries = self.local_phase_cache.search(
+                    text=text,
+                    elements=elements,
+                    excluded_elements=options.excluded_elements,
+                    sources=options.local_sources,
+                    limit=self.LOCAL_INDEXED_RESULT_LIMIT,
+                )
             if peak_entries:
-                return peak_entries
+                return self._dedupe_cached_entries(peak_entries + text_entries)
+            return text_entries
         return self.local_phase_cache.search(
             text=text,
             elements=elements,
             excluded_elements=options.excluded_elements,
             sources=options.local_sources,
-            limit=self.STRUCTURAL_RESULT_LIMIT,
+            limit=self.LOCAL_INDEXED_RESULT_LIMIT,
         )
+
+    def _dedupe_cached_entries(self, entries):
+        seen = set()
+        unique = []
+        for entry in entries:
+            key = (getattr(entry, "source", ""), getattr(entry, "entry_id", ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(entry)
+        return unique
 
     def _search_cod_text_entries(
         self,

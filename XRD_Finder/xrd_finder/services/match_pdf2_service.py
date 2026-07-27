@@ -53,6 +53,7 @@ class MatchPdf2Service:
         self.index_path = self.index_root / "index.sqlite"
         self._entries: list[MatchPdf2Entry] | None = None
         self._details_cache: dict[str, dict[str, object]] = {}
+        self._card_offsets: dict[str, tuple[int, str]] | None = None
         self._lock = threading.RLock()
         self._ensure_schema()
 
@@ -73,6 +74,7 @@ class MatchPdf2Service:
             self.pdf2_path = self.root / "pdf2.dat"
             self._entries = None
             self._details_cache.clear()
+            self._card_offsets = None
 
     def refresh(self) -> int:
         with self._lock:
@@ -83,6 +85,7 @@ class MatchPdf2Service:
         with self._lock:
             self._entries = None
             self._details_cache.clear()
+            self._card_offsets = None
         self._clear_index_for_current_summary()
 
     def search(
@@ -157,24 +160,37 @@ class MatchPdf2Service:
         card_code = self._card_code(entry_id)
         if not card_code:
             return "", ""
-        code_bytes = card_code.encode("ascii")
+        offset = self._card_offset(card_code)
+        if offset is None:
+            return "", ""
+        start, tag_base = offset
+        with self.pdf2_path.open("rb") as handle:
+            handle.seek(start)
+            chunk = handle.read(window_size).decode("latin1", errors="ignore")
+        return chunk, tag_base
+
+    def _card_offset(self, card_code: str) -> tuple[int, str] | None:
+        with self._lock:
+            if self._card_offsets is None:
+                self._card_offsets = self._build_card_offsets()
+            return self._card_offsets.get(card_code)
+
+    def _build_card_offsets(self) -> dict[str, tuple[int, str]]:
+        if not self.pdf2_path.exists():
+            return {}
+        offsets: dict[str, tuple[int, str]] = {}
+        tag_pattern = re.compile(rb"([A-Za-z])(\d{6})([A-Za-z])G")
         with self.pdf2_path.open("rb") as handle:
             with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
-                position = 0
-                while True:
-                    position = mapped.find(code_bytes, position)
-                    if position < 1:
-                        return "", ""
-                    prefix = mapped[position - 1 : position]
-                    suffix = mapped[position + len(code_bytes) : position + len(code_bytes) + 1]
-                    if prefix.isalpha() and suffix.isalpha():
-                        start = position - 1
-                        end = min(start + window_size, len(mapped))
-                        tag_base = (prefix + code_bytes + suffix).decode("ascii", errors="ignore")
-                        chunk = mapped[start:end].decode("latin1", errors="ignore")
-                        if f"{tag_base}G" in chunk or f"{tag_base}I" in chunk:
-                            return chunk, tag_base
-                    position += len(code_bytes)
+                for match in tag_pattern.finditer(mapped):
+                    card_code = match.group(2).decode("ascii")
+                    if card_code in offsets:
+                        continue
+                    tag_base = (
+                        match.group(1) + match.group(2) + match.group(3)
+                    ).decode("ascii")
+                    offsets[card_code] = (match.start(), tag_base)
+        return offsets
 
     def _card_code(self, entry_id: str) -> str:
         text = (entry_id or "").strip()

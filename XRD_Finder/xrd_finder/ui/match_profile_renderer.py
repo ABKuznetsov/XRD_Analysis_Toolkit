@@ -118,6 +118,7 @@ def draw_match_profile_result(
     style: PlotStyle | None = None,
     show_hkl_labels: bool = False,
     show_peak_labels: bool = False,
+    show_background_line: bool = True,
 ) -> None:
     style = style or PlotStyle()
     x = np.asarray(result.pattern_x, dtype=float)
@@ -132,6 +133,7 @@ def draw_match_profile_result(
     background_plot = background + active_plot_offset
     calculated_total_plot = calculated_total + active_plot_offset
     residual = observed_y - calculated_total
+    fit_quality = profile_fit_quality(observed_y, background, calculated_total)
     if len(x) > 2 and len(residual):
         step = float(np.nanmedian(np.diff(x)))
         sigma = max(1.0, min(14.0, float(getattr(result, "fwhm", 0.18) or 0.18) / max(abs(step), 1.0e-6) / 4.0))
@@ -160,13 +162,12 @@ def draw_match_profile_result(
         match_iic[key] = _candidate_iic_value(candidate, estimate_candidate_iic)
         match_zero_shifts[key] = float(result.global_zero_shift)
         match_cell_scales[key] = float(candidate_result.cell_scale)
-        match_alignment_scores[key] = (
-            f"{candidate_result.status} {candidate_result.matched_peaks}/{candidate_result.total_peaks}"
-        )
+        match_alignment_scores[key] = f"fit {fit_quality:.1f}% ({candidate_result.matched_peaks}/{candidate_result.total_peaks})"
+        phase_profile_scale = max(float(getattr(style, "phase_profile_scale", 1.0)), 0.0)
         contribution_item = plot_profile(
             match_plot,
             x,
-            background_plot + profile,
+            background_plot + profile * phase_profile_scale,
             color,
             f"phase {phase_label}",
             width=style.phase.width,
@@ -225,15 +226,13 @@ def draw_match_profile_result(
                 )
             )
         y_span = max(observed_ymax - observed_ymin, observed_ymax, float(active_plot_context.get("height", 0.0)), 1.0)
-        profile_height = max(float(np.nanmax(profile)) if len(profile) else 0.0, y_span * 0.035)
+        preview_height = max(y_span * float(getattr(style, "preview_stick_fraction", 0.16)), y_span * 0.015)
         if show_all_selected_patterns:
             preview_baseline = background_plot + index * y_span * 0.025
-            preview_height = profile_height
             label_y = preview_baseline
         else:
             preview_baseline = background_plot
-            preview_height = profile_height
-            shift_lane_height = y_span * 0.045
+            shift_lane_height = max(y_span * float(getattr(style, "phase_tick_fraction", 0.045)), y_span * 0.01)
             shift_lane_gap = shift_lane_height * 0.85
             shift_lane_top = min(observed_ymin_plot, float(np.nanpercentile(background_plot, 5))) - y_span * 0.12
             shift_lane_baseline = shift_lane_top - index * (shift_lane_height + shift_lane_gap)
@@ -275,19 +274,20 @@ def draw_match_profile_result(
             _tag_plot_items(hkl_items, pattern_id)
             plot_layers["hkl"].extend(hkl_items)
 
-    background_item = plot_profile(
-        match_plot,
-        x,
-        background_plot,
-        style.background.color or "#9aa0a6",
-        "background",
-        width=style.background.width,
-    )
-    _tag_plot_item(background_item, pattern_id)
-    plot_layers["background"].append(background_item)
+    if show_background_line:
+        background_item = plot_profile(
+            match_plot,
+            x,
+            background_plot,
+            style.background.color or "#9aa0a6",
+            "background",
+            width=style.background.width,
+        )
+        _tag_plot_item(background_item, pattern_id)
+        plot_layers["background"].append(background_item)
     residual_peak = float(np.nanmax(np.abs(residual))) if len(residual) else 0.0
     if residual_peak > 0.0:
-        difference_height = y_span * 0.24
+        difference_height = max(y_span * float(getattr(style, "difference_fraction", 0.24)), y_span * 0.03)
         difference_scale = min(1.0, difference_height / max(residual_peak, 1.0e-9))
         difference_baseline = min(observed_ymin_plot, float(np.nanpercentile(background_plot, 5))) - y_span * 0.24
         difference_y = difference_baseline + residual * difference_scale
@@ -301,7 +301,6 @@ def draw_match_profile_result(
         )
         _tag_plot_item(difference_item, pattern_id)
         plot_layers["difference"].append(difference_item)
-    fit_quality = profile_fit_quality(observed_y, background, calculated_total)
     marker_layer_counts = {layer: len(plot_layers.get(layer, [])) for layer in ("coverage_markers", "peak_labels", "unknown_peaks")}
     explained, total_observed = add_peak_coverage_markers(
         x,

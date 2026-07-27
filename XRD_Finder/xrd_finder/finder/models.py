@@ -39,6 +39,17 @@ class FinderCandidateInput:
     structure: object | None = None
 
 
+def candidate_structure_override(
+    candidate: FinderCandidateInput,
+    overrides: dict[str, object],
+) -> object | None:
+    """Return the sample-linked structure for a finder candidate, when available."""
+    structure = overrides.get(candidate.entry_id)
+    if structure is not None:
+        return structure
+    return overrides.get(f"{str(candidate.source or '').upper()}:{candidate.entry_id}")
+
+
 @dataclass(slots=True)
 class FinderInput:
     pattern_path: str

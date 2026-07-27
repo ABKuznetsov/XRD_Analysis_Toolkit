@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from copy import deepcopy
 from pathlib import Path
 import zlib
 
@@ -33,6 +34,7 @@ class CachedProfileCalculator:
     ) -> None:
         self.calculated_pattern_service = calculated_pattern_service or CalculatedPatternService()
         self._sticks_cache: OrderedDict[tuple[str, int, float, float, float, bool], list[HKLPeak]] = OrderedDict()
+        self._structure_cache: OrderedDict[tuple[str, int], object] = OrderedDict()
         self._sticks_cache_limit = max(0, int(sticks_cache_limit))
         self._profile_cache: OrderedDict[tuple[object, ...], np.ndarray] = OrderedDict()
         self._profile_cache_limit = max(0, int(profile_cache_limit))
@@ -60,24 +62,43 @@ class CachedProfileCalculator:
         context: CalculationContext,
         use_lp: bool,
     ) -> list[HKLPeak]:
+        _structure, peaks = self.candidate_structure_and_sticks(cif_path, context, use_lp)
+        return peaks
+
+    def candidate_structure_and_sticks(
+        self,
+        cif_path: str,
+        context: CalculationContext,
+        use_lp: bool,
+    ) -> tuple[object, list[HKLPeak]]:
         path = Path(cif_path)
         stat = path.stat()
+        structure_key = (str(path.resolve()), int(stat.st_mtime_ns))
         wavelength, two_theta_min, two_theta_max = context.sticks_key
         cache_key = (
-            str(path.resolve()),
-            int(stat.st_mtime_ns),
+            *structure_key,
             wavelength,
             two_theta_min,
             two_theta_max,
             bool(use_lp),
         )
         cached = self._sticks_cache.get(cache_key)
+        structure = self._structure_cache.get(structure_key)
         if cached is not None:
             self._sticks_hits += 1
             self._sticks_cache.move_to_end(cache_key)
-            return list(cached)
+            if structure is None:
+                _phase, structure = create_phase_from_cif(str(path))
+                self._cache_structure(structure_key, structure)
+            else:
+                self._structure_cache.move_to_end(structure_key)
+            return deepcopy(structure), list(cached)
         self._sticks_misses += 1
-        _phase, structure = create_phase_from_cif(str(path))
+        if structure is None:
+            _phase, structure = create_phase_from_cif(str(path))
+            self._cache_structure(structure_key, structure)
+        else:
+            self._structure_cache.move_to_end(structure_key)
         peaks = self.calculated_pattern_service.calculate_sticks(
             structure,
             two_theta_min=two_theta_min,
@@ -88,7 +109,15 @@ class CachedProfileCalculator:
         if self._sticks_cache_limit > 0:
             self._sticks_cache[cache_key] = list(peaks)
             self._trim_sticks_cache()
-        return peaks
+        return deepcopy(structure), peaks
+
+    def _cache_structure(self, key: tuple[str, int], structure: object) -> None:
+        if self._sticks_cache_limit <= 0:
+            return
+        self._structure_cache[key] = structure
+        self._structure_cache.move_to_end(key)
+        while len(self._structure_cache) > self._sticks_cache_limit:
+            self._structure_cache.popitem(last=False)
 
     def profile_from_peaks(
         self,

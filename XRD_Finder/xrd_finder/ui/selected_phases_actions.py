@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QColorDialog, QMenu, QMessageBox
+from PySide6.QtWidgets import QApplication, QColorDialog, QMenu, QMessageBox, QProgressDialog
 
 from xrd_finder.io.cif_loader import create_phase_from_cif
 
@@ -72,12 +72,10 @@ class PhaseFinderSelectedPhasesActionsMixin:
         if any(self._candidate_key(item) == key for item in self.match_candidates):
             self._sync_candidate_to_sample_phase(candidate, show_errors=show_errors)
             if recalculate:
-                refined = False
-                if bool(getattr(self, "auto_refine_cells_on_add", False)) and hasattr(self, "_fit_active_sample_pawley_cells"):
-                    refined = bool(self._fit_active_sample_pawley_cells(show_messages=False, recalculate=True))
-                if not refined:
-                    self._recalculate_match_profile(auto_zoom=self._should_autozoom_match_profile())
-                self._refresh_candidate_gain_ranking()
+                self._recalculate_match_profile(auto_zoom=self._should_autozoom_match_profile())
+                if hasattr(self, "_fit_active_sample_indexed_cells"):
+                    self._fit_active_sample_indexed_cells(show_messages=False, recalculate=True)
+                self._schedule_candidate_gain_ranking()
             return True
         try:
             cif_path = self._candidate_cif_path(candidate)
@@ -99,12 +97,10 @@ class PhaseFinderSelectedPhasesActionsMixin:
             if hasattr(self, "_invalidate_match_profile_cache"):
                 self._invalidate_match_profile_cache(getattr(self, "active_profile_pattern_id", None))
             if recalculate:
-                refined = False
-                if bool(getattr(self, "auto_refine_cells_on_add", False)) and hasattr(self, "_fit_active_sample_pawley_cells"):
-                    refined = bool(self._fit_active_sample_pawley_cells(show_messages=False, recalculate=True))
-                if not refined:
-                    self._recalculate_match_profile(auto_zoom=self._should_autozoom_match_profile())
-                self._refresh_candidate_gain_ranking()
+                self._recalculate_match_profile(auto_zoom=self._should_autozoom_match_profile())
+                if hasattr(self, "_fit_active_sample_indexed_cells"):
+                    self._fit_active_sample_indexed_cells(show_messages=False, recalculate=True)
+                self._schedule_candidate_gain_ranking()
             return True
         except Exception as exc:
             if show_errors:
@@ -212,7 +208,7 @@ class PhaseFinderSelectedPhasesActionsMixin:
         if hasattr(self, "_invalidate_match_profile_cache"):
             self._invalidate_match_profile_cache(getattr(self, "active_profile_pattern_id", None))
         self._recalculate_match_profile()
-        self._refresh_candidate_gain_ranking()
+        self._schedule_candidate_gain_ranking()
 
     def _change_selected_match_color(self) -> None:
         row = self.match_table.currentRow()
@@ -266,20 +262,64 @@ class PhaseFinderSelectedPhasesActionsMixin:
         if hasattr(self, "_update_profile_view_context"):
             self._update_profile_view_context()
 
+    def _schedule_candidate_gain_ranking(self) -> None:
+        if getattr(self, "_candidate_gain_ranking_pending", False):
+            return
+        self._candidate_gain_ranking_pending = True
+        QTimer.singleShot(80, self._run_scheduled_candidate_gain_ranking)
+
+    def _run_scheduled_candidate_gain_ranking(self) -> None:
+        self._candidate_gain_ranking_pending = False
+        self._refresh_candidate_gain_ranking()
+
     def _refresh_candidate_gain_ranking(self) -> None:
-        if not self.match_candidates or self.candidate_table.rowCount() <= 0:
+        if not self.match_candidates:
             return
-        current = self.candidate_table.selected_row_values() or {}
-        current_key = self._candidate_key(current) if current.get("Entry") else ""
-        rows = self._candidate_state_rows(self.candidate_table.all_row_values())
-        self._set_candidate_rows(rows, force_rank=True)
-        if not current_key:
-            return
-        for row in range(self.candidate_table.rowCount()):
-            candidate = self.candidate_table.row_values(row)
-            if self._candidate_key(candidate) == current_key:
-                self.candidate_table.selectRow(row)
-                break
+        existing_rows = self._candidate_state_rows(self.candidate_table.all_row_values())
+        rows: list[list[str]] = []
+        if hasattr(self, "_gain_sql_candidate_rows"):
+            gain_context = self._candidate_gain_context()
+            if gain_context is not None:
+                stage = self._gain_stage_for_context(gain_context)
+                rows.extend(self._gain_sql_candidate_rows(stage=stage, context=gain_context))
+        # The indexed residual lookup is an accelerator, not a hard gate.
+        # Keep already loaded candidates available when the narrow SQL query
+        # misses a shifted or overlapping phase.
+        rows.extend(existing_rows)
+        rows = self.candidate_search_service.dedupe_candidate_rows(
+            self._candidate_rows_without_gain(rows)
+        )
+        dialog = QProgressDialog("Updating Gain...", "", 0, max(len(rows), 1), self)
+        dialog.setWindowTitle("Gain ranking")
+        dialog.setCancelButton(None)
+        dialog.setMinimumDuration(0)
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.show()
+        QApplication.processEvents()
+
+        def rank_progress(value: int, maximum: int) -> None:
+            maximum = max(int(maximum), 1)
+            value = max(0, min(int(value), maximum))
+            dialog.setMaximum(maximum)
+            dialog.setValue(value)
+            dialog.setLabelText(f"Updating Gain... {value}/{maximum}")
+            QApplication.processEvents()
+
+        try:
+            self._set_candidate_rows(rows, force_rank=True, rank_progress=rank_progress)
+            if self.candidate_table.rowCount() > 0:
+                self.candidate_table.selectRow(0)
+                self.candidate_table.scrollToTop()
+        finally:
+            dialog.close()
+
+    def _candidate_rows_without_gain(self, rows: list[list[str]]) -> list[list[str]]:
+        cleaned = []
+        for row in rows:
+            values = list(row) + [""] * 8
+            values[6] = ""
+            cleaned.append(values[:8])
+        return cleaned
 
     def _phase_color(self, candidate: dict[str, str], index: int) -> str:
         palette = ["#d93025", "#1a73e8", "#188038", "#f9ab00", "#8e24aa", "#7b1fa2"]

@@ -59,9 +59,13 @@ class AssignmentBuilder:
             for candidate, peaks in phase_peak_sets
         ]
         for observed in observed_peaks:
+            observed_tolerance = max(
+                float(tolerance),
+                min(0.75, max(0.12, float(getattr(observed, "fwhm", 0.0) or 0.0) * 1.35)),
+            )
             assignments = []
             for candidate, usable_peaks, peak_positions in prepared_phase_peaks:
-                nearest = nearest_peak_from_sorted(observed.two_theta, usable_peaks, peak_positions, tolerance)
+                nearest = nearest_peak_from_sorted(observed.two_theta, usable_peaks, peak_positions, observed_tolerance)
                 if nearest is None:
                     continue
                 peak, delta = nearest

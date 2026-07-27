@@ -23,7 +23,7 @@ from xrd_finder.services.ccdc_service import extract_doi
 
 
 class CompoundCardWidget(QWidget):
-    pawleyFitRequested = Signal()
+    cellFitRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -113,9 +113,9 @@ class CompoundCardWidget(QWidget):
 
         self.sample_title = self._section_title("No sample selected")
         layout.addWidget(self.sample_title)
-        fit_button = QPushButton("Pawley cell fit")
-        fit_button.setToolTip("Refine unit-cell parameters for assigned phases from observed peak positions.")
-        fit_button.clicked.connect(self.pawleyFitRequested)
+        fit_button = QPushButton("Fit cell from indexed peaks")
+        fit_button.setToolTip("Update assigned unit-cell parameters from indexed matched peak shifts.")
+        fit_button.clicked.connect(self.cellFitRequested)
         layout.addWidget(fit_button)
         layout.addWidget(self._section_title("Sample provenance and measurement"))
         layout.addLayout(

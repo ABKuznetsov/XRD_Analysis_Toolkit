@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog
 
 from xrd_finder.services.candidate_search_service import CandidateSearchOptions
 from xrd_finder.services.cod_online_service import formula_elements
@@ -16,7 +17,7 @@ class PhaseFinderCandidateSearchActionsMixin:
             QMessageBox.information(self, "Auto search", "No usable peaks were detected in the active pattern.")
             return
         _observed_x, _corrected, observed_records = probability_data
-        peak_positions = [float(position) for position, _height in observed_records[:80]]
+        peak_positions = [self._observed_record_position(record) for record in observed_records[:80]]
         if not peak_positions:
             QMessageBox.information(self, "Auto search", "No usable peaks were detected in the active pattern.")
             return
@@ -27,9 +28,15 @@ class PhaseFinderCandidateSearchActionsMixin:
         if not elements:
             # An unconstrained online element query is both slow and scientifically
             # weak. The local SQL peak index is designed for this broad first pass.
+            # Keep the broad pass on experimental/user/COD-like sources; local
+            # computational caches are too large and can dominate by accidental
+            # stick coincidences when no chemistry is supplied.
+            options.local_sources = [
+                source for source in options.local_sources
+                if source in {"USER", "CCDC", "COD"}
+            ]
             options.cod_online_enabled = False
             options.rruff_enabled = False
-            options.match_pdf2_enabled = False
             options.materials_project_enabled = False
             options.aflow_enabled = False
             options.oqmd_enabled = False
@@ -43,14 +50,36 @@ class PhaseFinderCandidateSearchActionsMixin:
         def success(result) -> None:
             if auto_search_token != getattr(self, "_auto_search_token", 0):
                 return
-            self.finder_action_bar.set_auto_search_busy(False)
             rows = result or []
             if not rows:
+                self.finder_action_bar.set_auto_search_busy(False)
                 self._set_candidate_rows([["", "", "", "No candidates found by automatic peak search", "", ""]])
                 return
-            self._set_candidate_rows(rows, force_rank=True)
-            if self.candidate_table.rowCount() > 0:
-                self.candidate_table.selectRow(0)
+            ranking_total = min(len(rows), 1000)
+            ranking_dialog = QProgressDialog("Ranking candidates...", "", 0, max(ranking_total, 1), self)
+            ranking_dialog.setWindowTitle("Auto search")
+            ranking_dialog.setCancelButton(None)
+            ranking_dialog.setMinimumDuration(0)
+            ranking_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+            ranking_dialog.show()
+            QApplication.processEvents()
+
+            def rank_progress(value: int, maximum: int) -> None:
+                maximum = max(int(maximum), 1)
+                value = max(0, min(int(value), maximum))
+                ranking_dialog.setMaximum(maximum)
+                ranking_dialog.setValue(value)
+                ranking_dialog.setLabelText(f"Ranking candidates... {value}/{maximum}")
+                QApplication.processEvents()
+
+            try:
+                self._set_candidate_rows(rows, force_rank=True, rank_progress=rank_progress)
+                if self.candidate_table.rowCount() > 0:
+                    self.candidate_table.selectRow(0)
+                    self.candidate_table.scrollToTop()
+            finally:
+                ranking_dialog.close()
+                self.finder_action_bar.set_auto_search_busy(False)
 
         def failure(message: str, details: str) -> None:
             if auto_search_token != getattr(self, "_auto_search_token", 0):
@@ -159,7 +188,13 @@ class PhaseFinderCandidateSearchActionsMixin:
         if probability_data is None:
             return []
         _observed_x, _corrected, observed_records = probability_data
-        return [float(position) for position, _height in observed_records[:80]]
+        return [self._observed_record_position(record) for record in observed_records[:80]]
+
+    def _observed_record_position(self, record) -> float:
+        value = getattr(record, "two_theta", None)
+        if value is not None:
+            return float(value)
+        return float(record[0])
 
     def _materials_project_enabled(self) -> bool:
         return (
@@ -195,7 +230,10 @@ class PhaseFinderCandidateSearchActionsMixin:
         return self._reference_patterns_enabled() and self._source_enabled("sources/rruff", False)
 
     def _match_pdf2_enabled(self) -> bool:
-        return self._source_enabled("sources/match_pdf2", self.match_pdf2.is_configured()) and self.match_pdf2.is_configured()
+        return (
+            self._source_enabled("sources/match_pdf2", self.match_pdf2.is_configured())
+            and self.match_pdf2.is_configured()
+        )
 
     def _structural_data_enabled(self) -> bool:
         return self.structural_data_checkbox is None or self.structural_data_checkbox.isChecked()

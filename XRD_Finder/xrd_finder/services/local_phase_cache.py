@@ -18,7 +18,7 @@ from xrd_finder.services.cod_online_service import CodEntry, CodOnlineService, f
 
 
 DEFAULT_CACHE_ROOT = default_phase_cache_root()
-DERIVED_CACHE_VERSION = 8
+DERIVED_CACHE_VERSION = 9
 
 
 @dataclass(slots=True)
@@ -40,6 +40,7 @@ class CachedPhaseEntry:
     atoms_json: str = ""
     iic: float | None = None
     peaks_json: str = ""
+    top_peaks_json: str = ""
     derived_version: int = 0
 
     @property
@@ -208,7 +209,7 @@ class LocalPhaseCache:
                 rows = connection.execute(
                     f"""
                     select source, entry_id, formula, name, spacegroup, source_text, cif_path, elements,
-                           a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, derived_version
+                           a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, top_peaks_json, derived_version
                     from phases
                     where {" and ".join(where)}
                     order by updated_at desc
@@ -256,7 +257,15 @@ class LocalPhaseCache:
                 sources=sources,
                 limit=limit,
             )
-        selected_positions = peak_positions[:80]
+        anchor_positions = [position for position in peak_positions if 5.0 <= position <= 60.0][:10]
+        anchor_keys = {round(position, 5) for position in anchor_positions}
+        remaining_positions = [
+            position
+            for position in peak_positions
+            if round(position, 5) not in anchor_keys
+        ]
+        selected_positions = (anchor_positions + remaining_positions)[:80]
+        anchor_count = len(anchor_positions)
         required = {element.strip() for element in elements or [] if element.strip()}
         excluded = {element.strip() for element in excluded_elements or [] if element.strip()}
         allowed_sources = {source.strip() for source in sources or [] if source.strip()}
@@ -298,10 +307,15 @@ class LocalPhaseCache:
                 ")"
             )
             params.extend([like_text, like_text, like_text, like_text, f"%{compact_formula}%", f"%{sorted_formula}%"])
-        query_peak_sql = " union all ".join("select ? as query_index, ? as query_position" for _ in selected_positions)
+        query_peak_sql = " union all ".join(
+            "select ? as query_index, ? as query_position, ? as query_weight, ? as anchor_weight"
+            for _ in selected_positions
+        )
         query_params: list[object] = []
         for index, position in enumerate(selected_positions):
-            query_params.extend([index, position])
+            query_weight = 1.0 / math.sqrt(index + 1.0)
+            anchor_weight = 1.0 if index < anchor_count else 0.0
+            query_params.extend([index, position, query_weight, anchor_weight])
         tolerance = max(float(tolerance_two_theta), 0.02)
         with self._connect() as connection:
             deadline = time.monotonic() + 2.0
@@ -316,10 +330,15 @@ class LocalPhaseCache:
                     with query_peaks as ({query_peak_sql})
                     select p.source, p.entry_id, p.formula, p.name, p.spacegroup, p.source_text, p.cif_path, p.elements,
                            p.a, p.b, p.c, p.alpha, p.beta, p.gamma, p.volume,
-                           p.atoms_json, p.iic, p.peaks_json, p.derived_version,
+                           p.atoms_json, p.iic, p.peaks_json, p.top_peaks_json, p.derived_version,
                            count(distinct q.query_index) as observed_hits,
                            count(distinct pp.peak_index) as peak_hits,
                            min(abs(pp.two_theta - q.query_position)) as best_delta,
+                           sum(q.anchor_weight) as anchor_hits,
+                           sum(case when q.anchor_weight > 0 and pp.top_rank between 1 and 10 then 1 else 0 end) as strong_anchor_hits,
+                           sum(q.anchor_weight * max(pp.norm_intensity, 0.0)) as anchor_intensity_support,
+                           sum(q.query_weight) as weighted_observed_hits,
+                           sum(q.query_weight * max(pp.norm_intensity, 0.0)) as weighted_intensity_support,
                            sum(max(pp.intensity, 0.0)) as matched_intensity
                     from phases p
                     join phase_peaks pp on pp.source = p.source and pp.entry_id = p.entry_id
@@ -327,7 +346,16 @@ class LocalPhaseCache:
                       on pp.two_theta between q.query_position - ? and q.query_position + ?
                     where {" and ".join(where)}
                     group by p.source, p.entry_id
-                    order by observed_hits desc, peak_hits desc, matched_intensity desc, best_delta asc, p.updated_at desc
+                    order by strong_anchor_hits desc,
+                             anchor_intensity_support desc,
+                             anchor_hits desc,
+                             weighted_intensity_support desc,
+                             weighted_observed_hits desc,
+                             observed_hits desc,
+                             peak_hits desc,
+                             matched_intensity desc,
+                             best_delta asc,
+                             p.updated_at desc
                     limit ?
                     """,
                     (*query_params, tolerance, tolerance, *params, max(limit * 3, limit)),
@@ -392,7 +420,7 @@ class LocalPhaseCache:
             row = connection.execute(
                 """
                 select source, entry_id, formula, name, spacegroup, source_text, cif_path, elements,
-                       a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, derived_version
+                       a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, top_peaks_json, derived_version
                 from phases
                 where source = ? and entry_id = ?
                 """,
@@ -410,7 +438,7 @@ class LocalPhaseCache:
             params.extend(sorted(allowed_sources))
         sql = f"""
             select source, entry_id, formula, name, spacegroup, source_text, cif_path, elements,
-                   a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, derived_version
+                   a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, top_peaks_json, derived_version
             from phases
             where {" and ".join(where)}
             order by updated_at desc
@@ -505,6 +533,7 @@ class LocalPhaseCache:
             atoms_json = self._atoms_to_json(structure)
             peaks = self._calculate_cached_peaks(structure)
             peaks_json = self._peaks_to_json(peaks)
+            top_peaks_json = self._top_peaks_to_json(peaks)
             iic = self._estimate_iic_from_peaks(peaks, structure)
             derived_version = DERIVED_CACHE_VERSION
         except Exception:
@@ -515,6 +544,7 @@ class LocalPhaseCache:
             cell = None
             atoms_json = ""
             peaks_json = ""
+            top_peaks_json = ""
             iic = None
             derived_version = 0
         entry = CachedPhaseEntry(
@@ -535,6 +565,7 @@ class LocalPhaseCache:
             atoms_json=atoms_json,
             iic=iic,
             peaks_json=peaks_json,
+            top_peaks_json=top_peaks_json,
             derived_version=derived_version,
         )
         with self._connect() as connection:
@@ -567,6 +598,54 @@ class LocalPhaseCache:
                 "multiplicity": int(getattr(peak, "multiplicity", 1) or 1),
             })
         return json.dumps(rows, ensure_ascii=True, separators=(",", ":"))
+
+    def _top_peaks_to_json(self, peaks, limit: int = 10) -> str:
+        rows = []
+        strongest = sorted(
+            [
+                peak
+                for peak in peaks
+                if 5.0 <= float(getattr(peak, "two_theta", 0.0) or 0.0) <= 60.0
+                and float(getattr(peak, "intensity", 0.0) or 0.0) > 0.0
+            ],
+            key=lambda peak: float(getattr(peak, "intensity", 0.0) or 0.0),
+            reverse=True,
+        )[: max(1, int(limit))]
+        max_intensity = max((float(getattr(peak, "intensity", 0.0) or 0.0) for peak in strongest), default=0.0)
+        if max_intensity <= 0.0:
+            return ""
+        for peak in strongest:
+            rows.append([
+                round(float(getattr(peak, "two_theta", 0.0) or 0.0), 5),
+                round(max(float(getattr(peak, "intensity", 0.0) or 0.0), 0.0) / max_intensity, 4),
+            ])
+        return json.dumps(rows, ensure_ascii=True, separators=(",", ":"))
+
+    def _top_peaks_json_from_peaks_json(self, peaks_json: str, limit: int = 10) -> str:
+        if not peaks_json:
+            return ""
+        try:
+            peaks = json.loads(peaks_json)
+        except json.JSONDecodeError:
+            return ""
+        usable = []
+        for peak in peaks if isinstance(peaks, list) else []:
+            try:
+                two_theta = float(peak.get("two_theta", 0.0) or 0.0)
+                intensity = max(float(peak.get("intensity", 0.0) or 0.0), 0.0)
+            except (TypeError, ValueError):
+                continue
+            if 5.0 <= two_theta <= 60.0 and intensity > 0.0:
+                usable.append((two_theta, intensity))
+        strongest = sorted(usable, key=lambda item: item[1], reverse=True)[: max(1, int(limit))]
+        max_intensity = max((item[1] for item in strongest), default=0.0)
+        if max_intensity <= 0.0:
+            return ""
+        return json.dumps(
+            [[round(two_theta, 5), round(intensity / max_intensity, 4)] for two_theta, intensity in strongest],
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
 
     def _estimate_iic_from_peaks(self, peaks, structure=None) -> float | None:
         sample = self._volume_normalized_strongest_peak(peaks, structure)
@@ -654,6 +733,7 @@ class LocalPhaseCache:
                     atoms_json text not null default '',
                     iic real,
                     peaks_json text not null default '',
+                    top_peaks_json text not null default '',
                     derived_version integer not null default 0,
                     updated_at real not null,
                     primary key (source, entry_id)
@@ -689,6 +769,8 @@ class LocalPhaseCache:
                     two_theta real not null,
                     d real,
                     intensity real not null default 0,
+                    norm_intensity real not null default 0,
+                    top_rank integer,
                     raw_intensity real not null default 0,
                     h integer,
                     k integer,
@@ -708,25 +790,42 @@ class LocalPhaseCache:
                 connection.execute("alter table phases add column iic real")
             if "peaks_json" not in existing:
                 connection.execute("alter table phases add column peaks_json text not null default ''")
+            if "top_peaks_json" not in existing:
+                connection.execute("alter table phases add column top_peaks_json text not null default ''")
+                connection.execute("update phases set top_peaks_json = ''")
             if "derived_version" not in existing:
                 connection.execute("alter table phases add column derived_version integer not null default 0")
             if "formula_key" not in existing:
                 connection.execute("alter table phases add column formula_key text not null default ''")
                 connection.execute("update phases set formula_key = lower(replace(formula, ' ', '')) where formula_key = ''")
+            peak_existing = {row[1] for row in connection.execute("pragma table_info(phase_peaks)").fetchall()}
+            rebuild_peak_index = False
+            if "norm_intensity" not in peak_existing:
+                connection.execute("alter table phase_peaks add column norm_intensity real not null default 0")
+                rebuild_peak_index = True
+            if "top_rank" not in peak_existing:
+                connection.execute("alter table phase_peaks add column top_rank integer")
+                rebuild_peak_index = True
             connection.execute("create index if not exists idx_phases_source_updated on phases(source, updated_at desc)")
             connection.execute("create index if not exists idx_phases_formula_key on phases(formula_key)")
             connection.execute("create index if not exists idx_phases_elements on phases(elements)")
             connection.execute("create index if not exists idx_phase_elements_element on phase_elements(element, source, entry_id)")
             connection.execute("create index if not exists idx_phase_peaks_twotheta on phase_peaks(two_theta, source, entry_id)")
             connection.execute("create index if not exists idx_phase_peaks_phase on phase_peaks(source, entry_id)")
+            connection.execute("create index if not exists idx_phase_peaks_top_rank on phase_peaks(top_rank, two_theta, source, entry_id)")
             element_count = connection.execute("select count(*) from phase_elements").fetchone()[0]
             if not element_count:
                 for row in connection.execute("select source, entry_id, elements from phases").fetchall():
                     self._replace_phase_elements(connection, row["source"], row["entry_id"], row["elements"])
             peak_count = connection.execute("select count(*) from phase_peaks").fetchone()[0]
-            if not peak_count:
+            if rebuild_peak_index or not peak_count:
+                connection.execute("delete from phase_peaks")
                 for row in connection.execute("select source, entry_id, peaks_json from phases where peaks_json != ''").fetchall():
                     self._replace_phase_peaks(connection, row["source"], row["entry_id"], row["peaks_json"])
+                    connection.execute(
+                        "update phases set top_peaks_json = ? where source = ? and entry_id = ?",
+                        (self._top_peaks_json_from_peaks_json(row["peaks_json"]), row["source"], row["entry_id"]),
+                    )
 
     def _connect(self) -> sqlite3.Connection:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -758,7 +857,7 @@ class LocalPhaseCache:
         if keep_cif:
             row = connection.execute(
                 """
-                select cif_path, a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, derived_version
+                select cif_path, a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, top_peaks_json, derived_version
                 from phases
                 where source = ? and entry_id = ?
                 """,
@@ -769,7 +868,7 @@ class LocalPhaseCache:
                 for field in ("a", "b", "c", "alpha", "beta", "gamma", "volume", "iic"):
                     if getattr(entry, field) is None:
                         setattr(entry, field, row[field])
-                for field in ("atoms_json", "peaks_json"):
+                for field in ("atoms_json", "peaks_json", "top_peaks_json"):
                     if not getattr(entry, field):
                         setattr(entry, field, row[field])
                 if getattr(entry, "derived_version", 0) == 0:
@@ -779,9 +878,9 @@ class LocalPhaseCache:
             """
             insert into phases(
                 source, entry_id, formula, name, spacegroup, source_text, elements, formula_key, cif_path,
-                a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, derived_version, updated_at
+                a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, top_peaks_json, derived_version, updated_at
             )
-            values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             on conflict(source, entry_id) do update set
                 formula = excluded.formula,
                 name = excluded.name,
@@ -800,6 +899,7 @@ class LocalPhaseCache:
                 atoms_json = excluded.atoms_json,
                 iic = excluded.iic,
                 peaks_json = excluded.peaks_json,
+                top_peaks_json = excluded.top_peaks_json,
                 derived_version = excluded.derived_version,
                 updated_at = excluded.updated_at
             """,
@@ -823,6 +923,7 @@ class LocalPhaseCache:
                 entry.atoms_json,
                 entry.iic,
                 entry.peaks_json,
+                entry.top_peaks_json or self._top_peaks_json_from_peaks_json(entry.peaks_json),
                 entry.derived_version,
                 time.time(),
             ),
@@ -862,12 +963,34 @@ class LocalPhaseCache:
             peaks = json.loads(peaks_json)
         except json.JSONDecodeError:
             return
+        normalized_peaks = peaks if isinstance(peaks, list) else []
+        intensities = []
+        for peak in normalized_peaks:
+            try:
+                intensity = max(float(peak.get("intensity", 0.0) or 0.0), 0.0)
+            except (TypeError, ValueError):
+                intensity = 0.0
+            intensities.append(intensity)
+        max_intensity = max(intensities, default=0.0)
+        top_rank_by_index = {}
+        top_candidates = []
+        for index, peak in enumerate(normalized_peaks):
+            try:
+                two_theta = float(peak.get("two_theta", 0.0) or 0.0)
+                intensity = intensities[index]
+            except (TypeError, ValueError, IndexError):
+                continue
+            if 5.0 <= two_theta <= 60.0 and intensity > 0.0:
+                top_candidates.append((intensity, index))
+        for rank, (_intensity, index) in enumerate(sorted(top_candidates, reverse=True)[:10], start=1):
+            top_rank_by_index[index] = rank
         rows = []
-        for index, peak in enumerate(peaks if isinstance(peaks, list) else []):
+        for index, peak in enumerate(normalized_peaks):
             try:
                 two_theta = float(peak.get("two_theta", 0.0))
                 if not math.isfinite(two_theta):
                     continue
+                intensity = max(float(peak.get("intensity", 0.0) or 0.0), 0.0)
                 rows.append(
                     (
                         source,
@@ -875,7 +998,9 @@ class LocalPhaseCache:
                         int(index),
                         two_theta,
                         self._optional_float(peak.get("d")),
-                        max(float(peak.get("intensity", 0.0) or 0.0), 0.0),
+                        intensity,
+                        intensity / max_intensity if max_intensity > 0.0 else 0.0,
+                        top_rank_by_index.get(index),
                         max(float(peak.get("raw_intensity", 0.0) or 0.0), 0.0),
                         self._optional_int(peak.get("h")),
                         self._optional_int(peak.get("k")),
@@ -889,9 +1014,9 @@ class LocalPhaseCache:
             connection.executemany(
                 """
                 insert or replace into phase_peaks(
-                    source, entry_id, peak_index, two_theta, d, intensity, raw_intensity,
+                    source, entry_id, peak_index, two_theta, d, intensity, norm_intensity, top_rank, raw_intensity,
                     h, k, l, multiplicity
-                ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -902,6 +1027,10 @@ class LocalPhaseCache:
             rows = connection.execute("select source, entry_id, peaks_json from phases where peaks_json != ''").fetchall()
             for row in rows:
                 self._replace_phase_peaks(connection, row["source"], row["entry_id"], row["peaks_json"])
+                connection.execute(
+                    "update phases set top_peaks_json = ? where source = ? and entry_id = ?",
+                    (self._top_peaks_json_from_peaks_json(row["peaks_json"]), row["source"], row["entry_id"]),
+                )
         return self.peak_indexed_count()
 
     def _row_to_entry(self, row: sqlite3.Row) -> CachedPhaseEntry:
@@ -923,6 +1052,7 @@ class LocalPhaseCache:
             atoms_json=row["atoms_json"],
             iic=row["iic"],
             peaks_json=row["peaks_json"],
+            top_peaks_json=row["top_peaks_json"] if "top_peaks_json" in row.keys() else "",
             derived_version=row["derived_version"],
         )
 

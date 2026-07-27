@@ -162,7 +162,7 @@ class SelectedCandidatesTableWidget(QTableWidget):
     rowClicked = Signal(int)
     contextRequested = Signal(QPoint)
 
-    HEADERS = ["Color", "Phase", "Peaks", "Quant. (%)", "I/Ic"]
+    HEADERS = ["Color", "Phase", "Fit / Peaks", "Quant. (%)", "I/Ic"]
 
     def __init__(self, parent=None) -> None:
         super().__init__(0, len(self.HEADERS), parent)

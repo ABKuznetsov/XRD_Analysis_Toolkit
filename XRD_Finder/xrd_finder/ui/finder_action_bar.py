@@ -17,7 +17,6 @@ class FinderActionBar(QWidget):
     patternDisplayModeChanged = Signal(str)
     patternOffsetPercentChanged = Signal(int)
     normalizePatternsChanged = Signal(bool)
-    autoRefineCellsChanged = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -25,7 +24,6 @@ class FinderActionBar(QWidget):
         self.pattern_display_mode = QComboBox()
         self.pattern_offset_slider = QSlider()
         self.pattern_offset_value = QLabel()
-        self.auto_refine_cells_checkbox = QCheckBox("Refine cell")
         self.normalize_patterns_checkbox = QCheckBox("Normalize")
         self._build_ui()
 
@@ -67,13 +65,6 @@ class FinderActionBar(QWidget):
         )
         self.auto_search_button.setStyleSheet(action_button_style("#00695c", "#26a69a"))
         self.auto_search_button.clicked.connect(self.autoSearchRequested)
-        self.auto_refine_cells_checkbox.setToolTip(
-            "Automatically refine unit-cell parameters when a phase is added.\n"
-            "Turn off for faster first-pass viewing; the Pawley button in the card still works."
-        )
-        self.auto_refine_cells_checkbox.setChecked(False)
-        self.auto_refine_cells_checkbox.toggled.connect(self.autoRefineCellsChanged)
-
         reset_button = QPushButton("Reset view")
         reset_button.setToolTip("Show the full XRD range and reset plot zoom")
         reset_button.setStyleSheet(action_button_style("#5f6368", "#8a8d91"))
@@ -106,7 +97,6 @@ class FinderActionBar(QWidget):
         layout.addWidget(self.crop_button)
         layout.addWidget(reset_data_button)
         layout.addWidget(self.auto_search_button)
-        layout.addWidget(self.auto_refine_cells_checkbox)
         layout.addWidget(QLabel("Show"))
         layout.addWidget(self.pattern_display_mode)
         layout.addWidget(QLabel("Offset"))

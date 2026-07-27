@@ -25,3 +25,7 @@ class PlotStyle:
     reference: PlotLineStyle = field(default_factory=lambda: PlotLineStyle(width=1.7, color="#1a73e8"))
     stick: PlotLineStyle = field(default_factory=lambda: PlotLineStyle(width=3.0))
     marker: PlotMarkerStyle = field(default_factory=lambda: PlotMarkerStyle(size=8))
+    phase_profile_scale: float = 1.0
+    preview_stick_fraction: float = 0.16
+    phase_tick_fraction: float = 0.045
+    difference_fraction: float = 0.24
