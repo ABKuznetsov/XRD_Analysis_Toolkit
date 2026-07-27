@@ -6,7 +6,14 @@ SOURCE_ROOT="$(cd "$(dirname "$0")" && pwd)"
 SOURCE_APP_ROOT="$SOURCE_ROOT/XRD_Finder"
 SCI_ROOT="$HOME/Library/Application Support/Sci"
 INSTALLED_SOURCE_ROOT="$SCI_ROOT/app"
-SCI_ENV="$SCI_ROOT/env"
+
+if [ "$(uname -m)" = "arm64" ] || [ "$(sysctl -in sysctl.proc_translated 2>/dev/null || true)" = "1" ]; then
+    SCI_ARCH="arm64"
+else
+    SCI_ARCH="x86_64"
+fi
+
+SCI_ENV="$SCI_ROOT/env-$SCI_ARCH"
 XRD_FINDER_USER_ROOT="$SCI_ROOT/XRD_Finder"
 SCI_LOGS="$SCI_ROOT/logs"
 if [ -n "$XRD_FINDER_INSTALL_DIR" ]; then
@@ -26,6 +33,7 @@ cd "$SOURCE_ROOT"
 echo "Installing $APP_NAME for macOS"
 echo "Source folder: $SOURCE_ROOT"
 echo "User runtime: $SCI_ROOT"
+echo "Runtime architecture: $SCI_ARCH"
 echo "Application folder: $INSTALL_DIR"
 echo
 
@@ -57,6 +65,9 @@ chmod +x "$TOOLKIT_ROOT"/install_macos.command "$TOOLKIT_ROOT"/update_macos.comm
 
 echo "Preparing scientific Python environment..."
 "$TOOLKIT_ROOT/toolkit/setup_sci_env.command"
+VERSION="$(/usr/bin/arch "-$SCI_ARCH" "$SCI_ENV/bin/python" -c \
+    'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["project"]["version"])' \
+    "$TOOLKIT_ROOT/pyproject.toml")"
 
 echo "Creating application bundle: $APP_BUNDLE"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
@@ -104,11 +115,11 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.1.1</string>
+    <string>$VERSION</string>
     <key>CFBundleVersion</key>
-    <string>1.1.1</string>
+    <string>$VERSION</string>
     <key>LSMinimumSystemVersion</key>
-    <string>11.0</string>
+    <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>
@@ -122,6 +133,7 @@ set -e
 APP_ROOT="$TOOLKIT_ROOT"
 SCI_ROOT="$SCI_ROOT"
 SCI_ENV="$SCI_ENV"
+SCI_ARCH="$SCI_ARCH"
 XRD_FINDER_USER_ROOT="$XRD_FINDER_USER_ROOT"
 SCI_LOGS="$SCI_LOGS"
 LOG_FILE="\$SCI_LOGS/xrd_finder_console.log"
@@ -149,7 +161,7 @@ export MPLCONFIGDIR="\$XRD_FINDER_USER_ROOT/matplotlib"
 export QT_MAC_WANTS_LAYER=1
 cd "\$APP_ROOT"
 echo "[\$(date)] Starting XRD Phase Finder" > "\$LOG_FILE"
-exec "\$SCI_ENV/bin/python" -m xrd_finder.apps.finder_gui "\$@" >> "\$LOG_FILE" 2>&1
+exec /usr/bin/arch "-\$SCI_ARCH" "\$SCI_ENV/bin/python" -m xrd_finder.apps.finder_gui "\$@" >> "\$LOG_FILE" 2>&1
 LAUNCHER
 
 chmod +x "$MACOS_DIR/xrd-phase-finder"

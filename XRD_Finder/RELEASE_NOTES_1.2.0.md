@@ -27,6 +27,7 @@ This feature release develops XRD Phase Finder into a faster first-pass phase-id
 - Added observed line/scatter display modes and per-layer colors and widths.
 - Improved high-resolution export so font and line proportions follow the on-screen plot.
 - Improved responsiveness and progress feedback during full-database ranking.
+- Added a native Apple Silicon runtime for macOS while leaving the Windows runtime unchanged.
 
 ## Notes
 
@@ -36,3 +37,4 @@ This feature release develops XRD Phase Finder into a faster first-pass phase-id
 ## Download
 
 - Windows: [XRD_Phase_Finder_Setup_1.2.0.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_Setup_1.2.0.exe)
+- macOS 13+: [XRD_Phase_Finder_macOS_1.2.0.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_macOS_1.2.0.pkg)

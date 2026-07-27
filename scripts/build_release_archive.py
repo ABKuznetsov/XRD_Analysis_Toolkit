@@ -25,10 +25,8 @@ FORBIDDEN_SUFFIXES = {
 FORBIDDEN_PREFIXES = (
     "XRD_Finder/data/",
     "XRD_Finder/xrd_finder/app.py",
-    "XRD_Finder/xrd_finder/core/refinement.py",
     "XRD_Finder/xrd_finder/core/series.py",
     "XRD_Finder/xrd_finder/io/exporters.py",
-    "XRD_Finder/xrd_finder/services/refinement_service.py",
     "XRD_Finder/xrd_finder/services/thermo_service.py",
     "XRD_Finder/xrd_finder/services/solid_solution_service.py",
     "XRD_Finder/xrd_finder/services/structure_service.py",

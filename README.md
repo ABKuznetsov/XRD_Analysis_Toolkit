@@ -9,7 +9,7 @@
 
 **Windows 10/11:** [Download `XRD_Phase_Finder_Setup_1.2.0.exe`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_Setup_1.2.0.exe) and run the installer.
 
-**macOS:** [Download `XRD_Phase_Finder_macOS_1.1.3.zip`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.3/XRD_Phase_Finder_macOS_1.1.3.zip), extract it and run `install_macos.command`.
+**macOS 13+:** [Download `XRD_Phase_Finder_macOS_1.2.0.pkg`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_macOS_1.2.0.pkg) and run the installer.
 
 More detailed installation notes are below in [Installation](#installation).
 
@@ -104,7 +104,7 @@ The `?` button in the application opens a compact in-app helper with the same co
 Latest release assets:
 
 - Windows 10/11: [XRD_Phase_Finder_Setup_1.2.0.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_Setup_1.2.0.exe)
-- macOS: [XRD_Phase_Finder_macOS_1.1.3.zip](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.3/XRD_Phase_Finder_macOS_1.1.3.zip)
+- macOS 13+: [XRD_Phase_Finder_macOS_1.2.0.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_macOS_1.2.0.pkg)
 - All releases: [GitHub Releases](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases)
 
 Third-party database access and licensing are summarized in [Reference Data Sources](#reference-data-sources).
@@ -147,43 +147,47 @@ If Python 3.11 is not already available, the setup script first tries `winget` a
 
 ## macOS
 
-Download and extract:
+Download:
 
 ```text
-XRD_Phase_Finder_macOS_1.1.3.zip
+XRD_Phase_Finder_macOS_1.2.0.pkg
 ```
 
-Then run:
+Open the package and follow the macOS installer. It installs
+`XRD Phase Finder.app` into `/Applications`, so the program appears in Finder,
+Launchpad and Spotlight.
+
+On first launch the application creates or reuses:
 
 ```text
-install_macos.command
+Apple Silicon: ~/Library/Application Support/Sci/env-arm64
+Intel Mac:     ~/Library/Application Support/Sci/env-x86_64
 ```
 
-The installer creates or reuses:
+The Apple Silicon runtime is launched natively as `arm64`; it does not reuse an
+older Intel/Rosetta environment. Windows keeps its existing shared runtime in
+`%AppData%\Sci\env`.
 
-```text
-~/Library/Application Support/Sci
-```
+macOS 13 or newer and Python 3.11 or 3.12 are required for this release.
+The macOS setup uses the current universal Qt runtime with native Apple Silicon
+support. Python 3.13 is not selected by the launcher.
 
-and installs the application bundle to `/Applications/XRD Phase Finder.app` when possible, otherwise to `~/Applications/XRD Phase Finder.app`.
-
-macOS requires Python 3.11 or 3.12 for this release. Python 3.13 is not used
-because the pinned Qt runtime is not compatible with it yet.
-
-If macOS blocks the scripts after download or sync, run this once from Terminal inside the extracted folder:
+If macOS blocks the unsigned package, right-click it and choose **Open**. Source
+checkout users can remove quarantine attributes from the checkout with:
 
 ```bash
-chmod +x install_macos.command update_macos.command setup_env.command toolkit/*.command XRD_Finder/*.command
 xattr -dr com.apple.quarantine .
 ```
 
 If the app does not open after a failed first setup, remove the old runtime and
-run the installer again:
+launch the application again:
 
 ```bash
-rm -rf "$HOME/Library/Application Support/Sci/env"
-./install_macos.command
+rm -rf "$HOME/Library/Application Support/Sci/env-arm64"
 ```
+
+Use `env-x86_64` instead on an Intel Mac. The legacy `Sci/env` directory is not
+modified by the architecture-specific macOS launcher.
 
 Installer and startup logs are written to:
 
@@ -374,7 +378,7 @@ XRD_Analysis_Toolkit/
             Source-checkout command-line launchers
 ```
 
-The repository contains source code, documentation, runtime setup scripts and update metadata. Generated installer files such as `XRD_Phase_Finder_Setup_1.2.0.exe` and `XRD_Phase_Finder_macOS_1.1.3.zip` are **not committed to the repository**; they are published separately as GitHub Release assets.
+The repository contains source code, documentation, runtime setup scripts and update metadata. Generated installer files such as `XRD_Phase_Finder_Setup_1.2.0.exe` and `XRD_Phase_Finder_macOS_1.2.0.pkg` are **not committed to the repository**; they are published separately as GitHub Release assets.
 
 The root `XRD_Analysis_Toolkit` layout keeps shared toolkit files separate from the `XRD_Finder` application folder. This leaves room for additional XRD-related applications later while preserving a clear application boundary.
 

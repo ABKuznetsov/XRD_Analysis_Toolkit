@@ -4,7 +4,14 @@ unsetopt BG_NICE 2>/dev/null || true
 
 APP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCI_ROOT="$HOME/Library/Application Support/Sci"
-SCI_ENV="$SCI_ROOT/env"
+
+if [ "$(uname -m)" = "arm64" ] || [ "$(sysctl -in sysctl.proc_translated 2>/dev/null || true)" = "1" ]; then
+    SCI_ARCH="arm64"
+else
+    SCI_ARCH="x86_64"
+fi
+
+SCI_ENV="$SCI_ROOT/env-$SCI_ARCH"
 XRD_FINDER_USER_ROOT="$SCI_ROOT/XRD_Finder"
 SCI_LOGS="$SCI_ROOT/logs"
 READY_FILE="$SCI_ROOT/xrd_finder_ready"
@@ -14,14 +21,20 @@ mkdir -p "$SCI_ROOT" "$XRD_FINDER_USER_ROOT" "$SCI_LOGS"
 
 find_preview_python() {
     for candidate in \
-        "/opt/homebrew/bin/python3" \
-        "/usr/local/bin/python3" \
         "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3" \
         "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3" \
+        "/opt/homebrew/bin/python3.12" \
+        "/opt/homebrew/bin/python3.11" \
+        "/usr/local/bin/python3.12" \
+        "/usr/local/bin/python3.11" \
+        "/usr/local/bin/python3" \
         "/usr/bin/python3" \
         "python3"
     do
-        if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c "import tkinter" >/dev/null 2>&1; then
+        if command -v "$candidate" >/dev/null 2>&1 \
+            && /usr/bin/arch "-$SCI_ARCH" "$candidate" -c \
+                "import platform, sys, tkinter; raise SystemExit(0 if platform.machine() == '$SCI_ARCH' and (3, 11) <= sys.version_info[:2] < (3, 13) else 1)" \
+                >/dev/null 2>&1; then
             echo "$candidate"
             return 0
         fi
@@ -31,7 +44,7 @@ find_preview_python() {
 
 PREVIEW_PYTHON="$(find_preview_python || true)"
 if [ -n "$PREVIEW_PYTHON" ] && [ -f "$PREVIEW_SCRIPT" ]; then
-    exec "$PREVIEW_PYTHON" "$PREVIEW_SCRIPT" "$@"
+    exec /usr/bin/arch "-$SCI_ARCH" "$PREVIEW_PYTHON" "$PREVIEW_SCRIPT" "$@"
 fi
 
 echo "XRD Phase Finder startup preview"
@@ -74,7 +87,7 @@ export XRD_FINDER_READY_FILE="$READY_FILE"
 export QT_MAC_WANTS_LAYER=1
 rm -f "$READY_FILE"
 
-"$SCI_ENV/bin/python" -m xrd_finder.apps.finder_gui "$@" &
+/usr/bin/arch "-$SCI_ARCH" "$SCI_ENV/bin/python" -m xrd_finder.apps.finder_gui "$@" &
 APP_PID="$!"
 
 echo "4/4 Waiting for application window..."
