@@ -70,6 +70,19 @@ def test_update_check_continues_when_offline(
     assert "continuing" in statuses[-1][2]
 
 
+def test_fetch_json_avoids_stale_github_raw_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    requested: list[str] = []
+
+    def fetch(url: str, timeout: float) -> bytes:
+        requested.append(url)
+        return b'{"version": "1.2.0"}'
+
+    monkeypatch.setattr(preview, "fetch_url_bytes", fetch)
+
+    assert preview.fetch_json("https://raw.githubusercontent.com/update.json")["version"] == "1.2.0"
+    assert requested[0].startswith("https://raw.githubusercontent.com/update.json?_=")
+
+
 def test_runtime_probe_reports_failed_import(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     python = tmp_path / "python"
     python.touch()

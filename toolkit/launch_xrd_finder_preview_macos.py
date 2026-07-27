@@ -94,7 +94,9 @@ def fetch_url_bytes(url: str, timeout: float = 30.0) -> bytes:
 
 
 def fetch_json(url: str, timeout: float = 4.0) -> dict:
-    data = fetch_url_bytes(url, timeout=timeout)
+    separator = "&" if "?" in url else "?"
+    cache_busted_url = f"{url}{separator}_={time.time_ns()}"
+    data = fetch_url_bytes(cache_busted_url, timeout=timeout)
     return json.loads(data.decode("utf-8-sig"))
 
 
