@@ -1,14 +1,119 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pyqtgraph as pg
 
 from xrd_finder.ui.pattern_plot_helpers import ensure_right_legend
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QAction, QImage, QPainter
-from PySide6.QtWidgets import QFileDialog, QMenu, QMessageBox
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QImage, QPixmap
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QLabel,
+    QMenu,
+    QMessageBox,
+    QSpinBox,
+    QVBoxLayout,
+)
+
+
+class PlotExportDialog(QDialog):
+    def __init__(self, source_image: QImage, parent=None) -> None:
+        super().__init__(parent)
+        self._source_image = source_image
+        self.setWindowTitle("Export publication figure")
+        self.resize(900, 680)
+
+        self.preview = QLabel()
+        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview.setMinimumSize(700, 430)
+        self.preview.setStyleSheet("QLabel { background: white; border: 1px solid #9ca3af; }")
+
+        self.format_combo = QComboBox()
+        self.format_combo.addItem("PNG — lossless (recommended)", "png")
+        self.format_combo.addItem("TIFF — lossless", "tiff")
+        self.format_combo.addItem("JPEG — compressed", "jpg")
+
+        self.scale_combo = QComboBox()
+        self.scale_combo.addItem("1× — exact screen pixels", 1)
+        self.scale_combo.addItem("2× — large figure", 2)
+        self.scale_combo.addItem("3× — high resolution", 3)
+        self.scale_combo.addItem("4× — maximum resolution", 4)
+        self.scale_combo.setCurrentIndex(1)
+
+        self.dpi_spin = QSpinBox()
+        self.dpi_spin.setRange(72, 1200)
+        self.dpi_spin.setSingleStep(50)
+        self.dpi_spin.setValue(300)
+        self.dpi_spin.setSuffix(" dpi")
+
+        self.size_label = QLabel()
+        self.size_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        form = QFormLayout()
+        form.addRow("Format", self.format_combo)
+        form.addRow("Canvas scale", self.scale_combo)
+        form.addRow("Print resolution", self.dpi_spin)
+        form.addRow("Output", self.size_label)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.preview, 1)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+        self.scale_combo.currentIndexChanged.connect(self._refresh)
+        self.dpi_spin.valueChanged.connect(self._refresh)
+        self._refresh()
+
+    def _refresh(self) -> None:
+        width, height = self.output_size()
+        dpi = self.dpi_spin.value()
+        self.size_label.setText(
+            f"{width} × {height} px; {width / dpi * 25.4:.1f} × {height / dpi * 25.4:.1f} mm"
+        )
+        pixmap = QPixmap.fromImage(self._source_image)
+        self.preview.setPixmap(
+            pixmap.scaled(
+                max(1, self.preview.width() - 12),
+                max(1, self.preview.height() - 12),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._refresh()
+
+    def output_size(self) -> tuple[int, int]:
+        scale = int(self.scale_combo.currentData())
+        return self._source_image.width() * scale, self._source_image.height() * scale
+
+    def image_format(self) -> str:
+        return str(self.format_combo.currentData())
+
+    def output_image(self) -> QImage:
+        width, height = self.output_size()
+        image = self._source_image.scaled(
+            width,
+            height,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        dots_per_meter = max(1, int(round(self.dpi_spin.value() / 0.0254)))
+        image.setDotsPerMeterX(dots_per_meter)
+        image.setDotsPerMeterY(dots_per_meter)
+        return image
 
 
 class PhaseFinderPlotActionsMixin:
@@ -42,36 +147,31 @@ class PhaseFinderPlotActionsMixin:
         menu.exec(self.match_plot.mapToGlobal(point))
 
     def _export_plot_image(self) -> None:
+        source_image = self.match_plot.grab().toImage()
+        if source_image.isNull():
+            QMessageBox.warning(self, "Export figure", "Could not capture the current plot.")
+            return
+        dialog = PlotExportDialog(source_image, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        image_format = dialog.image_format()
         path, _selected_filter = QFileDialog.getSaveFileName(
             self,
-            "Export image",
-            str(Path(self._last_directory()) / "xrd_finder_plot.png"),
-            "PNG image (*.png);;JPEG image (*.jpg *.jpeg)",
+            "Save publication figure",
+            str(Path(self._last_directory()) / f"xrd_finder_plot.{image_format}"),
+            f"{image_format.upper()} image (*.{image_format})",
         )
         if not path:
             return
-        self._remember_directory(path)
-        if not re.search(r"\.(png|jpe?g)$", path, flags=re.IGNORECASE):
-            path += ".png"
+        if not path.lower().endswith(f".{image_format}"):
+            path += f".{image_format}"
         try:
-            scale = 2.0
-            source_size = self.match_plot.size()
-            target_size = QSize(
-                max(1, int(round(source_size.width() * scale))),
-                max(1, int(round(source_size.height() * scale))),
-            )
-            image = QImage(target_size, QImage.Format.Format_ARGB32_Premultiplied)
-            image.fill(Qt.GlobalColor.white)
-            painter = QPainter(image)
-            try:
-                painter.scale(scale, scale)
-                self.match_plot.render(painter)
-            finally:
-                painter.end()
+            image = dialog.output_image()
             if not image.save(path):
-                raise RuntimeError("Qt high-resolution render could not be saved.")
+                raise RuntimeError(f"Qt could not save the {image_format.upper()} image.")
+            self._remember_directory(path)
         except Exception as exc:
-            QMessageBox.warning(self, "Export image", f"Could not save current plot image:\n{exc}")
+            QMessageBox.warning(self, "Export figure", f"Could not save the publication figure:\n{exc}")
 
     def _layer_action(self, label: str, layer: str, checked: bool | None = None, enabled: bool = True):
         action = self._make_action(label)
