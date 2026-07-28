@@ -9,13 +9,15 @@
 
 **Windows 10/11:** [Download `XRD_Phase_Finder_Setup_1.2.0.exe`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_Setup_1.2.0.exe) and run the installer.
 
+**Windows portable:** [Download `XRD_Phase_Finder_Portable_1.2.0.zip`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_Portable_1.2.0.zip), extract it and run the included launcher.
+
 **macOS 13+:** [Download `XRD_Phase_Finder_macOS_1.2.0.pkg`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_macOS_1.2.0.pkg) and run the installer.
 
 More detailed installation notes are below in [Installation](#installation).
 
-# XRD Phase Finder 1.2.0
+# XRD Phase Finder 1.2.1
 
-Feature release with indexed full-database ranking, staged Gain search, lightweight unit-cell refinement, independent phase profiles, dual physical/amorphous backgrounds and expanded plot export controls.
+Maintenance release with isolated post-Match refinement stages, improved multi-phase cell refinement and Gain fallback, clearer profile previews and GSAS-II-style mass normalization for phase quantities.
 
 # Overview
 
@@ -104,6 +106,7 @@ The `?` button in the application opens a compact in-app helper with the same co
 Latest release assets:
 
 - Windows 10/11: [XRD_Phase_Finder_Setup_1.2.0.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_Setup_1.2.0.exe)
+- Windows portable: [XRD_Phase_Finder_Portable_1.2.0.zip](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_Portable_1.2.0.zip)
 - macOS 13+: [XRD_Phase_Finder_macOS_1.2.0.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_macOS_1.2.0.pkg)
 - All releases: [GitHub Releases](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases)
 
@@ -378,7 +381,7 @@ XRD_Analysis_Toolkit/
             Source-checkout command-line launchers
 ```
 
-The repository contains source code, documentation, runtime setup scripts and update metadata. Generated installer files such as `XRD_Phase_Finder_Setup_1.2.0.exe` and `XRD_Phase_Finder_macOS_1.2.0.pkg` are **not committed to the repository**; they are published separately as GitHub Release assets.
+The repository contains source code, documentation, runtime setup scripts and update metadata. Generated installer and portable files such as `XRD_Phase_Finder_Setup_1.2.0.exe`, `XRD_Phase_Finder_Portable_1.2.0.zip` and `XRD_Phase_Finder_macOS_1.2.0.pkg` are **not committed to the repository**; they are published separately as GitHub Release assets.
 
 The root `XRD_Analysis_Toolkit` layout keeps shared toolkit files separate from the `XRD_Finder` application folder. This leaves room for additional XRD-related applications later while preserving a clear application boundary.
 
@@ -430,7 +433,7 @@ The current implementation is intended for **initial phase identification** and 
 
 # Current Status
 
-Current development stage: **1.2.0 stable public release**.
+Current development stage: **1.2.1 release candidate**.
 
 The application is ready for practical search-match and visual phase-identification workflows on Windows and macOS. The current release includes the graphical Phase Finder workspace, project save/load, multi-pattern display, CIF-based phase overlays, candidate cards, database management, startup/update preview and packaged installers.
 

@@ -60,6 +60,7 @@ from xrd_finder.services.match_pdf2_service import MatchPdf2Service
 from xrd_finder.services.materials_project_service import MaterialsProjectService
 from xrd_finder.services.preprocessing_service import estimate_background
 from xrd_finder.services.refinement_service import RefinementService
+from xrd_finder.services.indexed_cell_matching import IndexedCellMatchingService
 from xrd_finder.services.rruff_service import RruffService
 from xrd_finder.ui.pattern_plot_helpers import (
     ensure_right_legend,
@@ -76,6 +77,13 @@ from xrd_finder.ui.database_actions import PhaseFinderDatabaseActionsMixin
 from xrd_finder.ui.database_panel import DatabasePanelWidget
 from xrd_finder.ui.element_filter import PeriodicTableWidget, element_sort_key
 from xrd_finder.ui.finder_action_bar import FinderActionBar
+from xrd_finder.ui.gain_scoring import (
+    DEFAULT_GAIN_POLICY,
+    GainIndexedEvidence,
+    GainStage,
+    build_gain_indexed_evidence,
+    profile_residual_gain,
+)
 from xrd_finder.ui.help_text import PHASE_FINDER_HELP_TEXT, PHASE_FINDER_HELP_TITLE
 from xrd_finder.ui.layout_state import SplitterLayoutState
 from xrd_finder.ui.match_profile_renderer import build_finder_candidate_inputs, draw_match_profile_result
@@ -94,6 +102,7 @@ from xrd_finder.ui.peak_matching import (
 )
 from xrd_finder.ui.plot_actions import PhaseFinderPlotActionsMixin
 from xrd_finder.ui.plot_view_actions import PhaseFinderPlotViewActionsMixin
+from xrd_finder.ui.post_match_pipeline import PostMatchPipeline
 from xrd_finder.ui.preprocessing_actions import PhaseFinderPreprocessingActionsMixin
 from xrd_finder.ui.project_state_actions import PhaseFinderProjectStateActionsMixin
 from xrd_finder.ui.project_tree_actions import PhaseFinderProjectTreeActionsMixin
@@ -462,6 +471,12 @@ class PhaseFinderWindow(
         self._create_candidate_tables()
         self._create_center_splitter()
         self._create_right_tabs()
+        self.post_match_pipeline = PostMatchPipeline(
+            refresh_selected_profile=self._recalculate_match_profile,
+            refine_indexed_cells=self._fit_active_sample_indexed_cells,
+            refresh_gain=self._schedule_candidate_gain_ranking,
+            should_autozoom=self._should_autozoom_match_profile,
+        )
 
     def _init_filter_state(self) -> None:
         self.element_table: PeriodicTableWidget | None = None
@@ -486,6 +501,7 @@ class PhaseFinderWindow(
         self.calculated_pattern_service = CalculatedPatternService()
         self.finder_service = FinderService(self.calculated_pattern_service)
         self.refinement_service = RefinementService(self.calculated_pattern_service)
+        self.indexed_cell_matching_service = IndexedCellMatchingService(self.refinement_service)
         self.candidate_search_service = CandidateSearchService(
             self.local_phase_cache,
             self.cod_online,
@@ -563,6 +579,9 @@ class PhaseFinderWindow(
         self._candidate_json_peak_cache: dict[tuple[object, ...], list[HKLPeak]] = {}
         self._candidate_probability_cache: dict[tuple[object, ...], float] = {}
         self._candidate_gain_profile_cache: dict[tuple[object, ...], np.ndarray] = {}
+        self._candidate_gain_indexed_evidence: dict[str, GainIndexedEvidence] = {}
+        self._active_gain_stage = ""
+        self._gain_overlap_locked = False
         self._candidate_preview_token = 0
         self.show_all_selected_patterns = False
         self.pattern_stack_offset_percent = 10
@@ -600,6 +619,7 @@ class PhaseFinderWindow(
             return
         state = self.profile_states.setdefault(pattern_id, {})
         state["candidates"] = self._candidate_copy_list(self.match_candidates)
+        state["gain_overlap_locked"] = bool(self._gain_overlap_locked)
 
     def _load_profile_state(self, pattern_id: str | None) -> None:
         self._profile_state_loading = True
@@ -607,6 +627,8 @@ class PhaseFinderWindow(
             state = self.profile_states.get(pattern_id or "", {})
             candidates = state.get("candidates", [])
             self.match_candidates = self._candidate_copy_list(candidates) if isinstance(candidates, list) else []
+            self._gain_overlap_locked = bool(state.get("gain_overlap_locked", False))
+            self._active_gain_stage = ""
             self.match_structures.clear()
             self.match_scales.clear()
             self.match_quantities.clear()
@@ -987,6 +1009,8 @@ class PhaseFinderWindow(
         self.match_zero_shifts.clear()
         self.match_cell_scales.clear()
         self.match_alignment_scores.clear()
+        self._active_gain_stage = ""
+        self._gain_overlap_locked = False
         self.profile_states.clear()
         self.match_profile_result_cache.clear()
         self.active_profile_pattern_id = None
@@ -1093,7 +1117,13 @@ class PhaseFinderWindow(
     def _show_quick_help(self) -> None:
         QMessageBox.information(self, PHASE_FINDER_HELP_TITLE, PHASE_FINDER_HELP_TEXT)
 
-    def _fit_active_sample_indexed_cells(self, *, show_messages: bool = True, recalculate: bool = True) -> bool:
+    def _fit_active_sample_indexed_cells(
+        self,
+        *,
+        show_messages: bool = True,
+        recalculate: bool = True,
+        latest_only: bool = False,
+    ) -> bool:
         pattern = self._active_pattern()
         if pattern is None:
             if show_messages:
@@ -1104,6 +1134,8 @@ class PhaseFinderWindow(
             if show_messages:
                 QMessageBox.information(self, "Cell fit", "Add candidate phases to this sample first.")
             return False
+        if latest_only:
+            linked_phase_ids = linked_phase_ids[-1:]
         observed = self._pattern_scoring_observed_data(pattern)
         if observed is None or len(observed) < 5:
             if show_messages:
@@ -1300,6 +1332,15 @@ class PhaseFinderWindow(
 
         claimed_observed_peaks: list[tuple[float, float]] = []
         for _phase_index, phase_id, candidate_result in sorted(linked_results, key=lambda item: item[0]):
+            gain_evidence = None
+            if len(self.match_candidates) > 1:
+                gain_evidence = self._candidate_gain_indexed_evidence.get(
+                    getattr(candidate_result, "entry_id", "")
+                )
+                if gain_evidence is None:
+                    gain_evidence = self._candidate_gain_indexed_evidence.get(
+                        getattr(candidate_result, "candidate_key", "")
+                    )
             available_observed_peaks = self.refinement_service.unclaimed_observed_peaks(
                 observed_peaks,
                 claimed_observed_peaks,
@@ -1376,95 +1417,37 @@ class PhaseFinderWindow(
                     continue
             structure = structure_by_phase_id.get(phase_id)
             if structure is not None:
-                direct_matches = self.refinement_service.complete_direct_indexed_matches(
-                    structure=structure,
-                    indexed_matches=direct_matches,
-                    reference_peaks=reference_peaks,
-                    observed_peaks=available_observed_peaks,
-                    global_zero_shift=global_zero_shift,
-                )
-                provisional = self.refinement_service.fit_indexed_cell(
-                    phase_id=phase_id,
-                    phase_name=phase_name_by_id.get(phase_id, ""),
-                    structure=structure,
-                    wavelength=wavelength,
-                    indexed_matches=direct_matches,
-                )
-                if provisional.success:
-                    accepted_overlaps = self.refinement_service.cell_consistent_indexed_matches(
-                        cell=provisional.refined_cell,
-                        indexed_matches=overlapping_matches,
-                        observed_peaks=observed_peaks,
-                        wavelength=wavelength,
-                    )
-                    phase_matches = direct_matches + accepted_overlaps
-                else:
-                    # A phase can be almost completely hidden by earlier phases.
-                    # In that case overlaps may supply the missing independent hkl,
-                    # but only near positions predicted by the reference cell.
-                    overlap_seed = self.refinement_service.cell_consistent_indexed_matches(
-                        cell=structure.cell,
-                        indexed_matches=overlapping_matches,
-                        observed_peaks=observed_peaks,
-                        wavelength=wavelength,
-                        tolerance_factor=2.2,
-                        minimum_tolerance=0.18,
-                        maximum_tolerance=0.60,
-                    )
-                    trial_matches = direct_matches + overlap_seed
-                    trial = self.refinement_service.fit_indexed_cell(
-                        phase_id=phase_id,
-                        phase_name=phase_name_by_id.get(phase_id, ""),
-                        structure=structure,
-                        wavelength=wavelength,
-                        indexed_matches=trial_matches,
-                    )
-                    if trial.success:
-                        retained_direct = self.refinement_service.cell_consistent_indexed_matches(
-                            cell=trial.refined_cell,
-                            indexed_matches=direct_matches,
-                            observed_peaks=observed_peaks,
-                            wavelength=wavelength,
-                        )
-                        if len(retained_direct) == len(direct_matches):
-                            accepted_overlaps = self.refinement_service.cell_consistent_indexed_matches(
-                                cell=trial.refined_cell,
-                                indexed_matches=overlapping_matches,
-                                observed_peaks=observed_peaks,
-                                wavelength=wavelength,
-                            )
-                            phase_matches = direct_matches + accepted_overlaps
-                        else:
-                            phase_matches = direct_matches
+                if gain_evidence is not None:
+                    gain_matches = [
+                        (h, k, l, float(observed_two_theta) - global_zero_shift, weight)
+                        for h, k, l, observed_two_theta, weight in gain_evidence.indexed_matches
+                    ]
+                    if gain_evidence.stage == GainStage.OVERLAP:
+                        direct_matches = []
+                        overlapping_matches = gain_matches
                     else:
-                        phase_matches = direct_matches
-                final_fit = self.refinement_service.fit_indexed_cell(
+                        direct_matches = gain_matches
+                        overlapping_matches = []
+                else:
+                    direct_matches = self.refinement_service.complete_direct_indexed_matches(
+                        structure=structure,
+                        indexed_matches=direct_matches,
+                        reference_peaks=reference_peaks,
+                        observed_peaks=available_observed_peaks,
+                        global_zero_shift=global_zero_shift,
+                    )
+                prepared_matches = self.indexed_cell_matching_service.prepare_phase_matches(
                     phase_id=phase_id,
                     phase_name=phase_name_by_id.get(phase_id, ""),
                     structure=structure,
                     wavelength=wavelength,
-                    indexed_matches=phase_matches,
-                )
-                validation_cell = final_fit.refined_cell if final_fit.success else structure.cell
-                validated_matches = self.refinement_service.cell_consistent_indexed_matches(
-                    cell=validation_cell,
-                    indexed_matches=phase_matches,
+                    direct_matches=direct_matches,
+                    overlapping_matches=overlapping_matches,
                     observed_peaks=observed_peaks,
-                    wavelength=wavelength,
+                    available_observed_peaks=available_observed_peaks,
                 )
-                if validated_matches:
-                    phase_matches = validated_matches
-                matches[phase_id] = phase_matches
-
-                # Only direct, still-unassigned observations become claimed.
-                # Overlapping reflections remain available to every later phase.
-                validated_direct = self.refinement_service.cell_consistent_indexed_matches(
-                    cell=validation_cell,
-                    indexed_matches=direct_matches,
-                    observed_peaks=observed_peaks,
-                    wavelength=wavelength,
-                )
-                for _h, _k, _l, corrected_two_theta, _weight in validated_direct:
+                matches[phase_id] = prepared_matches.matches
+                for _h, _k, _l, corrected_two_theta, _weight in prepared_matches.direct_matches_to_claim:
                     raw_two_theta = float(corrected_two_theta) + global_zero_shift
                     if not observed_peaks:
                         continue
@@ -1475,6 +1458,8 @@ class PhaseFinderWindow(
                     claimed_observed_peaks.append(
                         (float(nearest_peak[0]), max(float(nearest_peak[2]), 0.05))
                     )
+                continue
+
         return {phase_id: phase_matches for phase_id, phase_matches in matches.items() if phase_matches}
 
     def _recalculate_match_profile(self, auto_zoom: bool = False) -> None:
@@ -1811,7 +1796,11 @@ class PhaseFinderWindow(
             residual_share = float(gain_context.get("residual_share", 0.0) or 0.0)
             before_fit = float(gain_context.get("before_fit", 0.0) or 0.0)
             remaining_fit = max(0.0, 100.0 - before_fit)
-            if before_fit >= 98.0 or (len(self.match_candidates) >= 5 and (residual_share < 0.025 or remaining_fit < 1.5)):
+            if DEFAULT_GAIN_POLICY.residual_is_exhausted(
+                selected_phase_count=len(self.match_candidates),
+                before_fit=before_fit,
+                residual_share=residual_share,
+            ):
                 self._last_gain_debug = (
                     f"Gain: fit {before_fit:.1f}%, remaining {remaining_fit:.1f}%; "
                     "adding more phases is likely overfitting"
@@ -1872,6 +1861,25 @@ class PhaseFinderWindow(
                 if self._candidate_key(candidate) in selected_keys:
                     continue
                 precomputed_gains[row_index] = self._candidate_row_integral_gain(row, gain_context)
+            if (
+                active_gain_stage == str(GainStage.DIRECT)
+                and not any(gain > 0.0 for gain in precomputed_gains.values())
+                and len(self._gain_stage_records(gain_context, GainStage.OVERLAP, limit=24))
+                >= DEFAULT_GAIN_POLICY.minimum_stage_records
+            ):
+                active_gain_stage = str(GainStage.OVERLAP)
+                self._gain_overlap_locked = True
+                gain_context["gain_stage"] = active_gain_stage
+                for row_index, row in enumerate(rows_to_rank):
+                    candidate = {
+                        "Source": row[0] if len(row) > 0 else "",
+                        "Entry": row[1] if len(row) > 1 else "",
+                        "Formula": row[2] if len(row) > 2 else "",
+                        "Phase": row[3] if len(row) > 3 else "",
+                    }
+                    if self._candidate_key(candidate) in selected_keys:
+                        continue
+                    precomputed_gains[row_index] = self._candidate_row_integral_gain(row, gain_context)
             self._active_gain_stage = active_gain_stage
         for index, row in enumerate(rows_to_rank):
             if progress is not None and not precomputed_gains and (index == 0 or index % 25 == 0):
@@ -2111,11 +2119,39 @@ class PhaseFinderWindow(
         return overlap_records
 
     def _gain_stage_for_context(self, context) -> str:
-        if len(self._gain_stage_records(context, "direct", limit=24)) >= 2:
-            return "direct"
-        if len(self._gain_stage_records(context, "overlap", limit=24)) >= 2:
-            return "overlap"
-        return "hidden"
+        if self._gain_overlap_locked:
+            overlap_count = len(self._gain_stage_records(context, GainStage.OVERLAP, limit=24))
+            if overlap_count >= DEFAULT_GAIN_POLICY.minimum_stage_records:
+                return str(GainStage.OVERLAP)
+            return str(GainStage.HIDDEN)
+        return str(
+            DEFAULT_GAIN_POLICY.select_stage(
+                direct_count=len(self._gain_stage_records(context, GainStage.DIRECT, limit=24)),
+                overlap_count=len(self._gain_stage_records(context, GainStage.OVERLAP, limit=24)),
+            )
+        )
+
+    def _capture_candidate_gain_indexed_evidence(self, candidate: dict[str, str]) -> None:
+        if not self.match_candidates:
+            return
+        context = self._candidate_gain_context()
+        if context is None:
+            return
+        stage = GainStage(
+            getattr(self, "_active_gain_stage", "") or self._gain_stage_for_context(context)
+        )
+        context["gain_stage"] = str(stage)
+        records = self._gain_stage_records(context, str(stage), limit=90)
+        peaks = self._candidate_peaks_for_gain(candidate)
+        peaks = self._aligned_candidate_gain_peaks(candidate, peaks, context)
+        evidence = build_gain_indexed_evidence(
+            peaks=peaks,
+            records=records,
+            stage=stage,
+            base_fwhm=float(context.get("fwhm", 0.18) or 0.18),
+        )
+        if evidence.indexed_matches:
+            self._candidate_gain_indexed_evidence[self._candidate_key(candidate)] = evidence
 
     def _gain_sql_candidate_rows(self, *, stage: str = "direct", context=None) -> list[list[str]]:
         if context is None:
@@ -2126,7 +2162,11 @@ class PhaseFinderWindow(
         before_fit = float(context.get("before_fit", 0.0) or 0.0)
         remaining_fit = max(0.0, 100.0 - before_fit)
         residual_share = float(context.get("residual_share", 0.0) or 0.0)
-        if before_fit >= 98.0 or (len(self.match_candidates) >= 5 and (remaining_fit < 1.5 or residual_share < 0.025)):
+        if DEFAULT_GAIN_POLICY.residual_is_exhausted(
+            selected_phase_count=len(self.match_candidates),
+            before_fit=before_fit,
+            residual_share=residual_share,
+        ):
             self._last_gain_debug = (
                 f"Gain: fit {before_fit:.1f}%, remaining {remaining_fit:.1f}%; "
                 "adding more phases is likely overfitting"
@@ -2297,8 +2337,10 @@ class PhaseFinderWindow(
             # for strongly overlapping phases and must not erase valid direct
             # matches altogether.
             profile_gain = self._candidate_gain_value_for_profile(candidate_profile, context)
-            profile_support = float(np.clip(profile_gain / max(line_gain, 1.0e-6), 0.35, 1.0))
-            return line_gain * profile_support
+            return DEFAULT_GAIN_POLICY.combine_line_and_profile(
+                line_gain=line_gain,
+                profile_gain=profile_gain,
+            )
 
         observed_records = self._gain_stage_records(context, "hidden", limit=120)
         presence = self._candidate_gain_presence_factor(
@@ -2308,8 +2350,10 @@ class PhaseFinderWindow(
         )
         if presence <= 0.0:
             return 0.0
-        remaining_fit = max(0.0, 100.0 - float(context.get("before_fit", 0.0) or 0.0))
-        return float(np.clip(remaining_fit * presence * 0.45, 0.0, remaining_fit))
+        return DEFAULT_GAIN_POLICY.hidden_gain(
+            before_fit=float(context.get("before_fit", 0.0) or 0.0),
+            presence=presence,
+        )
 
     def _candidate_cif_peaks_for_gain(self, candidate: dict[str, str]) -> list[HKLPeak]:
         structure = None
@@ -2353,17 +2397,13 @@ class PhaseFinderWindow(
         if candidate_scale <= 1.0e-8:
             return 0.0
         calculated = candidate_profile * candidate_scale
-        covered = np.minimum(residual_target, calculated)
-        excess = np.clip(calculated - residual_target, 0.0, None)
-        covered_area = self._weighted_integral_area(covered, weights)
-        excess_area = self._weighted_integral_area(excess, weights)
-        if covered_area <= 0.0:
-            return 0.0
-        residual_fraction = covered_area / max(float(context["residual_area"]), 1.0e-12)
-        support_fraction = covered_area / max(covered_area + 3.0 * excess_area, 1.0e-12)
-        gain = 100.0 * residual_fraction * support_fraction
-        remaining_fit = max(0.0, 100.0 - float(context.get("before_fit", 0.0) or 0.0))
-        return float(np.clip(min(gain, remaining_fit), 0.0, 100.0))
+        return profile_residual_gain(
+            residual_target=residual_target,
+            calculated=calculated,
+            weights=weights,
+            residual_area=float(context["residual_area"]),
+            before_fit=float(context.get("before_fit", 0.0) or 0.0),
+        )
 
     def _aligned_candidate_gain_peaks(
         self,
@@ -3069,7 +3109,7 @@ class PhaseFinderWindow(
         median = float(np.nanmedian(finite))
         mad = float(np.nanmedian(np.abs(finite - median)))
         robust_sigma = 1.4826 * mad
-        return max(median + 3.0 * robust_sigma, float(np.nanpercentile(finite, 20)))
+        return max(median + 2.7 * robust_sigma, float(np.nanpercentile(finite, 20)))
 
     def _gain_residual_signal_factor(self, target: np.ndarray, residual_target: np.ndarray, x: np.ndarray) -> float:
         target_records = self._observed_peak_records(x, target, limit=80)

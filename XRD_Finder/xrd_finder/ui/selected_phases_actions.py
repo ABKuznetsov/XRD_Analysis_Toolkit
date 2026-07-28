@@ -72,12 +72,10 @@ class PhaseFinderSelectedPhasesActionsMixin:
         if any(self._candidate_key(item) == key for item in self.match_candidates):
             self._sync_candidate_to_sample_phase(candidate, show_errors=show_errors)
             if recalculate:
-                self._recalculate_match_profile(auto_zoom=self._should_autozoom_match_profile())
-                if hasattr(self, "_fit_active_sample_indexed_cells"):
-                    self._fit_active_sample_indexed_cells(show_messages=False, recalculate=True)
-                self._schedule_candidate_gain_ranking()
+                self.post_match_pipeline.candidate_added()
             return True
         try:
+            self._capture_candidate_gain_indexed_evidence(candidate)
             cif_path = self._candidate_cif_path(candidate)
             _phase, structure = create_phase_from_cif(cif_path)
             phase_name = self._candidate_phase_name(candidate)
@@ -97,10 +95,7 @@ class PhaseFinderSelectedPhasesActionsMixin:
             if hasattr(self, "_invalidate_match_profile_cache"):
                 self._invalidate_match_profile_cache(getattr(self, "active_profile_pattern_id", None))
             if recalculate:
-                self._recalculate_match_profile(auto_zoom=self._should_autozoom_match_profile())
-                if hasattr(self, "_fit_active_sample_indexed_cells"):
-                    self._fit_active_sample_indexed_cells(show_messages=False, recalculate=True)
-                self._schedule_candidate_gain_ranking()
+                self.post_match_pipeline.candidate_added()
             return True
         except Exception as exc:
             if show_errors:
@@ -134,6 +129,8 @@ class PhaseFinderSelectedPhasesActionsMixin:
         errors = []
         try:
             self.match_candidates.clear()
+            self._gain_overlap_locked = False
+            self._active_gain_stage = ""
             self.match_structures.clear()
             for candidate in candidates:
                 try:
@@ -195,6 +192,8 @@ class PhaseFinderSelectedPhasesActionsMixin:
         if row < 0 or row >= len(self.match_candidates):
             return
         candidate = self.match_candidates.pop(row)
+        self._gain_overlap_locked = False
+        self._active_gain_stage = ""
         key = self._candidate_key(candidate)
         self.match_structures.pop(key, None)
         self.match_scales.pop(key, None)
@@ -229,6 +228,8 @@ class PhaseFinderSelectedPhasesActionsMixin:
 
     def _clear_match_list(self) -> None:
         self.match_candidates.clear()
+        self._gain_overlap_locked = False
+        self._active_gain_stage = ""
         self.match_structures.clear()
         self.match_scales.clear()
         self.match_quantities.clear()
@@ -282,6 +283,14 @@ class PhaseFinderSelectedPhasesActionsMixin:
             if gain_context is not None:
                 stage = self._gain_stage_for_context(gain_context)
                 rows.extend(self._gain_sql_candidate_rows(stage=stage, context=gain_context))
+                if stage == "direct":
+                    rows.extend(self._gain_sql_candidate_rows(stage="overlap", context=gain_context))
+                elif stage == "overlap":
+                    # Once Overlap is locked, uncovered peaks remain useful as
+                    # search hints so a phase with both shared and free lines
+                    # (for example albite) is not omitted from the candidate
+                    # pool. Ranking still uses Overlap evidence only.
+                    rows.extend(self._gain_sql_candidate_rows(stage="direct", context=gain_context))
         # The indexed residual lookup is an accelerator, not a hard gate.
         # Keep already loaded candidates available when the narrow SQL query
         # misses a shifted or overlapping phase.

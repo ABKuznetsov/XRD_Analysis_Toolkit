@@ -4,6 +4,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+import gemmi
 import numpy as np
 from scipy.optimize import nnls
 from scipy.signal import find_peaks
@@ -24,6 +25,7 @@ from xrd_finder.services.calculated_pattern_service import (
     CU_KA1_WAVELENGTH,
     CalculatedPatternService,
     HKLPeak,
+    expand_atoms_by_symmetry,
     radiation_lines_from_wavelength,
 )
 
@@ -184,27 +186,62 @@ class FinderService:
             )
             phase_eta = fitted_eta
             fitted_context = replace(phase_context, fwhm=phase_fwhm, profile_eta=phase_eta)
+            absolute_peaks = [
+                replace(
+                    peak,
+                    intensity=(
+                        float(getattr(peak, "raw_intensity", 0.0) or 0.0)
+                        if float(getattr(peak, "raw_intensity", 0.0) or 0.0) > 0.0
+                        else float(getattr(peak, "intensity", 0.0) or 0.0)
+                    ),
+                )
+                for peak in adjusted
+            ]
             profile = self.profile_calculator.profile_from_peaks(
-                adjusted,
+                absolute_peaks,
                 x_grid,
                 context=fitted_context,
             )
-            profiles.append((candidate, reference_peaks, adjusted, profile, cell_scale, phase_fwhm, phase_eta))
+            profiles.append(
+                (
+                    candidate,
+                    structure,
+                    reference_peaks,
+                    adjusted,
+                    profile,
+                    cell_scale,
+                    phase_fwhm,
+                    phase_eta,
+                )
+            )
 
         scales = self._fit_incremental_scales(
             observed.target_y,
             [
                 profile
-                for _candidate, _reference_peaks, _peaks, profile, _cell_scale, _phase_fwhm, _phase_eta
+                for _candidate, _structure, _reference_peaks, _peaks, profile, _cell_scale, _phase_fwhm, _phase_eta
                 in profiles
             ],
         )
-        total_scale = float(np.sum(scales)) if len(scales) else 0.0
+        cell_masses = np.asarray(
+            [self._unit_cell_molar_mass(structure) for _candidate, structure, *_rest in profiles],
+            dtype=float,
+        )
+        quantity_fractions = self._mass_fractions(scales, cell_masses)
         calculated_total = np.zeros_like(x_grid)
         results = []
         assignment_phase_sets = []
         phase_fwhm_values = []
-        for (candidate, reference_peaks, peaks, profile, cell_scale, phase_fwhm, phase_eta), scale in zip(profiles, scales):
+        for (
+            candidate,
+            _structure,
+            reference_peaks,
+            peaks,
+            profile,
+            cell_scale,
+            phase_fwhm,
+            phase_eta,
+        ), scale, quantity_fraction in zip(profiles, scales, quantity_fractions):
             scaled_profile = profile * float(scale)
             calculated_total += scaled_profile
             if float(scale) > 1e-9:
@@ -217,7 +254,7 @@ class FinderService:
                 formula=candidate.formula,
                 source=candidate.source,
                 scale=float(scale),
-                quantity_percent=float(scale / total_scale * 100.0) if total_scale else 0.0,
+                quantity_percent=float(quantity_fraction * 100.0),
                 score=match_result.score,
                 matched_peaks=match_result.matched_peaks,
                 total_peaks=match_result.total_peaks,
@@ -259,6 +296,30 @@ class FinderService:
             candidates=results,
             observed_peaks=assigned_peaks,
         )
+
+    @staticmethod
+    def _unit_cell_molar_mass(structure) -> float:
+        """Return the molar mass of all occupied atoms in one unit cell."""
+
+        total = 0.0
+        for atom in expand_atoms_by_symmetry(structure):
+            try:
+                atomic_weight = float(gemmi.Element(str(atom.element)).weight)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                atomic_weight = 0.0
+            total += max(float(atom.occupancy), 0.0) * max(atomic_weight, 0.0)
+        return max(total, 1.0e-12)
+
+    @staticmethod
+    def _mass_fractions(scales, cell_masses) -> np.ndarray:
+        contributions = (
+            np.clip(np.asarray(scales, dtype=float), 0.0, None)
+            * np.clip(np.asarray(cell_masses, dtype=float), 0.0, None)
+        )
+        total = float(np.sum(contributions)) if len(contributions) else 0.0
+        if total <= 0.0:
+            return np.zeros_like(contributions)
+        return contributions / total
 
     @staticmethod
     def _has_indexed_cell(structure, peaks: list[HKLPeak]) -> bool:
@@ -755,9 +816,6 @@ class FinderService:
         fallback = float(np.clip(base_fwhm, 0.04, 0.80))
         if not peaks or len(x) < 8 or len(x) != len(y) or float(np.nanmax(y)) <= 0.0:
             return fallback
-        step_values = np.diff(x)
-        step_values = step_values[np.isfinite(step_values) & (step_values > 0.0)]
-        step = float(np.nanmedian(step_values)) if len(step_values) else 0.03
         strong = sorted(
             (peak for peak in peaks if float(getattr(peak, "intensity", 0.0) or 0.0) >= 4.0),
             key=lambda peak: float(getattr(peak, "intensity", 0.0) or 0.0),

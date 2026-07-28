@@ -396,6 +396,62 @@ class RefinementService:
                 available.append((float(two_theta), float(intensity), float(fwhm)))
         return available
 
+    @staticmethod
+    def weight_indexed_matches(
+        indexed_matches: list[tuple[int, int, int, float, float]],
+        *,
+        multiplier: float = 1.0,
+        minimum: float = 1.0,
+        maximum: float = 100.0,
+    ) -> list[tuple[int, int, int, float, float]]:
+        weighted: list[tuple[int, int, int, float, float]] = []
+        for h, k, l, observed_two_theta, weight in indexed_matches:
+            try:
+                value = float(weight) * float(multiplier)
+            except Exception:
+                value = float(minimum)
+            value = max(float(minimum), min(float(maximum), value))
+            try:
+                weighted.append((int(h), int(k), int(l), float(observed_two_theta), value))
+            except Exception:
+                continue
+        return weighted
+
+    @staticmethod
+    def compact_indexed_matches_by_observed(
+        indexed_matches: list[tuple[int, int, int, float, float]],
+        observed_peaks: list[tuple[float, float, float]],
+        *,
+        per_peak_limit: int = 1,
+        tolerance_factor: float = 1.0,
+        minimum_tolerance: float = 0.06,
+        maximum_tolerance: float = 0.30,
+    ) -> list[tuple[int, int, int, float, float]]:
+        if per_peak_limit <= 0 or not indexed_matches or not observed_peaks:
+            return list(indexed_matches)
+        buckets: dict[float, list[tuple[int, tuple[int, int, int, float, float]]]] = {}
+        fallback_index = 0
+        for index, match in enumerate(indexed_matches):
+            try:
+                observed_two_theta = float(match[3])
+            except Exception:
+                continue
+            nearest = min(observed_peaks, key=lambda peak: abs(float(peak[0]) - observed_two_theta))
+            nearest_two_theta = float(nearest[0])
+            nearest_fwhm = max(float(nearest[2]), 0.05)
+            tolerance = max(float(minimum_tolerance), min(float(maximum_tolerance), nearest_fwhm * float(tolerance_factor)))
+            if abs(nearest_two_theta - observed_two_theta) <= tolerance:
+                key = round(nearest_two_theta, 4)
+            else:
+                fallback_index += 1
+                key = observed_two_theta + fallback_index * 1e-6
+            buckets.setdefault(key, []).append((index, match))
+        keep_indices: set[int] = set()
+        for items in buckets.values():
+            items.sort(key=lambda item: float(item[1][4]) if len(item[1]) > 4 else 1.0, reverse=True)
+            keep_indices.update(index for index, _match in items[:per_peak_limit])
+        return [match for index, match in enumerate(indexed_matches) if index in keep_indices]
+
     def cell_consistent_indexed_matches(
         self,
         *,

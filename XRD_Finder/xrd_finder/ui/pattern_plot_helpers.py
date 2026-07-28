@@ -157,19 +157,26 @@ def plot_peak_intensity_sticks(
     height: float,
     label: str | None = None,
     width: float = 1.6,
+    ceiling=None,
 ):
     x_grid = np.asarray(x_grid, dtype=float)
     baseline = np.asarray(baseline, dtype=float)
     if baseline.shape != x_grid.shape:
         baseline = np.full_like(x_grid, float(np.nanmedian(baseline)) if len(baseline) else 0.0)
+    ceiling_values = None if ceiling is None else np.asarray(ceiling, dtype=float)
+    if ceiling_values is not None and ceiling_values.shape != x_grid.shape:
+        ceiling_values = None
     stick_x = []
     stick_y = []
     for peak in peaks:
         two_theta = float(getattr(peak, "two_theta", 0.0))
         base_y = float(np.interp(two_theta, x_grid, baseline))
         intensity = max(float(getattr(peak, "intensity", 0.0)), 0.0)
+        top_y = base_y + height * intensity / 100.0
+        if ceiling_values is not None:
+            top_y = min(top_y, max(base_y, float(np.interp(two_theta, x_grid, ceiling_values))))
         stick_x.extend([two_theta, two_theta, np.nan])
-        stick_y.extend([base_y, base_y + height * intensity / 100.0, np.nan])
+        stick_y.extend([base_y, top_y, np.nan])
     return _set_legend_label(plot.plot(stick_x, stick_y, pen=pg.mkPen(color, width=width)), label)
 
 
