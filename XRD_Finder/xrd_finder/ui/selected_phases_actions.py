@@ -72,12 +72,10 @@ class PhaseFinderSelectedPhasesActionsMixin:
         if any(self._candidate_key(item) == key for item in self.match_candidates):
             self._sync_candidate_to_sample_phase(candidate, show_errors=show_errors)
             if recalculate:
-                self._recalculate_match_profile(auto_zoom=self._should_autozoom_match_profile())
-                if hasattr(self, "_fit_active_sample_indexed_cells"):
-                    self._fit_active_sample_indexed_cells(show_messages=False, recalculate=True)
-                self._schedule_candidate_gain_ranking()
+                self.post_match_pipeline.candidate_added()
             return True
         try:
+            self._capture_candidate_gain_indexed_evidence(candidate)
             cif_path = self._candidate_cif_path(candidate)
             _phase, structure = create_phase_from_cif(cif_path)
             phase_name = self._candidate_phase_name(candidate)
@@ -97,10 +95,7 @@ class PhaseFinderSelectedPhasesActionsMixin:
             if hasattr(self, "_invalidate_match_profile_cache"):
                 self._invalidate_match_profile_cache(getattr(self, "active_profile_pattern_id", None))
             if recalculate:
-                self._recalculate_match_profile(auto_zoom=self._should_autozoom_match_profile())
-                if hasattr(self, "_fit_active_sample_indexed_cells"):
-                    self._fit_active_sample_indexed_cells(show_messages=False, recalculate=True)
-                self._schedule_candidate_gain_ranking()
+                self.post_match_pipeline.candidate_added()
             return True
         except Exception as exc:
             if show_errors:
