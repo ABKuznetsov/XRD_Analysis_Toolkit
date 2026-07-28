@@ -580,6 +580,8 @@ class PhaseFinderWindow(
         self._candidate_probability_cache: dict[tuple[object, ...], float] = {}
         self._candidate_gain_profile_cache: dict[tuple[object, ...], np.ndarray] = {}
         self._candidate_gain_indexed_evidence: dict[str, GainIndexedEvidence] = {}
+        self._active_gain_stage = ""
+        self._gain_overlap_locked = False
         self._candidate_preview_token = 0
         self.show_all_selected_patterns = False
         self.pattern_stack_offset_percent = 10
@@ -617,6 +619,7 @@ class PhaseFinderWindow(
             return
         state = self.profile_states.setdefault(pattern_id, {})
         state["candidates"] = self._candidate_copy_list(self.match_candidates)
+        state["gain_overlap_locked"] = bool(self._gain_overlap_locked)
 
     def _load_profile_state(self, pattern_id: str | None) -> None:
         self._profile_state_loading = True
@@ -624,6 +627,8 @@ class PhaseFinderWindow(
             state = self.profile_states.get(pattern_id or "", {})
             candidates = state.get("candidates", [])
             self.match_candidates = self._candidate_copy_list(candidates) if isinstance(candidates, list) else []
+            self._gain_overlap_locked = bool(state.get("gain_overlap_locked", False))
+            self._active_gain_stage = ""
             self.match_structures.clear()
             self.match_scales.clear()
             self.match_quantities.clear()
@@ -1004,6 +1009,8 @@ class PhaseFinderWindow(
         self.match_zero_shifts.clear()
         self.match_cell_scales.clear()
         self.match_alignment_scores.clear()
+        self._active_gain_stage = ""
+        self._gain_overlap_locked = False
         self.profile_states.clear()
         self.match_profile_result_cache.clear()
         self.active_profile_pattern_id = None
@@ -1854,6 +1861,25 @@ class PhaseFinderWindow(
                 if self._candidate_key(candidate) in selected_keys:
                     continue
                 precomputed_gains[row_index] = self._candidate_row_integral_gain(row, gain_context)
+            if (
+                active_gain_stage == str(GainStage.DIRECT)
+                and not any(gain > 0.0 for gain in precomputed_gains.values())
+                and len(self._gain_stage_records(gain_context, GainStage.OVERLAP, limit=24))
+                >= DEFAULT_GAIN_POLICY.minimum_stage_records
+            ):
+                active_gain_stage = str(GainStage.OVERLAP)
+                self._gain_overlap_locked = True
+                gain_context["gain_stage"] = active_gain_stage
+                for row_index, row in enumerate(rows_to_rank):
+                    candidate = {
+                        "Source": row[0] if len(row) > 0 else "",
+                        "Entry": row[1] if len(row) > 1 else "",
+                        "Formula": row[2] if len(row) > 2 else "",
+                        "Phase": row[3] if len(row) > 3 else "",
+                    }
+                    if self._candidate_key(candidate) in selected_keys:
+                        continue
+                    precomputed_gains[row_index] = self._candidate_row_integral_gain(row, gain_context)
             self._active_gain_stage = active_gain_stage
         for index, row in enumerate(rows_to_rank):
             if progress is not None and not precomputed_gains and (index == 0 or index % 25 == 0):
@@ -2093,6 +2119,11 @@ class PhaseFinderWindow(
         return overlap_records
 
     def _gain_stage_for_context(self, context) -> str:
+        if self._gain_overlap_locked:
+            overlap_count = len(self._gain_stage_records(context, GainStage.OVERLAP, limit=24))
+            if overlap_count >= DEFAULT_GAIN_POLICY.minimum_stage_records:
+                return str(GainStage.OVERLAP)
+            return str(GainStage.HIDDEN)
         return str(
             DEFAULT_GAIN_POLICY.select_stage(
                 direct_count=len(self._gain_stage_records(context, GainStage.DIRECT, limit=24)),
@@ -2106,7 +2137,9 @@ class PhaseFinderWindow(
         context = self._candidate_gain_context()
         if context is None:
             return
-        stage = GainStage(self._gain_stage_for_context(context))
+        stage = GainStage(
+            getattr(self, "_active_gain_stage", "") or self._gain_stage_for_context(context)
+        )
         context["gain_stage"] = str(stage)
         records = self._gain_stage_records(context, str(stage), limit=90)
         peaks = self._candidate_peaks_for_gain(candidate)
@@ -3076,7 +3109,7 @@ class PhaseFinderWindow(
         median = float(np.nanmedian(finite))
         mad = float(np.nanmedian(np.abs(finite - median)))
         robust_sigma = 1.4826 * mad
-        return max(median + 3.0 * robust_sigma, float(np.nanpercentile(finite, 20)))
+        return max(median + 2.7 * robust_sigma, float(np.nanpercentile(finite, 20)))
 
     def _gain_residual_signal_factor(self, target: np.ndarray, residual_target: np.ndarray, x: np.ndarray) -> float:
         target_records = self._observed_peak_records(x, target, limit=80)

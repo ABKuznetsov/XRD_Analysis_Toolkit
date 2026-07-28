@@ -257,6 +257,7 @@ def draw_match_profile_result(
             preview_height,
             f"preview peaks {phase_label}",
             width=style.stick.width,
+            ceiling=calculated_total_plot,
         )
         _tag_plot_item(stick_item, pattern_id)
         plot_layers["preview_peak_positions"].append(stick_item)

@@ -129,6 +129,8 @@ class PhaseFinderSelectedPhasesActionsMixin:
         errors = []
         try:
             self.match_candidates.clear()
+            self._gain_overlap_locked = False
+            self._active_gain_stage = ""
             self.match_structures.clear()
             for candidate in candidates:
                 try:
@@ -190,6 +192,8 @@ class PhaseFinderSelectedPhasesActionsMixin:
         if row < 0 or row >= len(self.match_candidates):
             return
         candidate = self.match_candidates.pop(row)
+        self._gain_overlap_locked = False
+        self._active_gain_stage = ""
         key = self._candidate_key(candidate)
         self.match_structures.pop(key, None)
         self.match_scales.pop(key, None)
@@ -224,6 +228,8 @@ class PhaseFinderSelectedPhasesActionsMixin:
 
     def _clear_match_list(self) -> None:
         self.match_candidates.clear()
+        self._gain_overlap_locked = False
+        self._active_gain_stage = ""
         self.match_structures.clear()
         self.match_scales.clear()
         self.match_quantities.clear()
@@ -277,6 +283,14 @@ class PhaseFinderSelectedPhasesActionsMixin:
             if gain_context is not None:
                 stage = self._gain_stage_for_context(gain_context)
                 rows.extend(self._gain_sql_candidate_rows(stage=stage, context=gain_context))
+                if stage == "direct":
+                    rows.extend(self._gain_sql_candidate_rows(stage="overlap", context=gain_context))
+                elif stage == "overlap":
+                    # Once Overlap is locked, uncovered peaks remain useful as
+                    # search hints so a phase with both shared and free lines
+                    # (for example albite) is not omitted from the candidate
+                    # pool. Ranking still uses Overlap evidence only.
+                    rows.extend(self._gain_sql_candidate_rows(stage="direct", context=gain_context))
         # The indexed residual lookup is an accelerator, not a hard gate.
         # Keep already loaded candidates available when the narrow SQL query
         # misses a shifted or overlapping phase.

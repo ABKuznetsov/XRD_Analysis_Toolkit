@@ -15,9 +15,9 @@
 
 More detailed installation notes are below in [Installation](#installation).
 
-# XRD Phase Finder 1.2.0
+# XRD Phase Finder 1.2.1
 
-Feature release with indexed full-database ranking, staged Gain search, lightweight unit-cell refinement, independent phase profiles, dual physical/amorphous backgrounds and expanded plot export controls.
+Maintenance release with isolated post-Match refinement stages, improved multi-phase cell refinement and Gain fallback, clearer profile previews and GSAS-II-style mass normalization for phase quantities.
 
 # Overview
 
@@ -423,7 +423,7 @@ The current implementation is intended for **initial phase identification** and 
 
 # Current Status
 
-Current development stage: **1.2.0 stable public release**.
+Current development stage: **1.2.1 release candidate**.
 
 The application is ready for practical search-match and visual phase-identification workflows on Windows and macOS. The current release includes the graphical Phase Finder workspace, project save/load, multi-pattern display, CIF-based phase overlays, candidate cards, database management, startup/update preview and packaged installers.
 
