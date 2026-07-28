@@ -19,6 +19,7 @@ from urllib.request import Request, urlopen
 APP_ID = "xrd_finder"
 APP_NAME = "XRD Phase Finder"
 MIN_VISIBLE_STEP_SECONDS = 1.0
+RUNTIME_PROBE = "from PySide6 import QtCore; import gemmi, numpy, pyqtgraph, scipy"
 
 
 def app_root() -> Path:
@@ -69,28 +70,33 @@ def fetch_url_bytes(url: str, timeout: float = 30.0) -> bytes:
     try:
         with urlopen(request, timeout=timeout, context=create_ssl_context()) as response:
             return response.read()
-    except Exception:
+    except Exception as url_error:
         curl = Path("/usr/bin/curl")
         if not curl.exists():
-            raise
+            raise URLError(str(url_error)) from url_error
         process = subprocess.run(
             [
                 str(curl),
                 "-fsSL",
                 "--connect-timeout",
-                str(max(1, int(timeout))),
+                str(min(5, max(1, int(timeout)))),
                 "--max-time",
-                str(max(30, int(timeout))),
+                str(max(3, int(timeout))),
                 url,
             ],
             capture_output=True,
-            check=True,
+            check=False,
         )
+        if process.returncode:
+            detail = process.stderr.decode("utf-8", errors="replace").strip()
+            raise URLError(detail or str(url_error)) from url_error
         return process.stdout
 
 
-def fetch_json(url: str, timeout: float = 8.0) -> dict:
-    data = fetch_url_bytes(url, timeout=timeout)
+def fetch_json(url: str, timeout: float = 4.0) -> dict:
+    separator = "&" if "?" in url else "?"
+    cache_busted_url = f"{url}{separator}_={time.time_ns()}"
+    data = fetch_url_bytes(cache_busted_url, timeout=timeout)
     return json.loads(data.decode("utf-8-sig"))
 
 
@@ -106,6 +112,25 @@ def download_file(url: str, target: Path, expected_sha256: str = "") -> None:
     if expected_sha256 and digest.hexdigest().lower() != expected_sha256.lower():
         target.unlink(missing_ok=True)
         raise RuntimeError("Downloaded installer checksum does not match the manifest.")
+
+
+def runtime_is_usable(python: Path) -> tuple[bool, str]:
+    if not python.exists():
+        return False, "Python executable is missing"
+    try:
+        process = subprocess.run(
+            [str(python), "-c", RUNTIME_PROBE],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except Exception as exc:
+        return False, str(exc)
+    if process.returncode == 0:
+        return True, ""
+    detail = (process.stderr or process.stdout or "Required scientific packages could not be imported").strip()
+    return False, detail.splitlines()[-1]
 
 
 def find_macos_asset(remote_app: dict) -> tuple[str, str]:
@@ -128,7 +153,8 @@ class PreviewApp:
     def __init__(self) -> None:
         self.app_root = app_root()
         self.sci_root = Path.home() / "Library" / "Application Support" / "Sci"
-        self.env_root = self.sci_root / "env"
+        self.runtime_arch = "arm64" if platform.machine() == "arm64" else "x86_64"
+        self.env_root = self.sci_root / f"env-{self.runtime_arch}"
         self.apps_root = self.sci_root / "apps"
         self.finder_root = self.apps_root / "xrd_phase_finder"
         self.data_root = self.finder_root / "data"
@@ -261,21 +287,27 @@ class PreviewApp:
 
     def ensure_runtime(self) -> None:
         self.set_step(1, "Checking...", "Looking for Sci runtime")
-        if not self.python.exists():
+        runtime_ready, runtime_error = runtime_is_usable(self.python)
+        if not runtime_ready:
             if not self.setup_script.exists():
                 raise RuntimeError(f"Setup script was not found: {self.setup_script}")
-            self.set_step(1, "Installing...", "First launch: configuring Python packages")
+            action = "Installing" if not self.python.exists() else "Repairing"
+            self.set_step(1, f"{action}...", "Configuring required scientific packages")
             setup_log = self.logs_root / "setup.log"
             process = subprocess.Popen([str(self.setup_script)], cwd=str(self.app_root))
             while process.poll() is None:
                 detail = self._setup_progress(setup_log)
-                self.set_step(1, "Installing...", detail)
+                self.set_step(1, f"{action}...", detail)
                 time.sleep(0.7)
             if process.returncode:
                 raise RuntimeError(f"Environment setup failed. See log: {setup_log}")
-        if not self.python.exists():
-            raise RuntimeError(f"Sci Python executable was not found: {self.python}")
-        self.set_step(1, "OK", "Runtime and scientific packages are ready", "green")
+            runtime_ready, runtime_error = runtime_is_usable(self.python)
+        if not runtime_ready:
+            raise RuntimeError(
+                f"Sci runtime is incomplete: {runtime_error}. "
+                f"See log: {self.logs_root / 'setup.log'}"
+            )
+        self.set_step(1, "OK", f"Native {self.runtime_arch} scientific runtime is ready", "green")
 
     def _setup_progress(self, log_path: Path) -> str:
         try:
@@ -361,9 +393,9 @@ class PreviewApp:
             subprocess.Popen(["open", str(target)])
             self.root.after(300, self.root.destroy)
             return True
-        except (URLError, TimeoutError, RuntimeError, OSError, ValueError) as exc:
+        except Exception as exc:
             update_status["error"] = str(exc)
-            self.set_step(3, "Offline", "Update check unavailable", "muted")
+            self.set_step(3, "Offline", "No network; continuing with the installed version", "muted")
             try:
                 (self.update_root / f"{APP_ID}.json").write_text(json.dumps(update_status, indent=2), encoding="utf-8")
             except OSError:

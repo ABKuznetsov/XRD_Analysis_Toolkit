@@ -13,9 +13,9 @@
       "manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/toolkit/manifest.json",
       "update_manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/toolkit/updates/xrd_finder.json",
       "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_Setup_1.2.0.exe",
-      "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.4/XRD_Phase_Finder_macOS_1.1.4.pkg",
+      "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_macOS_1.2.0.pkg",
       "installer_sha256": "ee06442a9c0c0c4fa9212c38d9b784f7037a96ba43b7af98f87ccfb7a5734860",
-      "macos_installer_sha256": "535f883bd65e47da36ececd95d8dce1bc19f2f41e97e0710d30ba79a0d2c1fa2"
+      "macos_installer_sha256": "71c05b124c1e3836639b3d7205864a2f1009eca1268c7987a3b381b08c0da014"
     }
   }
 }

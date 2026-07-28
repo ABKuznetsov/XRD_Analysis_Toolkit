@@ -45,11 +45,28 @@ rsync -a \
     --exclude "*.pyc" \
     --exclude "*.pyo" \
     --exclude ".venv/" \
+    --exclude ".pytest_cache/" \
     --exclude "build/" \
     --exclude "dist/" \
     --exclude "*.egg-info/" \
+    --exclude "manuscript_assets/" \
+    --exclude "scripts/manuscript/" \
+    --exclude "XRD_Finder/tests/" \
     --exclude "XRD_Finder/data/" \
+    --exclude "XRD_Finder/xrd_finder/app.py" \
+    --exclude "XRD_Finder/xrd_finder/core/series.py" \
+    --exclude "XRD_Finder/xrd_finder/io/exporters.py" \
+    --exclude "XRD_Finder/xrd_finder/services/thermo_service.py" \
+    --exclude "XRD_Finder/xrd_finder/services/solid_solution_service.py" \
+    --exclude "XRD_Finder/xrd_finder/services/structure_service.py" \
+    --exclude "XRD_Finder/xrd_finder/ui/legacy_windows.py" \
+    --exclude "XRD_Finder/xrd_finder/ui/main_window.py" \
     "$ROOT/" "$APP_PAYLOAD_DIR/"
+
+if [ ! -f "$APP_PAYLOAD_DIR/XRD_Finder/xrd_finder/core/refinement.py" ]; then
+    echo "Required Finder module is missing from the package: core/refinement.py"
+    exit 1
+fi
 
 chmod +x "$APP_PAYLOAD_DIR"/install_macos.command "$APP_PAYLOAD_DIR"/update_macos.command "$APP_PAYLOAD_DIR"/toolkit/*.command "$APP_PAYLOAD_DIR"/XRD_Finder/*.command 2>/dev/null || true
 
@@ -100,7 +117,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <key>CFBundleVersion</key>
     <string>$VERSION</string>
     <key>LSMinimumSystemVersion</key>
-    <string>11.0</string>
+    <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>
