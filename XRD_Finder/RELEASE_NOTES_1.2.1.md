@@ -28,3 +28,8 @@ This maintenance release improves multi-phase refinement, Gain ranking, profile 
 
 - Quantities remain semi-quantitative because this application does not perform a complete Rietveld refinement of preferred orientation, microstructure, absorption and parameter uncertainties.
 - Crystallographic databases are not bundled and must be indexed separately.
+
+## Download
+
+- Windows: [XRD_Phase_Finder_Setup_1.2.1.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.1/XRD_Phase_Finder_Setup_1.2.1.exe)
+- SHA256: `a7dc497878ff8494de04868dc07cb3a6e167b6e19866a0eb574bd7ee0a446afc`
