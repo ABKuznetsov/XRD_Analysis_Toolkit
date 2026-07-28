@@ -9,7 +9,9 @@
 
 **Windows 10/11:** [Download `XRD_Phase_Finder_Setup_1.2.0.exe`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_Setup_1.2.0.exe) and run the installer.
 
-**macOS:** [Download `XRD_Phase_Finder_macOS_1.1.3.zip`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.3/XRD_Phase_Finder_macOS_1.1.3.zip), extract it and run `install_macos.command`.
+**Windows portable:** [Download `XRD_Phase_Finder_Portable_1.2.0.zip`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_Portable_1.2.0.zip), extract it and run the included launcher.
+
+**macOS:** [Download `XRD_Phase_Finder_macOS_1.2.0.pkg`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_macOS_1.2.0.pkg) and run the package installer.
 
 More detailed installation notes are below in [Installation](#installation).
 
@@ -104,7 +106,8 @@ The `?` button in the application opens a compact in-app helper with the same co
 Latest release assets:
 
 - Windows 10/11: [XRD_Phase_Finder_Setup_1.2.0.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_Setup_1.2.0.exe)
-- macOS: [XRD_Phase_Finder_macOS_1.1.3.zip](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.1.3/XRD_Phase_Finder_macOS_1.1.3.zip)
+- Windows portable: [XRD_Phase_Finder_Portable_1.2.0.zip](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_Portable_1.2.0.zip)
+- macOS: [XRD_Phase_Finder_macOS_1.2.0.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_macOS_1.2.0.pkg)
 - All releases: [GitHub Releases](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases)
 
 Third-party database access and licensing are summarized in [Reference Data Sources](#reference-data-sources).
@@ -147,16 +150,10 @@ If Python 3.11 is not already available, the setup script first tries `winget` a
 
 ## macOS
 
-Download and extract:
+Download and run:
 
 ```text
-XRD_Phase_Finder_macOS_1.1.3.zip
-```
-
-Then run:
-
-```text
-install_macos.command
+XRD_Phase_Finder_macOS_1.2.0.pkg
 ```
 
 The installer creates or reuses:
@@ -170,7 +167,7 @@ and installs the application bundle to `/Applications/XRD Phase Finder.app` when
 macOS requires Python 3.11 or 3.12 for this release. Python 3.13 is not used
 because the pinned Qt runtime is not compatible with it yet.
 
-If macOS blocks the scripts after download or sync, run this once from Terminal inside the extracted folder:
+If you use a source checkout instead of the package and macOS blocks the scripts after download or sync, run this once from Terminal inside the extracted folder:
 
 ```bash
 chmod +x install_macos.command update_macos.command setup_env.command toolkit/*.command XRD_Finder/*.command
@@ -374,7 +371,7 @@ XRD_Analysis_Toolkit/
             Source-checkout command-line launchers
 ```
 
-The repository contains source code, documentation, runtime setup scripts and update metadata. Generated installer files such as `XRD_Phase_Finder_Setup_1.2.0.exe` and `XRD_Phase_Finder_macOS_1.1.3.zip` are **not committed to the repository**; they are published separately as GitHub Release assets.
+The repository contains source code, documentation, runtime setup scripts and update metadata. Generated installer and portable files such as `XRD_Phase_Finder_Setup_1.2.0.exe`, `XRD_Phase_Finder_Portable_1.2.0.zip` and `XRD_Phase_Finder_macOS_1.2.0.pkg` are **not committed to the repository**; they are published separately as GitHub Release assets.
 
 The root `XRD_Analysis_Toolkit` layout keeps shared toolkit files separate from the `XRD_Finder` application folder. This leaves room for additional XRD-related applications later while preserving a clear application boundary.
 
