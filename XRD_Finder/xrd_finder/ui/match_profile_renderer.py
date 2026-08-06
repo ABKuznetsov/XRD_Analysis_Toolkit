@@ -42,7 +42,9 @@ def _candidate_iic_value(candidate: dict[str, str], estimate_candidate_iic: Call
             value = 0.0
         if np.isfinite(value) and value > 0.0:
             return value
-    return estimate_candidate_iic(candidate)
+    # Do not synthesize an RIR/I/Ic value from a calculated structure. Only a
+    # value supplied by the reference source is scientifically traceable.
+    return 0.0
 
 
 def _peak_values(value, length: int, default):
@@ -260,7 +262,10 @@ def draw_match_profile_result(
             ceiling=calculated_total_plot,
         )
         _tag_plot_item(stick_item, pattern_id)
-        plot_layers["preview_peak_positions"].append(stick_item)
+        # These sticks belong to an accepted phase. Keep them separate from
+        # the temporary candidate preview, which must remain visible in multi
+        # mode even when saved phase overlays are hidden.
+        plot_layers["phase_ticks"].append(stick_item)
         if show_hkl_labels:
             hkl_items = add_hkl_labels(
                 match_plot,

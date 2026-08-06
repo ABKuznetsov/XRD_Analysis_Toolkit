@@ -23,6 +23,7 @@ class CandidateTableWidget(QTableWidget):
 
     def __init__(self, rows: list[list[str]], parent=None) -> None:
         super().__init__(0, len(self.HEADERS), parent)
+        self._gain_active = False
         self.setToolTip(
             "Candidate list\n"
             "Single click: preview this candidate and show its card.\n"
@@ -30,6 +31,9 @@ class CandidateTableWidget(QTableWidget):
             "Right click: add, calculate overlay, or export CIF."
         )
         self.setHorizontalHeaderLabels(self.HEADERS)
+        iic_header = self.horizontalHeaderItem(len(self.HEADERS) - 1)
+        if iic_header is not None:
+            iic_header.setToolTip("Reference-source I/Ic value only; blank when no traceable reference value is available.")
         self.verticalHeader().setVisible(False)
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -64,6 +68,7 @@ class CandidateTableWidget(QTableWidget):
                 normalized_row = normalize_row(row)
                 for col_index, value in enumerate(normalized_row[:column_count]):
                     self.setItem(row_index, col_index, QTableWidgetItem(value))
+            self._apply_score_arrows()
             self._resize_columns()
         finally:
             self.blockSignals(previous_block_state)
@@ -76,9 +81,11 @@ class CandidateTableWidget(QTableWidget):
         values = {}
         for column in range(self.columnCount()):
             header_item = self.horizontalHeaderItem(column)
-            header = header_item.text() if header_item is not None else str(column)
+            header = header_item.text().lstrip("→ ") if header_item is not None else str(column)
             item = self.item(row, column)
             value = item.text().strip() if item is not None else ""
+            if header in {self.MATCH_HEADER, self.GAIN_HEADER}:
+                value = value.removeprefix("←").removeprefix("→").strip()
             values[header] = value
             if header == "I/Ic":
                 values["I/Ic*"] = value
@@ -108,12 +115,54 @@ class CandidateTableWidget(QTableWidget):
             return
         item = self.item(row, column)
         if item is not None:
-            item.setText(value)
+            item.setText(self._score_display_text(column, value))
+
+    def set_scoring_stage(self, gain_active: bool) -> None:
+        """Point the user to the score that controls the current ranking."""
+        self._gain_active = bool(gain_active)
+        match_column = self._column_index(self.MATCH_HEADER) if self._column_index(self.MATCH_HEADER) >= 0 else 5
+        gain_column = self._column_index(self.GAIN_HEADER) if self._column_index(self.GAIN_HEADER) >= 0 else 6
+        match_item = self.horizontalHeaderItem(match_column)
+        gain_item = self.horizontalHeaderItem(gain_column)
+        if match_item is None or gain_item is None:
+            return
+        match_item.setText("Match (%)")
+        gain_item.setText("Gain (%)")
+        match_item.setBackground(QColor() if gain_active else QColor("#dceeff"))
+        match_item.setForeground(QColor() if gain_active else QColor("#185abc"))
+        gain_item.setBackground(QColor("#dff3e4") if gain_active else QColor())
+        gain_item.setForeground(QColor("#176b35") if gain_active else QColor())
+        match_item.setToolTip(
+            "Global candidate compatibility used before the first phase is accepted."
+        )
+        gain_item.setToolTip(
+            "Conditional residual contribution used after at least one phase is accepted."
+        )
+        self._apply_score_arrows()
+
+    def _score_display_text(self, column: int, value: str) -> str:
+        text = str(value).strip().removeprefix("←").removeprefix("→").strip()
+        if not text:
+            return ""
+        active_column = self._column_index(self.GAIN_HEADER if self._gain_active else self.MATCH_HEADER)
+        if column != active_column:
+            return text
+        return f"→ {text}" if self._gain_active else f"← {text}"
+
+    def _apply_score_arrows(self) -> None:
+        for header in (self.MATCH_HEADER, self.GAIN_HEADER):
+            column = self._column_index(header)
+            if column < 0:
+                continue
+            for row in range(self.rowCount()):
+                item = self.item(row, column)
+                if item is not None:
+                    item.setText(self._score_display_text(column, item.text()))
 
     def _column_index(self, header: str) -> int:
         for column in range(self.columnCount()):
             item = self.horizontalHeaderItem(column)
-            if item is not None and item.text() == header:
+            if item is not None and item.text().lstrip("→ ") == header:
                 return column
         return -1
 

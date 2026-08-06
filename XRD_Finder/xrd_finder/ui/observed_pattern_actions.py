@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import escape
+
 import numpy as np
 import pyqtgraph as pg
 
@@ -16,10 +18,55 @@ from xrd_finder.ui.pattern_plot_helpers import (
 
 
 class PhaseFinderObservedPatternActionsMixin:
+    def _multi_pattern_legend_html(self, pattern: Pattern, observed_color: str) -> str:
+        settings = getattr(self, "plot_view_settings", None)
+        font_size = max(int(getattr(settings, "legend_font_size", 10) or 10), 7)
+        lines = [
+            f'<span style="color:{escape(observed_color)}; font-weight:600;">'
+            f'{escape(str(pattern.name))}</span>'
+        ]
+        candidates = self._profile_candidates_for_pattern(pattern) if hasattr(self, "_profile_candidates_for_pattern") else []
+        seen: set[str] = set()
+        for index, candidate in enumerate(candidates):
+            key = self._candidate_key(candidate) if hasattr(self, "_candidate_key") else str(index)
+            if key in seen:
+                continue
+            seen.add(key)
+            color = self._phase_color(candidate, index) if hasattr(self, "_phase_color") else candidate.get("_Color", "#d93025")
+            phase_name = self._phase_legend_label(candidate) if hasattr(self, "_phase_legend_label") else candidate.get("Phase", "")
+            if not phase_name:
+                continue
+            lines.append(
+                f'<span style="color:{escape(color)}; font-size:{font_size + 2}pt;">&#9679;</span>'
+                f'&nbsp;<span style="color:#111111;">{escape(str(phase_name))}</span>'
+            )
+        return (
+            f'<div style="font-family:Segoe UI; font-size:{font_size}pt; white-space:nowrap;">'
+            + "<br>".join(lines)
+            + "</div>"
+        )
+
+    def _refresh_multi_pattern_legends(self) -> None:
+        if not getattr(self, "show_all_selected_patterns", False):
+            return
+        patterns = {pattern.id: pattern for pattern in getattr(self.project, "patterns", [])}
+        visible = bool(getattr(getattr(self, "plot_view_settings", None), "legend_visible", True))
+        for item in self.plot_layers.get("pattern_legends", []):
+            pattern_id = getattr(item, "_xrd_pattern_id", "")
+            pattern = patterns.get(pattern_id)
+            if pattern is None:
+                continue
+            color = self._observed_pattern_color(pattern_id)
+            item.setHtml(self._multi_pattern_legend_html(pattern, color))
+            item.setVisible(visible)
+
     def _set_pattern_display_mode(self, mode: str) -> None:
         if hasattr(self, "_save_active_profile_state"):
             self._save_active_profile_state()
         self.show_all_selected_patterns = mode == "All selected"
+        if self.show_all_selected_patterns and hasattr(self, "_ensure_multi_profile_layer_defaults"):
+            for pattern in self._patterns_to_display():
+                self._ensure_multi_profile_layer_defaults(pattern.id)
         if hasattr(self, "_clear_profile_plot_layers"):
             self._clear_profile_plot_layers(include_observed=True, rebuild_legend=False)
             self.active_overlay_entry_id = None
@@ -75,7 +122,8 @@ class PhaseFinderObservedPatternActionsMixin:
             return None
         if getattr(self, "_scoring_source", "Auto") != "Auto":
             processed = self._pattern_processed_observed_data(pattern)
-            return processed if processed is not None else self._normalized_observed_data(observed_pattern_data(pattern))
+            data = processed if processed is not None else self._normalized_observed_data(observed_pattern_data(pattern))
+            return self._crop_pattern_data(pattern, data)
         result = self._pattern_auto_preprocessing_result(pattern)
         if result is None:
             return None
@@ -97,7 +145,10 @@ class PhaseFinderObservedPatternActionsMixin:
     def _pattern_auto_preprocessing_result(self, pattern: Pattern | None):
         if pattern is None:
             return None
-        raw = self._normalized_observed_data(observed_pattern_data(pattern))
+        raw = self._crop_pattern_data(
+            pattern,
+            self._normalized_observed_data(observed_pattern_data(pattern)),
+        )
         if raw is None or not len(raw):
             return None
         key = self._auto_scoring_cache_key(pattern, raw)
@@ -140,7 +191,27 @@ class PhaseFinderObservedPatternActionsMixin:
         return bool(pattern is not None and pattern.processed_background_removed)
 
     def _active_observed_data(self):
-        return self._normalized_observed_data(observed_pattern_data(self._active_pattern()))
+        pattern = self._active_pattern()
+        return self._crop_pattern_data(
+            pattern,
+            self._normalized_observed_data(observed_pattern_data(pattern)),
+        )
+
+    def _crop_pattern_data(self, pattern: Pattern | None, data: np.ndarray | None) -> np.ndarray | None:
+        if data is None or pattern is None:
+            return data
+        values = np.asarray(data, dtype=float)
+        if values.ndim != 2 or values.shape[1] < 2 or not len(values):
+            return values
+        ranges = self._valid_crop_ranges(pattern)
+        if not ranges:
+            return values
+        mask = np.zeros(len(values), dtype=bool)
+        x = values[:, 0]
+        for start, end in ranges:
+            mask |= (x >= float(start)) & (x <= float(end))
+        cropped = values[mask]
+        return cropped if len(cropped) else values[:0]
 
     def _refresh_observed_pattern_plot(self) -> None:
         self._draw_observed_patterns()
@@ -163,7 +234,7 @@ class PhaseFinderObservedPatternActionsMixin:
             self.plot_layers["observed"] = []
         legend_visible = bool(getattr(getattr(self, "plot_view_settings", None), "legend_visible", True))
         self.legend_item = ensure_right_legend(self.match_plot, clear=True)
-        self.legend_item.setVisible(legend_visible)
+        self.legend_item.setVisible(legend_visible and not self.show_all_selected_patterns)
         self.observed_pattern_plot_context = {}
 
         patterns = self._patterns_to_display()
@@ -178,6 +249,8 @@ class PhaseFinderObservedPatternActionsMixin:
         )
 
         for item in loaded_patterns:
+            if self.show_all_selected_patterns and hasattr(self, "_ensure_multi_profile_layer_defaults"):
+                self._ensure_multi_profile_layer_defaults(item.pattern.id)
             crop_ranges = self._valid_crop_ranges(item.pattern)
             x_plot, y = self._crop_curve_to_ranges(item.x, item.plotted_y, crop_ranges)
             if len(x_plot) == 0:
@@ -214,13 +287,55 @@ class PhaseFinderObservedPatternActionsMixin:
                 symbolSize=marker_size if show_scatter or active else None,
                 symbolBrush=pg.mkBrush(color) if show_scatter or active else None,
                 symbolPen=pg.mkPen(color, width=1.0) if show_scatter else pg.mkPen("#111111", width=1.2) if active else None,
-                name=(f"* {item.name}" if active else item.name),
+                name=None if self.show_all_selected_patterns else (f"* {item.name}" if active else item.name),
             )
             try:
                 legend_proxy._xrd_pattern_id = item.pattern.id
             except Exception:
                 pass
             self.plot_layers["observed"].extend([curve_item, legend_proxy])
+            if self.show_all_selected_patterns:
+                finite_x = np.asarray(x_plot, dtype=float)
+                curve_y = np.asarray(y, dtype=float)
+                finite_mask = np.isfinite(finite_x) & np.isfinite(curve_y)
+                finite_curve_x = finite_x[finite_mask]
+                finite_curve_y = curve_y[finite_mask]
+                label_x = float(np.nanmax(finite_curve_x)) if finite_curve_x.size else 0.0
+                if finite_curve_y.size:
+                    x_min = float(np.nanmin(finite_curve_x))
+                    right_start = x_min + (label_x - x_min) * 0.72
+                    right_y = finite_curve_y[finite_curve_x >= right_start]
+                    if not right_y.size:
+                        right_y = finite_curve_y
+                    # The label occupies most of the rightmost quarter of the
+                    # plot. Use the actual maximum below that whole text box,
+                    # then reserve enough vertical clearance for a 12 pt label.
+                    local_top = float(np.nanmax(right_y))
+                    local_span = max(
+                        float(np.nanpercentile(right_y, 95) - np.nanpercentile(right_y, 10)),
+                        1.0,
+                    )
+                    label_clearance = max(
+                        local_span * 0.35,
+                        float(item.height) * 0.060,
+                        12.0,
+                    )
+                    label_y = local_top + label_clearance
+                    label = pg.TextItem(
+                        "",
+                        anchor=(1.0, 1.0),
+                        fill=pg.mkBrush(255, 255, 255, 205),
+                        border=pg.mkPen(color, width=0.8),
+                    )
+                    label.setHtml(self._multi_pattern_legend_html(item.pattern, color))
+                    label.setPos(label_x, label_y)
+                    label.setVisible(legend_visible)
+                    try:
+                        label._xrd_pattern_id = item.pattern.id
+                    except Exception:
+                        pass
+                    self.match_plot.addItem(label)
+                    self.plot_layers.setdefault("pattern_legends", []).append(label)
             self.observed_pattern_plot_context[item.pattern.id] = item.context
             x_values.append(x_plot)
             y_values.append(y)

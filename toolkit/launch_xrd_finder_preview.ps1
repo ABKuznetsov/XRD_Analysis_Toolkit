@@ -166,9 +166,10 @@ function Get-SetupProgressMessage {
     if ($joined -match "Creating venv") { return "Creating Sci environment" }
     if ($joined -match "Upgrading pip") { return "Upgrading pip" }
     if ($joined -match "Failed to install package:\s*([^`r`n]+)") { return "Failed to install package: " + $Matches[1].Trim() }
+    if ($joined -match "RUNTIME_CHECK_FAILED") { return "Installed runtime failed its self-test" }
     if ($joined -match "Installing package:\s*([^`r`n]+)") {
         $packageName = $Matches[1].Trim()
-        if ($packageName -match "^(PySide6|pymatgen|mp-api)$") { return "Installing package: $packageName (this can take several minutes)" }
+        if ($packageName -match "^(PySide6(?:==.*)?|pymatgen|mp-api)$") { return "Installing package: $packageName (this can take several minutes)" }
         return "Installing package: $packageName"
     }
     if ($joined -match "Installing XRD Phase Finder requirements") { return "Installing scientific Python packages" }
@@ -182,6 +183,31 @@ function Get-SetupProgressMessage {
         if ($line -and $line.Length -lt 120) { return $line }
     }
     return "Preparing environment"
+}
+
+function Test-SciRuntime {
+    param(
+        [string]$PythonPath,
+        [string]$ProbePath,
+        [string]$RequirementsPath
+    )
+    if (-not (Test-Path -LiteralPath $PythonPath)) {
+        return [pscustomobject]@{ Ready = $false; Detail = "Python executable is missing: $PythonPath" }
+    }
+    if (-not (Test-Path -LiteralPath $ProbePath)) {
+        return [pscustomobject]@{ Ready = $false; Detail = "Runtime check is missing: $ProbePath" }
+    }
+    try {
+        $probeOutput = (& $PythonPath $ProbePath --requirements $RequirementsPath 2>&1 | Out-String).Trim()
+        $probeExitCode = $LASTEXITCODE
+        if ($probeExitCode -eq 0) {
+            return [pscustomobject]@{ Ready = $true; Detail = $probeOutput }
+        }
+        if (-not $probeOutput) { $probeOutput = "Runtime self-test returned exit code $probeExitCode" }
+        return [pscustomobject]@{ Ready = $false; Detail = $probeOutput }
+    } catch {
+        return [pscustomobject]@{ Ready = $false; Detail = $_.Exception.Message }
+    }
 }
 
 function Wait-SetupProcessWithProgress {
@@ -387,7 +413,7 @@ function Add-StepRow {
 
 function Set-Step {
     param([int]$Index, [string]$Status, [string]$Detail, [string]$Tone = "Blue")
-        if ($Status -match "OK") { Set-StateIcon $Index "OK" } elseif ($Tone -eq "Red" -or $Status -match "Failed") { Set-StateIcon $Index "Error" } elseif ($Status -match "Checking|Installing|Loading|Starting") { Set-StateIcon $Index "Working" } else { Set-StateIcon $Index "Waiting" }
+        if ($Status -match "OK") { Set-StateIcon $Index "OK" } elseif ($Tone -eq "Red" -or $Status -match "Failed") { Set-StateIcon $Index "Error" } elseif ($Status -match "Checking|Installing|Repairing|Loading|Starting") { Set-StateIcon $Index "Working" } else { Set-StateIcon $Index "Waiting" }
 if ($script:StepStatusLabels.Count -gt $Index) {
         $label = $script:StepStatusLabels[$Index]
         $label.Text = $Status
@@ -426,6 +452,8 @@ function Write-LauncherLog {
 $pythonw = Join-Path $envRoot "Scripts\pythonw.exe"
 $pythonExe = Join-Path $envRoot "Scripts\python.exe"
 $setupBat = Join-Path $appRoot "toolkit\setup_sci_env.bat"
+$runtimeCheck = Join-Path $appRoot "toolkit\check_sci_runtime.py"
+$requirementsPath = Join-Path $appRoot "XRD_Finder\requirements.txt"
 $manifestPath = Join-Path $appRoot "toolkit\manifest.json"
 $appManifestPath = Join-Path $appRoot "XRD_Finder\app.json"
 $appPackageRoot = Join-Path $appRoot "XRD_Finder"
@@ -544,10 +572,10 @@ $script:StepStatusLabels = New-Object System.Collections.Generic.List[System.Win
 $script:StepDetailLabels = New-Object System.Collections.Generic.List[System.Windows.Forms.Label]
 $script:StepIconBoxes = New-Object System.Collections.Generic.List[System.Windows.Forms.PictureBox]
 Add-StepRow 0 "" "Checking application folders" "User data directory`r`nCache directory" 132
-Add-StepRow 1 "" "Checking local databases" "User library`r`nCache database" 204
-Add-StepRow 2 "" "Checking database connections" "COD`r`nMaterials Project" 276
+Add-StepRow 1 "" "Checking scientific runtime" "Python environment`r`nRequired packages" 204
+Add-StepRow 2 "" "Checking data sources" "COD`r`nMaterials Project" 276
 Add-StepRow 3 "" "Checking for updates" ("Current version: " + $localVersion) 348
-Add-StepRow 4 "" "Loading settings" "User preferences" 420
+Add-StepRow 4 "" "Opening application" "Loading settings and main window" 420
 $script:Form.Show()
 [System.Windows.Forms.Application]::DoEvents()
 if ($showStartupNotice) {
@@ -556,6 +584,7 @@ if ($showStartupNotice) {
 
 
 try {
+    $script:ActiveStep = 0
     Set-ProgressText 8 "Initializing"
     Set-Step 0 "Checking..." "Creating user data folders" "Blue"
     Ensure-Folder $toolkitRoot
@@ -568,11 +597,13 @@ try {
     Set-Step 0 "OK" "User data and cache folders are ready" "Green"
 
     Pause-PreviewStep
+    $script:ActiveStep = 1
     Set-ProgressText 28 "Preparing runtime"
-    Set-Step 1 "Checking..." "Looking for Sci runtime" "Blue"
-    if (-not (Test-Path -LiteralPath $pythonw)) {
+    Set-Step 1 "Checking..." "Testing Python and required scientific packages" "Blue"
+    $runtimeProbe = Test-SciRuntime $pythonExe $runtimeCheck $requirementsPath
+    if (-not $runtimeProbe.Ready -or -not (Test-Path -LiteralPath $pythonw)) {
         Set-ProgressText 28 "First launch can take several minutes"
-        Set-Step 1 "Installing..." "First launch: downloading and configuring Python packages. Later starts will be faster." "Blue"
+        Set-Step 1 "Repairing..." "The runtime is incomplete; repairing Python packages." "Blue"
         if (-not (Test-Path -LiteralPath $setupBat)) {
             throw "Setup script was not found: $setupBat"
         }
@@ -581,18 +612,21 @@ try {
         Wait-SetupProcessWithProgress $setupProcess $setupLog
         if ($setupProcess.ExitCode -ne 0) {
             $lastSetupMessage = Get-SetupProgressMessage $setupLog
-            throw "Environment setup failed: $lastSetupMessage. See log: $setupLog"
+            $setupDetails = Get-StartupLogTail $setupLog
+            throw "Environment setup failed: $lastSetupMessage`r`n`r`n$setupDetails`r`n`r`nFull log: $setupLog"
         }
     }
-    if (-not (Test-Path -LiteralPath $pythonw)) {
-        throw "Python launcher was not found: $pythonw"
+    $runtimeProbe = Test-SciRuntime $pythonExe $runtimeCheck $requirementsPath
+    if (-not $runtimeProbe.Ready) {
+        $setupLog = Join-Path $logsRoot "setup.log"
+        throw "Sci runtime self-test failed after repair:`r`n`r`n$($runtimeProbe.Detail)`r`n`r`nSetup log: $setupLog"
     }
-    if (-not (Test-Path -LiteralPath $pythonExe)) {
-        throw "Python executable was not found: $pythonExe"
+    if (-not (Test-Path -LiteralPath $pythonw)) {
+        throw "Python GUI launcher is missing after repair: $pythonw"
     }
     Ensure-Folder (Join-Path $dataRoot "cod_cache")
     Ensure-Folder (Join-Path $dataRoot "cod_cache\rruff")
-    Set-Step 1 "OK" "Runtime and cache database are ready" "Green"
+    Set-Step 1 "OK" "Python and required scientific packages were tested" "Green"
 
     $env:PYTHONDONTWRITEBYTECODE = "1"
     $env:XRD_FINDER_DATA_DIR = $dataRoot
@@ -636,11 +670,13 @@ try {
 
 
     Pause-PreviewStep
+    $script:ActiveStep = 2
     Set-ProgressText 48 "Checking sources"
     Set-Step 2 "Checking..." "COD, Materials Project, local sources" "Blue"
     Set-Step 2 "OK" "Configured sources are available" "Green"
 
     Pause-PreviewStep
+    $script:ActiveStep = 3
     Set-ProgressText 68 "Checking for updates"
     Set-Step 3 "Checking..." ("Current version: " + $localVersion) "Blue"
     if (Test-Path -LiteralPath $appManifestPath) {
@@ -739,6 +775,7 @@ try {
     ($updateStatus | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath (Join-Path $updateRoot "$AppId.json") -Encoding UTF8
 
     Pause-PreviewStep
+    $script:ActiveStep = 4
     Set-ProgressText 88 "Opening application"
     Set-Step 4 "Opening..." "Showing the main application window" "Blue"
     "show" | Set-Content -LiteralPath $showSignalFile -Encoding UTF8
@@ -753,7 +790,9 @@ try {
 } catch {
     Set-ProgressText 100 "Failed"
     if ($script:StepStatusLabels.Count -gt 0) {
-        Set-Step 4 "Failed" $_.Exception.Message "Red"
+        $failedStep = 4
+        if ($null -ne $script:ActiveStep) { $failedStep = [Math]::Max(0, [Math]::Min(4, [int]$script:ActiveStep)) }
+        Set-Step $failedStep "Failed" $_.Exception.Message "Red"
     }
     [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "XRD Phase Finder startup failed", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
 } finally {

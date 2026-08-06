@@ -3,8 +3,100 @@ from __future__ import annotations
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtGui import QFont
+from scipy.signal import peak_prominences
 
 from xrd_finder.ui.plot_style import PlotStyle
+
+
+def _robust_noise_sigma(values: np.ndarray) -> float:
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size < 5:
+        return 0.0
+    differences = np.diff(finite)
+    if differences.size:
+        median = float(np.median(differences))
+        mad = float(np.median(np.abs(differences - median)))
+        sigma = 1.4826 * mad / np.sqrt(2.0)
+        if np.isfinite(sigma) and sigma > 0.0:
+            return sigma
+    median = float(np.median(finite))
+    mad = float(np.median(np.abs(finite - median)))
+    sigma = 1.4826 * mad
+    return sigma if np.isfinite(sigma) and sigma > 0.0 else 0.0
+
+
+def _local_background_sigma(
+    local_x: np.ndarray,
+    local_y: np.ndarray,
+    peak_position: float,
+) -> float:
+    background_mask = np.abs(local_x - float(peak_position)) >= 0.12
+    background_x = np.asarray(local_x[background_mask], dtype=float)
+    background_y = np.asarray(local_y[background_mask], dtype=float)
+    finite = np.isfinite(background_x) & np.isfinite(background_y)
+    background_x = background_x[finite]
+    background_y = background_y[finite]
+    if background_y.size < 8:
+        return 0.0
+    centered_x = background_x - float(np.nanmean(background_x))
+    try:
+        slope, intercept = np.polyfit(centered_x, background_y, 1)
+        residual = background_y - (slope * centered_x + intercept)
+    except Exception:
+        residual = background_y - float(np.nanmedian(background_y))
+    median = float(np.nanmedian(residual))
+    mad = float(np.nanmedian(np.abs(residual - median)))
+    local_sigma = 1.4826 * mad
+    return local_sigma if np.isfinite(local_sigma) and local_sigma > 0.0 else 0.0
+
+
+def _is_significant_peak(x: np.ndarray, corrected_y: np.ndarray, y_index: int, sigma: float) -> bool:
+    if sigma <= 0.0 or corrected_y.size == 0:
+        return True
+    y_index = max(0, min(int(y_index), corrected_y.size - 1))
+    position = float(x[y_index])
+    left = int(np.searchsorted(x, position - 0.45, side="left"))
+    right = int(np.searchsorted(x, position + 0.45, side="right"))
+    local_start = max(0, left)
+    local_stop = min(len(corrected_y), right)
+    local = np.asarray(corrected_y[local_start:local_stop], dtype=float)
+    if local.size < 3:
+        return False
+    local = np.where(np.isfinite(local), local, 0.0)
+
+    # Refinement positions can differ from the sampled experimental maximum by
+    # a point or two. Snap only inside a narrow neighbourhood, then require a
+    # real local maximum. The wider +/-0.45 degree interval is used solely for
+    # measuring its prominence against the surrounding trace.
+    steps = np.diff(np.asarray(x, dtype=float))
+    steps = steps[np.isfinite(steps) & (steps > 0.0)]
+    step = float(np.nanmedian(steps)) if steps.size else 0.03
+    snap_radius = max(1, int(round(0.06 / max(step, 1.0e-6))))
+    local_index = y_index - local_start
+    snap_left = max(0, local_index - snap_radius)
+    snap_right = min(local.size, local_index + snap_radius + 1)
+    peak_index = snap_left + int(np.argmax(local[snap_left:snap_right]))
+    if peak_index <= 0 or peak_index >= local.size - 1:
+        return False
+    if local[peak_index] <= local[peak_index - 1] or local[peak_index] <= local[peak_index + 1]:
+        return False
+
+    baseline = float(np.nanpercentile(local, 20))
+    signal = float(local[peak_index]) - baseline
+    prominence = float(peak_prominences(local, np.asarray([peak_index], dtype=int))[0][0])
+    local_x = np.asarray(x[local_start:local_stop], dtype=float)
+    local_sigma = _local_background_sigma(local_x, local, float(x[local_start + peak_index]))
+    # Six local sigmas is deliberately conservative for publication markers.
+    # It rejects structured low-angle background that can exceed five global
+    # sigmas while retaining reproducible diffraction maxima.
+    threshold = 6.0 * max(float(sigma), float(local_sigma))
+    return bool(
+        np.isfinite(signal)
+        and np.isfinite(prominence)
+        and signal >= threshold
+        and prominence >= threshold
+    )
 
 
 def _local_observed_peak_y(
@@ -56,6 +148,7 @@ def add_peak_coverage_markers(
             plot_layers=plot_layers,
             x=x,
             observed_y=observed_y,
+            corrected_y=corrected_y,
             observed_peaks=observed_peak_assignments,
             phase_peak_sets=phase_peak_sets,
             phase_assignment_styles=phase_assignment_styles or {},
@@ -78,6 +171,13 @@ def add_peak_coverage_markers(
     unknown_limit = 10
     unknown_count = 0
     explained = 0
+    y_span = max(
+        float(np.nanmax(observed_y)) - float(np.nanmin(observed_y)),
+        1.0,
+    )
+    phase_marker_offset = max(y_span * 0.020, 3.0)
+    phase_marker_size = max(int(round(style.marker.size * 1.4)), style.marker.size + 3)
+    noise_sigma = _robust_noise_sigma(corrected_strength)
     considered_positions = []
     for obs_x in peak_positions:
         y_index = int(np.argmin(np.abs(x - obs_x)))
@@ -97,17 +197,19 @@ def add_peak_coverage_markers(
                 best_delta = delta
                 best_color = color
         if best_color:
+            explained += 1
+            if not _is_significant_peak(x, corrected_strength, y_index, noise_sigma):
+                continue
             item = pg.ScatterPlotItem(
                 [float(obs_x)],
-                [marker_y],
+                [marker_y + phase_marker_offset],
                 pen=pg.mkPen("#ffffff", width=0.8),
                 brush=pg.mkBrush(best_color),
-                size=style.marker.size,
+                size=phase_marker_size,
                 symbol=style.marker.symbol,
             )
             plot.addItem(item)
             plot_layers["coverage_markers"].append(item)
-            explained += 1
         else:
             peak_strength = float(corrected_strength[y_index]) if len(corrected_strength) > y_index else float(observed_y[y_index])
             if unknown_count >= unknown_limit or peak_strength < marker_cutoff:
@@ -132,6 +234,7 @@ def add_assignment_markers(
     plot_layers: dict[str, list],
     x: np.ndarray,
     observed_y: np.ndarray,
+    corrected_y: np.ndarray,
     observed_peaks,
     phase_peak_sets: list[tuple[str, str, np.ndarray]] | None = None,
     phase_assignment_styles: dict[str, tuple[str, str]],
@@ -139,8 +242,14 @@ def add_assignment_markers(
     style: PlotStyle | None = None,
 ) -> tuple[int, int]:
     style = style or PlotStyle()
-    y_span = max(float(np.nanmax(observed_y)) - float(np.nanmin(observed_y)), float(np.nanmax(observed_y)), 1.0)
+    # Use the trace height, not its stacked absolute offset, so marker spacing
+    # remains consistent for every pattern in multi mode.
+    y_span = max(float(np.nanmax(observed_y)) - float(np.nanmin(observed_y)), 1.0)
     label_offset = max(y_span * 0.008, 1.0)
+    phase_marker_offset = max(y_span * 0.020, 3.0)
+    phase_marker_size = max(int(round(style.marker.size * 1.4)), style.marker.size + 3)
+    corrected_strength = np.asarray(corrected_y, dtype=float)
+    noise_sigma = _robust_noise_sigma(corrected_strength)
     peak_strengths = [
         max(float(getattr(observed_peak, "intensity", 0.0)), 0.0)
         for observed_peak in observed_peaks
@@ -175,6 +284,8 @@ def add_assignment_markers(
         status = getattr(getattr(observed_peak, "status", ""), "value", getattr(observed_peak, "status", ""))
         if assignments:
             explained += 1
+            if not _is_significant_peak(x, corrected_strength, y_index, noise_sigma):
+                continue
             primary = primary_assignment(assignments)
             color, _phase_label = phase_assignment_styles.get(
                 str(getattr(primary, "candidate_key", "")),
@@ -182,10 +293,10 @@ def add_assignment_markers(
             )
             item = pg.ScatterPlotItem(
                 [obs_x],
-                [marker_y],
+                [marker_y + phase_marker_offset],
                 pen=pg.mkPen("#ffffff", width=1.0),
                 brush=pg.mkBrush(color),
-                size=style.marker.size,
+                size=phase_marker_size,
                 symbol="d" if status == "overlapping" else style.marker.symbol,
             )
             plot.addItem(item)
@@ -198,25 +309,13 @@ def add_assignment_markers(
                     font.setPointSize(8)
                     font.setWeight(QFont.Weight.DemiBold)
                     text.setFont(font)
-                    text.setPos(obs_x, marker_y + label_offset)
+                    text.setPos(obs_x, marker_y + phase_marker_offset + label_offset)
                     plot.addItem(text)
                     plot_layers["peak_labels"].append(text)
         else:
-            fallback = _nearest_phase_marker_from_sets(obs_x, getattr(observed_peak, "fwhm", 0.0), phase_peak_sets or [])
-            if fallback is not None:
-                color, _label = fallback
-                explained += 1
-                item = pg.ScatterPlotItem(
-                    [obs_x],
-                    [marker_y],
-                    pen=pg.mkPen("#ffffff", width=1.0),
-                    brush=pg.mkBrush(color),
-                    size=style.marker.size,
-                    symbol=style.marker.symbol,
-                )
-                plot.addItem(item)
-                plot_layers["coverage_markers"].append(item)
-                continue
+            # Assignment records are authoritative. A merely nearby phase
+            # stick must not recolor an unassigned experimental peak, because
+            # that produced false phase attribution in multiphase patterns.
             if unknown_count >= 10 or _peak_height < unknown_cutoff:
                 continue
             item = pg.ScatterPlotItem(
