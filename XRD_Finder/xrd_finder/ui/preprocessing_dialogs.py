@@ -265,16 +265,20 @@ class XrdCropPanel(QWidget):
         remove_button = QPushButton("Remove selected")
         full_button = QPushButton("Full range")
         clear_button = QPushButton("Clear")
+        apply_all_button = QPushButton("Apply to all XRD")
+        apply_all_button.setToolTip("Copy the current crop ranges to every imported XRD pattern.")
         add_button.clicked.connect(self.add_range)
         remove_button.clicked.connect(self.remove_selected_range)
         full_button.clicked.connect(self.set_full_range)
         clear_button.clicked.connect(self.clear_ranges)
+        apply_all_button.clicked.connect(self.apply_current_ranges_to_all)
 
         action_row = QHBoxLayout()
         action_row.addWidget(add_button)
         action_row.addWidget(remove_button)
         action_row.addWidget(full_button)
         action_row.addWidget(clear_button)
+        action_row.addWidget(apply_all_button)
 
         cancel_button = QPushButton("Cancel")
         apply_button = QPushButton("Apply")
@@ -389,6 +393,19 @@ class XrdCropPanel(QWidget):
     def clear_ranges(self) -> None:
         self._load_ranges([])
         self._save_current_ranges()
+        self.previewRequested.emit()
+
+    def apply_current_ranges_to_all(self) -> None:
+        current_ranges = self._current_ranges()
+        for pattern_id, _name, xmin, xmax in self._patterns:
+            clipped = []
+            for start, end in current_ranges:
+                clipped_start = max(float(start), float(xmin))
+                clipped_end = min(float(end), float(xmax))
+                if clipped_end > clipped_start:
+                    clipped.append([clipped_start, clipped_end])
+            self._ranges_by_pattern[pattern_id] = clipped
+        self._load_ranges(self._ranges_by_pattern.get(self._current_pattern_id, []))
         self.previewRequested.emit()
 
 

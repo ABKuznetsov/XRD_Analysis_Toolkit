@@ -1,21 +1,21 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "channel": "stable",
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
-  "published_at": "2026-07-28",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.2.2",
-  "release_notes_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/XRD_Finder/RELEASE_NOTES_1.2.2.md",
+  "published_at": "2026-08-06",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.2.3",
+  "release_notes_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/XRD_Finder/RELEASE_NOTES_1.2.3.md",
   "assets": [
     {
-      "name": "XRD_Phase_Finder_Setup_1.2.2.exe",
+      "name": "XRD_Phase_Finder_Setup_1.2.3.exe",
       "type": "installer",
       "platform": "windows-x64",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.2/XRD_Phase_Finder_Setup_1.2.2.exe",
-      "sha256": "0be8f69bfe2eccaa390f78d2d889ca016a726f08478a14e0207e980b968dc298",
-      "size_bytes": 6688085
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.3/XRD_Phase_Finder_Setup_1.2.3.exe",
+      "sha256": "14ef3b605d987317ee4280e94a22765badf0c036ea9c9c3ec913d6c48e753bc7",
+      "size_bytes": 6688381
     },
     {
       "name": "XRD_Phase_Finder_macOS_1.2.0.pkg",
@@ -27,13 +27,13 @@
     }
   ],
   "summary": [
-    "Add a publication-figure export dialog with a live preview.",
-    "Export PNG, TIFF or JPEG with selectable canvas scale and DPI.",
-    "Preserve the visible plot composition, legend, axes and tick marks.",
-    "Remove the obsolete pre-installation information page."
+    "Improve multi-pattern figures with per-pattern labels and consistent phase colors.",
+    "Separate always-visible candidate preview sticks from accepted-phase tick marks.",
+    "Filter displayed peak markers by local 6-sigma prominence and place them above peaks.",
+    "Add crop-all, clearer Match/Gain direction indicators and robust Sci runtime repair."
   ],
-  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.2/XRD_Phase_Finder_Setup_1.2.2.exe",
-  "installer_sha256": "0be8f69bfe2eccaa390f78d2d889ca016a726f08478a14e0207e980b968dc298",
+  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.3/XRD_Phase_Finder_Setup_1.2.3.exe",
+  "installer_sha256": "14ef3b605d987317ee4280e94a22765badf0c036ea9c9c3ec913d6c48e753bc7",
   "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_macOS_1.2.0.pkg",
   "macos_installer_sha256": "71c05b124c1e3836639b3d7205864a2f1009eca1268c7987a3b381b08c0da014"
 }

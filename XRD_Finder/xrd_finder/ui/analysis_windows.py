@@ -268,7 +268,7 @@ class AnalysisWindow(QDialog):
         self._after_project_loaded()
         self.project_changed.emit()
 
-    def _save_project(self) -> None:
+    def _save_project(self) -> bool:
         default_path = self.project.root_path or str(Path(self._last_directory()) / f"{self.project.name}.xrd-project.json")
         path, _ = QFileDialog.getSaveFileName(
             self,
@@ -277,7 +277,7 @@ class AnalysisWindow(QDialog):
             "XRD project (*.xrd-project.json *.json);;JSON files (*.json);;All files (*.*)",
         )
         if not path:
-            return
+            return False
         try:
             self.project.root_path = path
             self._sync_finder_state_to_project()
@@ -285,8 +285,9 @@ class AnalysisWindow(QDialog):
             save_project_manifest(self.project, path)
         except Exception as exc:
             QMessageBox.warning(self, "Save project failed", str(exc))
-            return
+            return False
         QMessageBox.information(self, "Project saved", f"Project saved to:\n{path}")
+        return True
 
     def _after_new_project(self) -> None:
         self._on_project_tree_selection_changed()
@@ -532,6 +533,7 @@ class PhaseFinderWindow(
         self.rank_by_probability_checkbox: QCheckBox | None = None
         self.plot_layers: dict[str, list] = {
             "observed": [],
+            "pattern_legends": [],
             "calculated_profile": [],
             "total_profile": [],
             "phase_profiles": [],
@@ -588,6 +590,9 @@ class PhaseFinderWindow(
         self.normalize_observed_patterns = False
         self.observed_pattern_plot_context: dict[str, dict[str, float]] = {}
         self.observed_pattern_colors: dict[str, str] = {}
+        # Phase colors are project-wide, so the same phase keeps the same color
+        # when several observed patterns are shown or activated in turn.
+        self.phase_colors: dict[str, str] = {}
         self.active_profile_pattern_id: str | None = None
         self.profile_states: dict[str, dict[str, object]] = {}
         self.match_profile_result_cache: dict[tuple[object, ...], object] = {}
@@ -1047,9 +1052,31 @@ class PhaseFinderWindow(
         ]
         return rows if rows else [["", "", "", "No phases yet", "", ""]]
 
+    def reject(self) -> None:
+        # QDialog maps Escape to reject(); route it through the same guarded
+        # close path instead of silently discarding the current analysis.
+        self.close()
+
     def closeEvent(self, event) -> None:
+        has_data = bool(self.project.patterns or self.project.phases or self.project.structures)
+        if has_data:
+            response = QMessageBox.question(
+                self,
+                "Close XRD Phase Finder",
+                "Save the current project before closing?",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save,
+            )
+            if response == QMessageBox.StandardButton.Cancel:
+                event.ignore()
+                return
+            if response == QMessageBox.StandardButton.Save and not self._save_project():
+                event.ignore()
+                return
         self.candidate_search_service.shutdown_background_downloads()
-        super().closeEvent(event)
+        event.accept()
 
     def _run_background_task(self, title: str, label: str, task, on_success, on_error=None, with_progress: bool = False) -> None:
         dialog = QProgressDialog(label, "", 0, 0, self)
@@ -1477,6 +1504,8 @@ class PhaseFinderWindow(
         has_candidates = any(self._profile_candidates_for_pattern(pattern) for pattern in patterns)
         if not has_candidates:
             self._clear_calculated_overlay()
+            if hasattr(self, "_refresh_multi_pattern_legends"):
+                self._refresh_multi_pattern_legends()
             self._update_match_table()
             return
 
@@ -1552,6 +1581,8 @@ class PhaseFinderWindow(
                     show_peak_labels=show_peak_labels,
                     show_background_line=not self._pattern_has_saved_background_components(pattern),
                 )
+            if hasattr(self, "_refresh_multi_pattern_legends"):
+                self._refresh_multi_pattern_legends()
         except Exception as exc:
             QMessageBox.warning(self, "Finder calculation failed", str(exc))
             self._update_match_table()

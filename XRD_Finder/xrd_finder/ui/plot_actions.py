@@ -117,14 +117,41 @@ class PlotExportDialog(QDialog):
 
 
 class PhaseFinderPlotActionsMixin:
+    _MULTI_PATTERN_LAYER_DEFAULTS = {
+        "hkl_labels_visible": False,
+        "layer_observed_visible": True,
+        "layer_preview_peak_positions_visible": True,
+        "layer_total_profile_visible": False,
+        "layer_phase_profiles_visible": False,
+        "layer_background_visible": False,
+        "layer_difference_visible": False,
+        "layer_phase_ticks_visible": False,
+        "layer_coverage_markers_visible": True,
+        "layer_peak_labels_visible": False,
+        "layer_unknown_peaks_visible": False,
+    }
+
     def _show_plot_context_menu(self, point) -> None:
         menu = QMenu(self)
         menu.addAction("Export image...", self._export_plot_image)
         menu.addSeparator()
         menu.addAction("Show full pattern", self._full_pattern_range)
+        legend_action = menu.addAction("Legend")
+        legend_action.setCheckable(True)
+        legend_action.setChecked(
+            bool(getattr(getattr(self, "plot_view_settings", None), "legend_visible", True))
+        )
+        legend_action.toggled.connect(self._set_legend_visible)
         menu.addSeparator()
         menu.addAction(self._layer_action("Experimental pattern", "observed", enabled=True))
-        menu.addAction(self._layer_action("Candidate preview sticks", "preview_peak_positions", enabled=True))
+        preview_action = self._layer_action(
+            "Candidate preview sticks",
+            "preview_peak_positions",
+            checked=True,
+            enabled=False,
+        )
+        preview_action.setToolTip("Candidate preview is always visible.")
+        menu.addAction(preview_action)
         menu.addAction(self._layer_action("Calculated total", "total_profile", enabled=True))
         menu.addAction(self._layer_action("Individual profiles", "phase_profiles", enabled=True))
         menu.addAction(self._layer_action("Background", "background", enabled=True))
@@ -209,6 +236,11 @@ class PhaseFinderPlotActionsMixin:
         "unknown_peaks": ("layer_unknown_peaks_visible", "layer_unknown_peaks_checkbox"),
     }
     _HKL_LAYER_FIELDS = ("hkl_labels_visible",)
+    _ALWAYS_VISIBLE_PREVIEW_LAYERS = {
+        "preview_profile",
+        "preview_peak_positions",
+        "preview_peak_links",
+    }
 
     def _active_layer_pattern_id(self) -> str | None:
         pattern = self._active_pattern() if hasattr(self, "_active_pattern") else None
@@ -218,11 +250,18 @@ class PhaseFinderPlotActionsMixin:
         pattern_id = self._active_layer_pattern_id()
         if not pattern_id:
             return {}
-        state = self.profile_states.setdefault(pattern_id, {}) if hasattr(self, "profile_states") else {}
+        return self._ensure_multi_profile_layer_defaults(pattern_id)
+
+    def _ensure_multi_profile_layer_defaults(self, pattern_id: str) -> dict[str, bool]:
+        if not pattern_id or not hasattr(self, "profile_states"):
+            return {}
+        state = self.profile_states.setdefault(pattern_id, {})
         layer_state = state.setdefault("layer_visibility", {}) if isinstance(state, dict) else {}
         if not isinstance(layer_state, dict):
             state["layer_visibility"] = {}
             layer_state = state["layer_visibility"]
+        for field, visible in self._MULTI_PATTERN_LAYER_DEFAULTS.items():
+            layer_state.setdefault(field, visible)
         return layer_state
 
     def _layer_setting_fields(self, layer: str) -> tuple[str, ...]:
@@ -237,6 +276,8 @@ class PhaseFinderPlotActionsMixin:
         return bool(default)
 
     def _plot_layer_setting(self, layer: str) -> bool:
+        if layer in self._ALWAYS_VISIBLE_PREVIEW_LAYERS:
+            return True
         state = self._active_profile_layer_state() if getattr(self, "show_all_selected_patterns", False) else {}
         if layer in {"hkl", "preview_hkl"}:
             return bool(state.get("hkl_labels_visible", self._field_setting_value("hkl_labels_visible", False)))
@@ -264,9 +305,11 @@ class PhaseFinderPlotActionsMixin:
         return self._active_hkl_labels_requested() or self._active_peak_labels_requested()
 
     def _item_visible_for_layer(self, layer: str, item, fallback_visible: bool) -> bool:
+        if layer in self._ALWAYS_VISIBLE_PREVIEW_LAYERS:
+            return True
         pattern_id = getattr(item, "_xrd_pattern_id", None)
         if getattr(self, "show_all_selected_patterns", False) and pattern_id and hasattr(self, "profile_states"):
-            state = self.profile_states.get(pattern_id, {}).get("layer_visibility", {})
+            state = self._ensure_multi_profile_layer_defaults(pattern_id)
             if isinstance(state, dict):
                 if layer in {"hkl", "preview_hkl"}:
                     return bool(state.get("hkl_labels_visible", self._field_setting_value("hkl_labels_visible", False)))
@@ -313,6 +356,7 @@ class PhaseFinderPlotActionsMixin:
             "layer_total_profile_visible",
             "layer_phase_profiles_visible",
             "layer_background_visible",
+            "layer_difference_visible",
             "layer_phase_ticks_visible",
             "layer_coverage_markers_visible",
             "layer_peak_labels_visible",
@@ -341,6 +385,8 @@ class PhaseFinderPlotActionsMixin:
         return bool(items) and all(item.isVisible() for item in items)
 
     def _set_layer_visible(self, layer: str, visible: bool) -> None:
+        if layer in self._ALWAYS_VISIBLE_PREVIEW_LAYERS:
+            visible = True
         visible = bool(visible)
         self._sync_plot_layer_control(layer, visible)
         for item in self._scoped_layer_items(layer):
@@ -353,6 +399,7 @@ class PhaseFinderPlotActionsMixin:
             "total_profile",
             "phase_profiles",
             "background",
+            "difference",
             "phase_ticks",
             "coverage_markers",
             "peak_labels",
@@ -430,7 +477,7 @@ class PhaseFinderPlotActionsMixin:
     def _clear_profile_plot_layers(self, *, include_observed: bool = False, rebuild_legend: bool = True) -> None:
         layers = list(self._PROFILE_OVERLAY_LAYERS)
         if include_observed:
-            layers.insert(0, "observed")
+            layers[0:0] = ["observed", "pattern_legends"]
         self._remove_plot_layer_items(layers, rebuild_legend=rebuild_legend)
 
     def _clear_calculated_overlay(self) -> None:
@@ -578,6 +625,13 @@ class PhaseFinderPlotActionsMixin:
 
     def _rebuild_visible_legend(self) -> None:
         settings = getattr(self, "plot_view_settings", None)
+        if getattr(self, "show_all_selected_patterns", False):
+            if getattr(self, "legend_item", None) is not None:
+                self.legend_item.setVisible(False)
+            local_visible = bool(getattr(settings, "legend_visible", True)) if settings is not None else True
+            for item in self.plot_layers.get("pattern_legends", []):
+                item.setVisible(local_visible)
+            return
         if settings is not None and not bool(getattr(settings, "legend_visible", True)):
             if getattr(self, "legend_item", None) is not None:
                 self.legend_item.setVisible(False)
@@ -638,6 +692,12 @@ class PhaseFinderPlotActionsMixin:
         if hasattr(self, "plot_view_settings"):
             self.plot_view_settings.legend_visible = visible
         self._sync_view_checkbox("legend_checkbox", visible)
+        if getattr(self, "show_all_selected_patterns", False):
+            for item in self.plot_layers.get("pattern_legends", []):
+                item.setVisible(visible)
+            if self.legend_item is not None:
+                self.legend_item.setVisible(False)
+            return
         if visible:
             self._rebuild_visible_legend()
             return

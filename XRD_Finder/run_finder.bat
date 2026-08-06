@@ -7,8 +7,16 @@ set "SCI_ENV=%SCI_ROOT%\env"
 set "SCI_APP_ROOT=%SCI_ROOT%\apps\xrd_phase_finder"
 set "PYTHON_EXE=%SCI_ENV%\Scripts\python.exe"
 set "LOG_FILE=%SCI_ROOT%\logs\xrd_finder_console.log"
+set "RUNTIME_CHECK=%APP_ROOT%\toolkit\check_sci_runtime.py"
+set "REQ_FILE=%APP_ROOT%\XRD_Finder\requirements.txt"
 
-if not exist "%PYTHON_EXE%" (
+set "RUNTIME_READY="
+if exist "%PYTHON_EXE%" if exist "%RUNTIME_CHECK%" (
+    "%PYTHON_EXE%" "%RUNTIME_CHECK%" --requirements "%REQ_FILE%" >nul 2>nul
+    if not errorlevel 1 set "RUNTIME_READY=1"
+)
+if not defined RUNTIME_READY (
+    echo Sci runtime is missing or incomplete. Starting repair...
     call "%APP_ROOT%\toolkit\setup_sci_env.bat"
     if errorlevel 1 (
         echo Sci environment setup failed.
@@ -18,9 +26,10 @@ if not exist "%PYTHON_EXE%" (
     )
 )
 
-if not exist "%PYTHON_EXE%" (
-    echo Sci Python executable was not found:
-    echo %PYTHON_EXE%
+"%PYTHON_EXE%" "%RUNTIME_CHECK%" --requirements "%REQ_FILE%"
+if errorlevel 1 (
+    echo Sci runtime validation failed after repair.
+    echo Setup log: %SCI_ROOT%\logs\setup.log
     pause
     exit /b 1
 )

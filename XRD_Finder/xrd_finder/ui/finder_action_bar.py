@@ -54,11 +54,14 @@ class FinderActionBar(QWidget):
         self.crop_button.clicked.connect(self.cropRequested)
 
         reset_data_button = QPushButton("Reset data")
+        reset_data_button.setAutoDefault(False)
+        reset_data_button.setDefault(False)
         reset_data_button.setToolTip("Restore the original observed pattern")
         reset_data_button.setStyleSheet(action_button_style("#6f45a3", "#9972ca"))
         reset_data_button.clicked.connect(self.resetDataRequested)
 
         self.auto_search_button = QPushButton("Auto search")
+        self.auto_search_button.setAutoDefault(False)
         self.auto_search_button.setToolTip(
             "Find and rank phase candidates from the active XRD pattern.\n"
             "Selected elements are used as composition constraints."
@@ -66,6 +69,7 @@ class FinderActionBar(QWidget):
         self.auto_search_button.setStyleSheet(action_button_style("#00695c", "#26a69a"))
         self.auto_search_button.clicked.connect(self.autoSearchRequested)
         reset_button = QPushButton("Reset view")
+        reset_button.setAutoDefault(False)
         reset_button.setToolTip("Show the full XRD range and reset plot zoom")
         reset_button.setStyleSheet(action_button_style("#5f6368", "#8a8d91"))
         reset_button.clicked.connect(self.resetViewRequested)

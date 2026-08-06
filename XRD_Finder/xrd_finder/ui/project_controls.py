@@ -27,18 +27,22 @@ class ProjectControlsWidget(QWidget):
         project_layout.setSpacing(5)
 
         new_project_button = QPushButton("New project")
+        new_project_button.setAutoDefault(False)
+        new_project_button.setDefault(False)
         new_project_button.setMinimumHeight(34)
         new_project_button.setToolTip("Clear the current XRD patterns, structures, candidates, and calculated overlays.")
         new_project_button.setStyleSheet(command_button_style("#5f6368", "#8a8d91"))
         new_project_button.clicked.connect(self.newProjectRequested)
 
         load_project_button = QPushButton("Load project")
+        load_project_button.setAutoDefault(False)
         load_project_button.setMinimumHeight(34)
         load_project_button.setToolTip("Load a saved XRD project manifest.")
         load_project_button.setStyleSheet(command_button_style("#0b8043", "#35a96c"))
         load_project_button.clicked.connect(self.loadProjectRequested)
 
         save_project_button = QPushButton("Save project")
+        save_project_button.setAutoDefault(False)
         save_project_button.setMinimumHeight(34)
         save_project_button.setToolTip("Save the current project manifest, including processed XRD curves.")
         save_project_button.setStyleSheet(command_button_style("#2367a5", "#5a9bd8"))
@@ -49,6 +53,7 @@ class ProjectControlsWidget(QWidget):
         project_layout.addWidget(save_project_button)
 
         import_button = QPushButton("Import XRD / CIF")
+        import_button.setAutoDefault(False)
         import_button.setMinimumHeight(34)
         import_button.setToolTip("Import XRD patterns and CIF structures. You can also drag files into the window.")
         import_button.setStyleSheet(command_button_style("#e9328f", "#ff65b3"))

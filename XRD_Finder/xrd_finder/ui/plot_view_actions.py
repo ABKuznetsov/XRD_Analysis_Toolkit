@@ -77,6 +77,7 @@ class PhaseFinderPlotViewActionsMixin:
             "layer_total_profile_visible",
             "layer_phase_profiles_visible",
             "layer_background_visible",
+            "layer_difference_visible",
             "layer_phase_ticks_visible",
             "layer_coverage_markers_visible",
             "layer_peak_labels_visible",
@@ -105,6 +106,7 @@ class PhaseFinderPlotViewActionsMixin:
                     "layer_total_profile_visible",
                     "layer_phase_profiles_visible",
                     "layer_background_visible",
+                    "layer_difference_visible",
                     "layer_phase_ticks_visible",
                     "layer_coverage_markers_visible",
                     "layer_peak_labels_visible",
@@ -117,6 +119,12 @@ class PhaseFinderPlotViewActionsMixin:
         if quick_only:
             self._set_grid_visible(settings.grid_visible)
             self._apply_grid_settings(settings)
+            if (
+                getattr(self, "show_all_selected_patterns", False)
+                and getattr(previous_settings, "legend_font_size", None) != settings.legend_font_size
+                and hasattr(self, "_refresh_multi_pattern_legends")
+            ):
+                self._refresh_multi_pattern_legends()
             self._set_legend_visible(settings.legend_visible)
             self._set_cursor_vertical_line_enabled(settings.cursor_vertical_line_visible)
             labels_changed = active_labels_changed or (
@@ -235,6 +243,7 @@ class PhaseFinderPlotViewActionsMixin:
             "hkl": settings.hkl_labels_visible,
             "preview_hkl": settings.hkl_labels_visible,
             "unknown_peaks": settings.layer_unknown_peaks_visible,
+            "pattern_legends": settings.legend_visible,
         }
         for layer, visible in layer_fields.items():
             for item in self.plot_layers.get(layer, []):

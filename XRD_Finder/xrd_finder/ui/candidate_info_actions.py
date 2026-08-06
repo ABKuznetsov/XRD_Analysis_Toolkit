@@ -231,9 +231,6 @@ class PhaseFinderCandidateInfoActionsMixin:
             self.candidate_search_service.display_formula,
             lambda item: cached_rows or self._diffraction_rows_for_structure(item),
         )
-        iic = self._estimate_structure_corundum_iic(structure)
-        if iic > 0:
-            candidate["I/Ic*"] = f"{iic:.3g}"
         probability = self._structure_peak_probability(structure)
         if probability > 0:
             candidate["Match (%)"] = f"{probability:.0f}%"
@@ -284,8 +281,6 @@ class PhaseFinderCandidateInfoActionsMixin:
             candidate["_DiffractionRows"] = diffraction_rows
         if entry.source_text and not candidate.get("Notes"):
             candidate["Notes"] = entry.source_text
-        if entry.iic and float(entry.iic) > 0:
-            candidate["I/Ic*"] = f"{float(entry.iic):.3g}"
         probability = self._candidate_peak_probability_from_cache(candidate)
         if probability > 0:
             candidate["Match (%)"] = f"{probability:.0f}%"

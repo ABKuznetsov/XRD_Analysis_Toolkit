@@ -70,7 +70,6 @@ class PhaseFinderSelectedPhasesActionsMixin:
     ) -> bool:
         key = self._candidate_key(candidate)
         if any(self._candidate_key(item) == key for item in self.match_candidates):
-            self._sync_candidate_to_sample_phase(candidate, show_errors=show_errors)
             if recalculate:
                 self.post_match_pipeline.candidate_added()
             return True
@@ -84,12 +83,8 @@ class PhaseFinderSelectedPhasesActionsMixin:
             if not structure.formula and candidate.get("Formula"):
                 structure.formula = candidate["Formula"]
             candidate_copy = candidate.copy()
-            iic = self._estimate_structure_corundum_iic(structure)
-            if iic > 0:
-                candidate_copy["I/Ic*"] = f"{iic:.3g}"
             self.match_candidates.append(candidate_copy)
             self.match_structures[key] = structure
-            self._sync_candidate_to_sample_phase(candidate_copy, show_errors=show_errors)
             if hasattr(self, "_save_active_profile_state"):
                 self._save_active_profile_state()
             if hasattr(self, "_invalidate_match_profile_cache"):
@@ -222,6 +217,8 @@ class PhaseFinderSelectedPhasesActionsMixin:
         if not color.isValid():
             return
         candidate["_Color"] = color.name()
+        phase_key = self._candidate_key(candidate)
+        self.phase_colors[phase_key] = color.name()
         if hasattr(self, "_save_active_profile_state"):
             self._save_active_profile_state()
         self._recalculate_match_profile()
@@ -245,6 +242,8 @@ class PhaseFinderSelectedPhasesActionsMixin:
         self._update_match_table()
 
     def _update_match_table(self) -> None:
+        if hasattr(self.candidate_table, "set_scoring_stage"):
+            self.candidate_table.set_scoring_stage(bool(self.match_candidates))
         rows = []
         for row, candidate in enumerate(self.match_candidates):
             key = self._candidate_key(candidate)
@@ -332,8 +331,10 @@ class PhaseFinderSelectedPhasesActionsMixin:
 
     def _phase_color(self, candidate: dict[str, str], index: int) -> str:
         palette = ["#d93025", "#1a73e8", "#188038", "#f9ab00", "#8e24aa", "#7b1fa2"]
-        color = candidate.get("_Color", "")
+        phase_key = self._candidate_key(candidate)
+        color = self.phase_colors.get(phase_key, "") or candidate.get("_Color", "")
         if not QColor(color).isValid():
-            color = palette[index % len(palette)]
-            candidate["_Color"] = color
+            color = palette[len(self.phase_colors) % len(palette)]
+        self.phase_colors[phase_key] = color
+        candidate["_Color"] = color
         return color
