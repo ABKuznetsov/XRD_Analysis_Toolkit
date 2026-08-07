@@ -57,6 +57,9 @@ class PhaseFinderCandidateStructureActionsMixin:
     def _candidate_cif_path(self, candidate: dict[str, str]) -> Path:
         source = self._candidate_source(candidate)
         entry_id = candidate.get("Entry", "")
+        embedded_path = self._candidate_embedded_cif_path(candidate)
+        if embedded_path is not None:
+            return embedded_path
         if source in {"USER", "CCDC"} and entry_id:
             cached_path = self.local_phase_cache.cif_path(source, entry_id)
             if cached_path is not None:
@@ -101,7 +104,12 @@ class PhaseFinderCandidateStructureActionsMixin:
     def _candidate_needs_remote_cif(self, candidate: dict[str, str]) -> bool:
         source = self._candidate_source(candidate)
         entry_id = candidate.get("Entry", "")
-        return bool(entry_id and source in {"COD", "MP", "AFLOW", "OQMD"} and self.local_phase_cache.cif_path(source, entry_id) is None)
+        return bool(
+            entry_id
+            and source in {"COD", "MP", "AFLOW", "OQMD"}
+            and self._candidate_embedded_cif_path(candidate) is None
+            and self.local_phase_cache.cif_path(source, entry_id) is None
+        )
 
     def _with_candidate_cif_ready(self, candidate: dict[str, str], title: str, on_ready) -> None:
         if not self._candidate_needs_remote_cif(candidate):
@@ -121,17 +129,23 @@ class PhaseFinderCandidateStructureActionsMixin:
             lambda message, _details: QMessageBox.warning(self, f"{title} failed", message),
         )
 
-    def _candidate_local_cif_path(self, candidate: dict[str, str]) -> Path | None:
-        source = self._candidate_source(candidate)
-        entry_id = candidate.get("Entry", "")
-        if not entry_id:
-            return None
+    def _candidate_embedded_cif_path(self, candidate: dict[str, str]) -> Path | None:
         candidate_paths = getattr(self.project.finder_state, "candidate_cif_paths", {}) or {}
         embedded_path = candidate_paths.get(self._candidate_key(candidate))
         if embedded_path:
             path = Path(embedded_path)
             if path.is_file():
                 return path
+        return None
+
+    def _candidate_local_cif_path(self, candidate: dict[str, str]) -> Path | None:
+        source = self._candidate_source(candidate)
+        entry_id = candidate.get("Entry", "")
+        if not entry_id:
+            return None
+        embedded_path = self._candidate_embedded_cif_path(candidate)
+        if embedded_path is not None:
+            return embedded_path
         if source == "USER":
             cached_path = self.local_phase_cache.cif_path("USER", entry_id)
             if cached_path is not None:
@@ -150,6 +164,35 @@ class PhaseFinderCandidateStructureActionsMixin:
         if source in {"COD", "CCDC", "MP", "AFLOW", "OQMD"}:
             return self.local_phase_cache.cif_path(source, entry_id)
         return None
+
+    def _candidate_peaks_for_gain(self, candidate: dict[str, str]) -> list:
+        if self._candidate_source(candidate) == "PDF2":
+            return self._pdf2_peaks_for_candidate(candidate)
+        if self._candidate_embedded_cif_path(candidate) is not None:
+            return self._candidate_cif_peaks_for_gain(candidate)
+        pattern = self._active_pattern()
+        if pattern is not None:
+            structure = self._finder_candidate_structure_overrides(pattern, [candidate]).get(
+                self._candidate_key(candidate)
+            )
+            if structure is not None:
+                try:
+                    cif_path = self._candidate_local_cif_path(candidate)
+                    if cif_path is not None:
+                        return self._candidate_cached_peaks(cif_path, structure)
+                    return self.calculated_pattern_service.calculate_sticks(
+                        structure,
+                        wavelength=self._active_wavelength(),
+                        two_theta_min=5.0,
+                        two_theta_max=120.0,
+                        intensity_min=0.5,
+                    )
+                except Exception:
+                    pass
+        peaks = self._candidate_cached_json_peaks(candidate)
+        if not peaks:
+            peaks = self._candidate_cif_peaks_for_gain(candidate)
+        return peaks
 
     def _add_selected_cif_to_project(self) -> None:
         candidate = self._selected_candidate_row()

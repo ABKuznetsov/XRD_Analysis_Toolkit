@@ -2943,33 +2943,6 @@ class PhaseFinderWindow(
                 best_scale = scale
         return float(best_scale)
 
-    def _candidate_peaks_for_gain(self, candidate: dict[str, str]) -> list[HKLPeak]:
-        if self._candidate_source(candidate) == "PDF2":
-            return self._pdf2_peaks_for_candidate(candidate)
-        pattern = self._active_pattern()
-        if pattern is not None:
-            structure = self._finder_candidate_structure_overrides(pattern, [candidate]).get(
-                self._candidate_key(candidate)
-            )
-            if structure is not None:
-                try:
-                    cif_path = self._candidate_local_cif_path(candidate)
-                    if cif_path is not None:
-                        return self._candidate_cached_peaks(cif_path, structure)
-                    return self.calculated_pattern_service.calculate_sticks(
-                        structure,
-                        wavelength=self._active_wavelength(),
-                        two_theta_min=5.0,
-                        two_theta_max=120.0,
-                        intensity_min=0.5,
-                    )
-                except Exception:
-                    pass
-        peaks = self._candidate_cached_json_peaks(candidate)
-        if not peaks:
-            peaks = self._candidate_cif_peaks_for_gain(candidate)
-        return peaks
-
     def _adjusted_gain_peaks(self, candidate: dict[str, str], peaks: list[HKLPeak]) -> list[HKLPeak]:
         if not peaks:
             return []
@@ -3382,6 +3355,8 @@ class PhaseFinderWindow(
         return self._candidate_row_peak_probability_from_records(row, records)
 
     def _candidate_cached_json_peaks(self, candidate: dict[str, str]) -> list[HKLPeak]:
+        if self._candidate_embedded_cif_path(candidate) is not None:
+            return []
         source = self._candidate_source(candidate)
         entry_id = candidate.get("Entry", "")
         if source not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"} or not entry_id:

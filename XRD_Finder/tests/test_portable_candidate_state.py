@@ -73,6 +73,24 @@ class CandidateResolutionHarness(PhaseFinderCandidateStructureActionsMixin):
         self.local_phase_cache = CandidatePathCache(cache_paths)
 
 
+class CandidateGainHarness(CandidateResolutionHarness):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.cached_peak_calls = 0
+        self.cif_peak_paths: list[Path | None] = []
+
+    def _active_pattern(self):
+        return None
+
+    def _candidate_cached_json_peaks(self, _candidate: dict[str, str]) -> list[str]:
+        self.cached_peak_calls += 1
+        return ["cached-peak"]
+
+    def _candidate_cif_peaks_for_gain(self, candidate: dict[str, str]) -> list[str]:
+        self.cif_peak_paths.append(self._candidate_local_cif_path(candidate))
+        return ["cif-peak"]
+
+
 class CountingLocalPhaseCache(LocalPhaseCache):
     def __init__(self, root: Path) -> None:
         self.embedded_install_calls = 0
@@ -130,6 +148,50 @@ class CandidateRestoreHarness(PhaseFinderProjectStateActionsMixin):
 
 
 class PortableCandidateStateTest(unittest.TestCase):
+    def test_candidate_cif_path_prefers_embedded_copy_over_local_cache_entry(self) -> None:
+        """Fails if previews or exports use a machine-specific CIF for an opened project."""
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            embedded_path = tmp_path / "embedded.cif"
+            cached_path = tmp_path / "cached.cif"
+            embedded_path.write_text("data_embedded\n", encoding="utf-8")
+            cached_path.write_text("data_cached\n", encoding="utf-8")
+            harness = CandidateResolutionHarness(
+                saved_paths={"MP:mp-1": str(embedded_path)},
+                cache_paths={("MP", "mp-1"): cached_path},
+            )
+
+            self.assertEqual(
+                harness._candidate_cif_path({"Source": "MP", "Entry": "mp-1"}),
+                embedded_path,
+            )
+
+    def test_gain_peaks_bypass_cached_derived_data_for_embedded_candidate(self) -> None:
+        """Fails if Gain reuses peaks calculated from a different machine-cache CIF."""
+        with TemporaryDirectory() as directory:
+            embedded_path = Path(directory) / "embedded.cif"
+            embedded_path.write_text("data_embedded\n", encoding="utf-8")
+            harness = CandidateGainHarness(saved_paths={"COD:123": str(embedded_path)})
+            candidate = {"Source": "COD", "Entry": "123"}
+
+            peaks = harness._candidate_peaks_for_gain(candidate)
+
+            self.assertEqual(peaks, ["cif-peak"])
+            self.assertEqual(harness.cached_peak_calls, 0)
+            self.assertEqual(harness.cif_peak_paths, [embedded_path])
+
+    def test_gain_peaks_keep_cached_fallback_without_valid_embedded_candidate(self) -> None:
+        """Fails if stale or absent embedded mappings disable the existing cache fallback."""
+        with TemporaryDirectory() as directory:
+            missing_path = Path(directory) / "missing.cif"
+            harness = CandidateGainHarness(saved_paths={"COD:123": str(missing_path)})
+
+            peaks = harness._candidate_peaks_for_gain({"Source": "COD", "Entry": "123"})
+
+            self.assertEqual(peaks, ["cached-peak"])
+            self.assertEqual(harness.cached_peak_calls, 1)
+            self.assertEqual(harness.cif_peak_paths, [])
+
     def test_embedded_candidate_path_is_used_when_local_cache_is_empty(self) -> None:
         """Fails if project-private CIFs are ignored when the machine cache is empty."""
         with TemporaryDirectory() as directory:
