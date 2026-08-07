@@ -105,6 +105,7 @@ class PhaseFinderProjectStateActionsMixin:
         state = getattr(self.project, "finder_state", None)
         if state is None:
             return
+        self._install_embedded_candidate_cifs(state)
         self.profile_states = deepcopy(getattr(state, "profile_states", {}) or {})
         self.phase_colors = dict(getattr(state, "phase_colors", {}) or {})
         self.observed_pattern_colors = dict(getattr(state, "observed_pattern_colors", {}) or {})
@@ -153,6 +154,16 @@ class PhaseFinderProjectStateActionsMixin:
                     (float(saved_range[1][0]), float(saved_range[1][1])),
                 )
             )
+
+    def _install_embedded_candidate_cifs(self, state: FinderProjectState) -> None:
+        candidate_paths = getattr(state, "candidate_cif_paths", {}) or {}
+        for candidate_key, candidate_path in candidate_paths.items():
+            source, separator, entry_id = str(candidate_key).partition(":")
+            path = Path(candidate_path)
+            if not separator or not source or not entry_id or not path.is_file():
+                continue
+            if self.local_phase_cache.cif_path(source, entry_id) is None:
+                self.local_phase_cache.install_embedded_cif(path, source, entry_id)
 
     def _restore_project_plot_view_settings(self, stored: dict) -> None:
         if not isinstance(stored, dict) or not stored:

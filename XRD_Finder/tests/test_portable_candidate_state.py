@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -7,15 +8,24 @@ from types import ModuleType
 import unittest
 
 from xrd_finder.core.finder_state import FinderProjectState
+from xrd_finder.core.phase import Phase
+from xrd_finder.services.local_phase_cache import LocalPhaseCache
 
-# The collection helper does not use Qt; make this focused test runnable with
-# the supplied Python runtime, which intentionally has no PySide6 installed.
+# These focused mixin tests do not use Qt; keep them runnable with the supplied
+# Python runtime, which intentionally has no PySide6 installed.
+qt = ModuleType("PySide6")
+qt_widgets = ModuleType("PySide6.QtWidgets")
+qt_widgets.QMessageBox = type("QMessageBox", (), {})
+qt_widgets.QTableWidgetItem = type("QTableWidgetItem", (), {})
+sys.modules["PySide6"] = qt
+sys.modules["PySide6.QtWidgets"] = qt_widgets
 element_filter = ModuleType("xrd_finder.ui.element_filter")
 element_filter.element_sort_key = lambda element: element
 sys.modules["xrd_finder.ui.element_filter"] = element_filter
 plot_view_settings = ModuleType("xrd_finder.ui.plot_view_settings")
 plot_view_settings.PlotViewSettings = type("PlotViewSettings", (), {})
 sys.modules["xrd_finder.ui.plot_view_settings"] = plot_view_settings
+from xrd_finder.ui.candidate_structure_actions import PhaseFinderCandidateStructureActionsMixin
 from xrd_finder.ui.project_state_actions import PhaseFinderProjectStateActionsMixin
 
 
@@ -36,7 +46,218 @@ class CandidateCollectionHarness(PhaseFinderProjectStateActionsMixin):
         return self.paths.get(candidate_key)
 
 
+class CandidatePathCache:
+    def __init__(self, paths: dict[tuple[str, str], Path] | None = None) -> None:
+        self.paths = paths or {}
+
+    def cif_path(self, source: str, entry_id: str) -> Path | None:
+        return self.paths.get((source, entry_id))
+
+
+class CacheTemporaryDirectory(TemporaryDirectory):
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        gc.collect()
+        super().__exit__(exc_type, exc_value, traceback)
+
+
+class CandidateResolutionHarness(PhaseFinderCandidateStructureActionsMixin):
+    def __init__(
+        self,
+        *,
+        saved_paths: dict[str, str] | None = None,
+        cache_paths: dict[tuple[str, str], Path] | None = None,
+        phases: list[Phase] | None = None,
+    ) -> None:
+        finder_state = FinderProjectState(candidate_cif_paths=saved_paths or {})
+        self.project = type("Project", (), {"finder_state": finder_state, "phases": phases or []})()
+        self.local_phase_cache = CandidatePathCache(cache_paths)
+
+
+class CountingLocalPhaseCache(LocalPhaseCache):
+    def __init__(self, root: Path) -> None:
+        self.embedded_install_calls = 0
+        super().__init__(root)
+
+    def install_embedded_cif(self, cif_path: str | Path, source: str, entry_id: str) -> Path:
+        self.embedded_install_calls += 1
+        return super().install_embedded_cif(cif_path, source, entry_id)
+
+
+class CandidateRestoreHarness(PhaseFinderProjectStateActionsMixin):
+    def __init__(self, state: FinderProjectState, cache: LocalPhaseCache) -> None:
+        self.project = type("Project", (), {"finder_state": state, "phases": []})()
+        self.local_phase_cache = cache
+        self.tree = type(
+            "Tree",
+            (),
+            {
+                "restore_expansion_state": lambda _self, _state: None,
+                "set_checked_pattern_ids": lambda _self, _ids: None,
+                "set_checked_phase_ids": lambda _self, _ids: None,
+                "select_object": lambda _self, _type, _id: None,
+            },
+        )()
+        self.right_tabs = type("Tabs", (), {"count": lambda _self: 0})()
+        self.finder_action_bar = None
+        self.search_input = None
+        self.name_input = None
+        self.formula_sum_input = None
+        self.ccdc_doi_input = None
+        self.inorganics_checkbox = None
+        self.organics_checkbox = None
+        self.structural_data_checkbox = None
+        self.reference_patterns_checkbox = None
+        self.rank_by_probability_checkbox = None
+        self.match_candidates: list[dict[str, str]] = []
+
+    def _update_element_fields(self) -> None:
+        return None
+
+    def _restore_match_state(self, state: FinderProjectState) -> None:
+        self.match_candidates = [dict(candidate) for candidate in state.match_candidates]
+
+    def _match_candidates_have_structures(self) -> bool:
+        return False
+
+    def _set_grid_visible(self, _visible: bool) -> None:
+        return None
+
+    def _refresh_observed_pattern_plot(self) -> None:
+        return None
+
+    def _update_match_table(self) -> None:
+        return None
+
+
 class PortableCandidateStateTest(unittest.TestCase):
+    def test_embedded_candidate_path_is_used_when_local_cache_is_empty(self) -> None:
+        """Fails if project-private CIFs are ignored when the machine cache is empty."""
+        with TemporaryDirectory() as directory:
+            embedded_path = Path(directory) / "embedded.cif"
+            embedded_path.write_text("data_embedded\n", encoding="utf-8")
+            harness = CandidateResolutionHarness(saved_paths={"MP:mp-1": str(embedded_path)})
+
+            self.assertEqual(
+                harness._candidate_local_cif_path({"Source": "MP", "Entry": "mp-1"}),
+                embedded_path,
+            )
+
+    def test_embedded_candidate_path_takes_priority_over_different_cache_copy(self) -> None:
+        """Fails if restoration uses a machine-specific CIF instead of the archived version."""
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            embedded_path = tmp_path / "embedded.cif"
+            cached_path = tmp_path / "cached.cif"
+            embedded_path.write_text("data_embedded\n", encoding="utf-8")
+            cached_path.write_text("data_cached\n", encoding="utf-8")
+            harness = CandidateResolutionHarness(
+                saved_paths={"COD:123": str(embedded_path)},
+                cache_paths={("COD", "123"): cached_path},
+            )
+
+            self.assertEqual(
+                harness._candidate_local_cif_path({"Source": "COD", "Entry": "123"}),
+                embedded_path,
+            )
+
+    def test_missing_embedded_path_keeps_existing_cache_and_project_phase_fallbacks(self) -> None:
+        """Fails if a stale project mapping disables legacy local resolution."""
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            cached_path = tmp_path / "cached.cif"
+            project_path = tmp_path / "project-user.cif"
+            cached_path.write_text("data_cached\n", encoding="utf-8")
+            project_path.write_text("data_project\n", encoding="utf-8")
+            user_phase = Phase.create("Project user phase", str(project_path))
+            user_phase.id = "private-user"
+            harness = CandidateResolutionHarness(
+                saved_paths={
+                    "MP:mp-1": str(tmp_path / "missing-mp.cif"),
+                    "USER:private-user": str(tmp_path / "missing-user.cif"),
+                },
+                cache_paths={("MP", "mp-1"): cached_path},
+                phases=[user_phase],
+            )
+
+            self.assertEqual(
+                harness._candidate_local_cif_path({"Source": "MP", "Entry": "mp-1"}),
+                cached_path,
+            )
+            self.assertEqual(
+                harness._candidate_local_cif_path({"Source": "USER", "Entry": "private-user"}),
+                project_path,
+            )
+
+    def test_restore_copies_and_indexes_missing_embedded_candidate(self) -> None:
+        """Fails if a loaded CIF is indexed at its temporary extraction path."""
+        with CacheTemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            extracted_path = tmp_path / "extracted" / "candidate.cif"
+            extracted_path.parent.mkdir()
+            extracted_path.write_text("data_portable\n", encoding="utf-8")
+            cache = LocalPhaseCache(tmp_path / "cache")
+            state = FinderProjectState(candidate_cif_paths={"AFLOW:aflow-1": str(extracted_path)})
+            harness = CandidateRestoreHarness(state, cache)
+
+            harness._restore_finder_state_from_project()
+
+            cached_path = cache.cif_path("AFLOW", "aflow-1")
+            self.assertIsNotNone(cached_path)
+            assert cached_path is not None
+            self.assertNotEqual(cached_path, extracted_path)
+            self.assertTrue(cached_path.is_relative_to(cache.root))
+            self.assertEqual(cached_path.read_text(encoding="utf-8"), "data_portable\n")
+            extracted_path.unlink()
+            self.assertTrue(cached_path.is_file())
+            entry = cache.get("AFLOW", "aflow-1")
+            self.assertIsNotNone(entry)
+            assert entry is not None
+            self.assertEqual(entry.entry_id, "aflow-1")
+            self.assertEqual(harness.project.phases, [])
+
+    def test_embedded_install_preserves_key_and_never_overwrites_existing_local_entry(self) -> None:
+        """Fails if opening a project replaces a phase already owned by the local library."""
+        with CacheTemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            first_path = tmp_path / "first.cif"
+            replacement_path = tmp_path / "replacement.cif"
+            first_path.write_text("data_local\n", encoding="utf-8")
+            replacement_path.write_text("data_embedded\n", encoding="utf-8")
+            cache = LocalPhaseCache(tmp_path / "cache")
+
+            installed_path = cache.install_embedded_cif(first_path, "USER", "original-entry")
+            second_result = cache.install_embedded_cif(replacement_path, "USER", "original-entry")
+
+            self.assertEqual(second_result, installed_path)
+            self.assertEqual(installed_path.read_text(encoding="utf-8"), "data_local\n")
+            entry = cache.get("USER", "original-entry")
+            self.assertIsNotNone(entry)
+            assert entry is not None
+            self.assertEqual((entry.source, entry.entry_id), ("USER", "original-entry"))
+
+    def test_restore_installs_shared_candidate_only_once(self) -> None:
+        """Fails if one phase referenced by several pattern states is imported repeatedly."""
+        with CacheTemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            extracted_path = tmp_path / "shared.cif"
+            extracted_path.write_text("data_shared\n", encoding="utf-8")
+            candidate = {"Source": "MP", "Entry": "mp-shared"}
+            state = FinderProjectState(
+                match_candidates=[candidate],
+                candidate_cif_paths={"MP:mp-shared": str(extracted_path)},
+                profile_states={
+                    "pattern-1": {"candidates": [candidate]},
+                    "pattern-2": {"candidates": [candidate]},
+                },
+            )
+            cache = CountingLocalPhaseCache(tmp_path / "cache")
+            harness = CandidateRestoreHarness(state, cache)
+
+            harness._restore_finder_state_from_project()
+
+            self.assertEqual(cache.embedded_install_calls, 1)
+            self.assertIsNotNone(cache.cif_path("MP", "mp-shared"))
+
     def test_collects_active_and_profile_candidates_once_and_drops_stale_paths(self) -> None:
         """Fails if shared profile candidates are resolved repeatedly or stale assets survive."""
         with TemporaryDirectory() as directory:

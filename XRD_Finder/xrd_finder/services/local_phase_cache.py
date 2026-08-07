@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 from numbers import Real
@@ -397,6 +398,27 @@ class LocalPhaseCache:
         if entry is None:
             return CachedPhaseEntry(source="USER", entry_id=entry_id, name=entry_id, cif_path=str(target_path))
         return entry
+
+    def install_embedded_cif(self, cif_path: str | Path, source: str, entry_id: str) -> Path:
+        existing_path = self.cif_path(source, entry_id)
+        if existing_path is not None:
+            return existing_path
+
+        source_path = Path(cif_path)
+        if not source_path.is_file():
+            raise FileNotFoundError(f"Embedded CIF does not exist: {source_path}")
+        if not source or not entry_id:
+            raise ValueError("Embedded CIF source and entry id are required.")
+
+        source_dir = re.sub(r"[^A-Za-z0-9._-]+", "_", source).strip("._") or "unknown"
+        cache_key = hashlib.sha256(f"{source}\0{entry_id}".encode("utf-8")).hexdigest()[:24]
+        target_dir = self.root / "embedded_cif" / source_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / f"{cache_key}.cif"
+        if target_path.resolve() != source_path.resolve():
+            shutil.copy2(source_path, target_path)
+        self.index_cif(target_path, source=source, entry_id=entry_id)
+        return target_path
 
     def cif_path(self, source: str, entry_id: str) -> Path | None:
         with self._connect() as connection:

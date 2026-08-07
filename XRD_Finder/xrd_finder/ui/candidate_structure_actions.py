@@ -126,6 +126,12 @@ class PhaseFinderCandidateStructureActionsMixin:
         entry_id = candidate.get("Entry", "")
         if not entry_id:
             return None
+        candidate_paths = getattr(self.project.finder_state, "candidate_cif_paths", {}) or {}
+        embedded_path = candidate_paths.get(self._candidate_key(candidate))
+        if embedded_path:
+            path = Path(embedded_path)
+            if path.is_file():
+                return path
         if source == "USER":
             cached_path = self.local_phase_cache.cif_path("USER", entry_id)
             if cached_path is not None:
