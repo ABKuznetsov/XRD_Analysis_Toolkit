@@ -81,6 +81,13 @@ def _save_portable_project(project: Project, target: Path) -> None:
             _embed_collection_sources(archive, data.get("structures", []), "cif", ".cif", file_members)
             finder_state = data.get("finder_state", {})
             if isinstance(finder_state, dict):
+                candidate_cif_paths = finder_state.get("candidate_cif_paths")
+                if isinstance(candidate_cif_paths, dict):
+                    finder_state["candidate_cif_paths"] = {
+                        key: value
+                        for key, value in candidate_cif_paths.items()
+                        if str(key) in _referenced_candidate_keys(finder_state)
+                    }
                 _embed_path_mapping(
                     archive,
                     finder_state.get("candidate_cif_paths"),
@@ -151,13 +158,38 @@ def _embed_path_mapping(
         member = file_members.get(source_key)
         if member is None:
             suffix = source.suffix.lower() or default_suffix
-            member = f"assets/{folder}/{_safe_member_stem(str(key))}{suffix}"
+            key_text = str(key)
+            key_digest = hashlib.sha256(key_text.encode("utf-8", errors="surrogatepass")).hexdigest()[:12]
+            member = f"assets/{folder}/{_safe_member_stem(key_text)}-{key_digest}{suffix}"
             try:
                 archive.write(source, member)
             except OSError as exc:
                 raise ValueError(f"Candidate CIF for {key!r} is absent or unreadable: {source_path}") from exc
             file_members[source_key] = member
         paths[key] = member
+
+
+def _referenced_candidate_keys(finder_state: dict[str, Any]) -> set[str]:
+    candidate_records: list[Any] = []
+    match_candidates = finder_state.get("match_candidates", [])
+    if isinstance(match_candidates, list):
+        candidate_records.extend(match_candidates)
+    profile_states = finder_state.get("profile_states", {})
+    if isinstance(profile_states, dict):
+        for state in profile_states.values():
+            if isinstance(state, dict):
+                candidates = state.get("candidates", [])
+                if isinstance(candidates, list):
+                    candidate_records.extend(candidates)
+    keys: set[str] = set()
+    for candidate in candidate_records:
+        if not isinstance(candidate, dict):
+            continue
+        source = str(candidate.get("Source", "") or candidate.get("Qual.", ""))
+        entry = str(candidate.get("Entry", ""))
+        if source or entry:
+            keys.add(f"{source}:{entry}")
+    return keys
 
 
 def _safe_member_stem(value: str) -> str:

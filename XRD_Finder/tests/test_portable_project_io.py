@@ -120,12 +120,64 @@ class PortableProjectIoTest(unittest.TestCase):
             candidate_key = "USER:Missing"
             missing_path = tmp_path / "missing.cif"
             project = Project(name="Missing candidate CIF")
+            project.finder_state.match_candidates = [{"Source": "USER", "Entry": "Missing"}]
             project.finder_state.candidate_cif_paths = {candidate_key: str(missing_path)}
 
             with self.assertRaisesRegex(ValueError, r"USER:Missing.*missing\.cif"):
                 save_project_manifest(project, target)
 
             self.assertEqual(target.read_bytes(), b"previous project")
+
+    def test_xpff_ignores_unreferenced_missing_candidate_cif_mapping(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            live_path = tmp_path / "live.cif"
+            live_path.write_text("data_live\n", encoding="utf-8")
+            live_candidate = {"Source": "USER", "Entry": "Live"}
+            project = Project(name="Live candidate only")
+            project.finder_state.match_candidates = [live_candidate]
+            project.finder_state.candidate_cif_paths = {
+                "USER:Live": str(live_path),
+                "USER:Stale": str(tmp_path / "missing.cif"),
+            }
+
+            target = tmp_path / "live-only.xpff"
+            save_project_manifest(project, target)
+
+            with zipfile.ZipFile(target) as archive:
+                candidate_members = [name for name in archive.namelist() if name.startswith("assets/candidates/")]
+            self.assertEqual(len(candidate_members), 1)
+            restored = load_project_manifest(target)
+            self.assertEqual(set(restored.finder_state.candidate_cif_paths), {"USER:Live"})
+
+    def test_xpff_uses_distinct_members_for_colliding_candidate_keys(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            first_path = tmp_path / "first.cif"
+            second_path = tmp_path / "second.cif"
+            first_path.write_text("data_first\n", encoding="utf-8")
+            second_path.write_text("data_second\n", encoding="utf-8")
+            first_key = "USER:A/B"
+            second_key = "USER:A_B"
+            project = Project(name="Colliding candidate keys")
+            project.finder_state.match_candidates = [
+                {"Source": "USER", "Entry": "A/B"},
+                {"Source": "USER", "Entry": "A_B"},
+            ]
+            project.finder_state.candidate_cif_paths = {first_key: str(first_path), second_key: str(second_path)}
+
+            target = tmp_path / "colliding-keys.xpff"
+            save_project_manifest(project, target)
+            first_path.unlink()
+            second_path.unlink()
+
+            with zipfile.ZipFile(target) as archive:
+                candidate_members = [name for name in archive.namelist() if name.startswith("assets/candidates/")]
+            self.assertEqual(len(candidate_members), 2)
+            self.assertEqual(len(set(candidate_members)), 2)
+            restored = load_project_manifest(target)
+            self.assertEqual(Path(restored.finder_state.candidate_cif_paths[first_key]).read_text(encoding="utf-8"), "data_first\n")
+            self.assertEqual(Path(restored.finder_state.candidate_cif_paths[second_key]).read_text(encoding="utf-8"), "data_second\n")
 
 
 if __name__ == "__main__":
