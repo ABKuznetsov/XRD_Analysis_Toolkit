@@ -977,12 +977,12 @@ class PlotViewSettingsWidget(QScrollArea):
         if mode == "d":
             if current_label in {"", "2theta", "2 theta", "2-theta"}:
                 label_input.setText("d")
-            if current_unit in {"", "deg", "degree", "degrees"}:
+            if current_unit in {"deg", "degree", "degrees"}:
                 unit_input.setText("A")
         else:
             if current_label in {"", "d"}:
                 label_input.setText("2theta")
-            if current_unit in {"", "a", "angstrom", "angstroms"}:
+            if current_unit in {"a", "angstrom", "angstroms"}:
                 unit_input.setText("deg")
         self._emit_settings()
 
@@ -1072,6 +1072,15 @@ class PlotViewSettingsWidget(QScrollArea):
             self._emit_settings()
             return
         self.factory_reset()
+
+    def set_settings(self, settings: PlotViewSettings, *, emit: bool = True) -> None:
+        previous_blocked = self.blockSignals(True)
+        try:
+            self._apply_settings(settings)
+        finally:
+            self.blockSignals(previous_blocked)
+        if emit:
+            self._emit_settings()
 
     def factory_reset(self) -> None:
         self._apply_settings(PlotViewSettings())

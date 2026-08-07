@@ -2,10 +2,74 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QRectF
+from PySide6.QtGui import QFont, QPainterPath
 from scipy.signal import peak_prominences
 
 from xrd_finder.ui.plot_style import PlotStyle
+
+
+def _half_circle_symbol(side: str) -> QPainterPath:
+    path = QPainterPath()
+    bounds = QRectF(-0.5, -0.5, 1.0, 1.0)
+    if side == "left":
+        path.moveTo(0.0, -0.5)
+        path.arcTo(bounds, 90.0, 180.0)
+    else:
+        path.moveTo(0.0, 0.5)
+        path.arcTo(bounds, 270.0, 180.0)
+    path.closeSubpath()
+    return path
+
+
+_LEFT_HALF_CIRCLE = _half_circle_symbol("left")
+_RIGHT_HALF_CIRCLE = _half_circle_symbol("right")
+
+
+def _unique_colors(colors) -> list[str]:
+    unique: list[str] = []
+    for color in colors:
+        value = str(color or "").strip()
+        if value and value not in unique:
+            unique.append(value)
+    return unique
+
+
+def _add_colored_phase_marker(
+    *,
+    plot,
+    plot_layers: dict[str, list],
+    x: float,
+    y: float,
+    colors,
+    size: int,
+    symbol,
+) -> None:
+    marker_colors = _unique_colors(colors)
+    if len(marker_colors) >= 2:
+        for color, half_symbol in zip(marker_colors[:2], (_LEFT_HALF_CIRCLE, _RIGHT_HALF_CIRCLE)):
+            item = pg.ScatterPlotItem(
+                [float(x)],
+                [float(y)],
+                pen=pg.mkPen("#ffffff", width=0.9),
+                brush=pg.mkBrush(color),
+                size=size,
+                symbol=half_symbol,
+            )
+            plot.addItem(item)
+            plot_layers["coverage_markers"].append(item)
+        return
+    color = marker_colors[0] if marker_colors else "#d93025"
+    item = pg.ScatterPlotItem(
+        [float(x)],
+        [float(y)],
+        pen=pg.mkPen("#ffffff", width=1.0),
+        brush=pg.mkBrush(color),
+        size=size,
+        symbol=symbol,
+    )
+    plot.addItem(item)
+    plot_layers["coverage_markers"].append(item)
 
 
 def _robust_noise_sigma(values: np.ndarray) -> float:
@@ -87,10 +151,14 @@ def _is_significant_peak(x: np.ndarray, corrected_y: np.ndarray, y_index: int, s
     prominence = float(peak_prominences(local, np.asarray([peak_index], dtype=int))[0][0])
     local_x = np.asarray(x[local_start:local_stop], dtype=float)
     local_sigma = _local_background_sigma(local_x, local, float(x[local_start + peak_index]))
-    # Six local sigmas is deliberately conservative for publication markers.
-    # It rejects structured low-angle background that can exceed five global
-    # sigmas while retaining reproducible diffraction maxima.
-    threshold = 6.0 * max(float(sigma), float(local_sigma))
+    # Five sigmas keeps publication markers away from ordinary noise. Cap the
+    # local estimate because neighbouring diffraction peaks are structure, not
+    # noise, and otherwise they can hide a genuine phase-supported maximum.
+    global_sigma = max(float(sigma), 0.0)
+    effective_sigma = max(global_sigma, float(local_sigma))
+    if global_sigma > 0.0:
+        effective_sigma = min(effective_sigma, global_sigma * 1.15)
+    threshold = 5.0 * effective_sigma
     return bool(
         np.isfinite(signal)
         and np.isfinite(prominence)
@@ -187,29 +255,26 @@ def add_peak_coverage_markers(
     for obs_x in considered_positions:
         y_index = int(np.argmin(np.abs(x - obs_x)))
         marker_y = _local_observed_peak_y(x, observed_y, obs_x, y_index)
-        best_color = ""
-        best_delta = 0.22
+        matching_colors = []
         for color, _label, phase_positions in phase_peak_sets:
             if len(phase_positions) == 0:
                 continue
             delta = float(np.min(np.abs(phase_positions - obs_x)))
-            if delta <= best_delta:
-                best_delta = delta
-                best_color = color
-        if best_color:
+            if delta <= 0.22:
+                matching_colors.append(color)
+        if matching_colors:
             explained += 1
             if not _is_significant_peak(x, corrected_strength, y_index, noise_sigma):
                 continue
-            item = pg.ScatterPlotItem(
-                [float(obs_x)],
-                [marker_y + phase_marker_offset],
-                pen=pg.mkPen("#ffffff", width=0.8),
-                brush=pg.mkBrush(best_color),
+            _add_colored_phase_marker(
+                plot=plot,
+                plot_layers=plot_layers,
+                x=float(obs_x),
+                y=marker_y + phase_marker_offset,
+                colors=matching_colors,
                 size=phase_marker_size,
                 symbol=style.marker.symbol,
             )
-            plot.addItem(item)
-            plot_layers["coverage_markers"].append(item)
         else:
             peak_strength = float(corrected_strength[y_index]) if len(corrected_strength) > y_index else float(observed_y[y_index])
             if unknown_count >= unknown_limit or peak_strength < marker_cutoff:
@@ -286,21 +351,27 @@ def add_assignment_markers(
             explained += 1
             if not _is_significant_peak(x, corrected_strength, y_index, noise_sigma):
                 continue
-            primary = primary_assignment(assignments)
-            color, _phase_label = phase_assignment_styles.get(
-                str(getattr(primary, "candidate_key", "")),
-                ("#d93025", ""),
+            assignments_by_strength = sorted(
+                assignments,
+                key=lambda assignment: float(getattr(assignment, "intensity_ratio", 0.0)),
+                reverse=True,
             )
-            item = pg.ScatterPlotItem(
-                [obs_x],
-                [marker_y + phase_marker_offset],
-                pen=pg.mkPen("#ffffff", width=1.0),
-                brush=pg.mkBrush(color),
+            assignment_colors = [
+                phase_assignment_styles.get(
+                    str(getattr(assignment, "candidate_key", "")),
+                    ("#d93025", ""),
+                )[0]
+                for assignment in assignments_by_strength
+            ]
+            _add_colored_phase_marker(
+                plot=plot,
+                plot_layers=plot_layers,
+                x=obs_x,
+                y=marker_y + phase_marker_offset,
+                colors=assignment_colors,
                 size=phase_marker_size,
                 symbol="d" if status == "overlapping" else style.marker.symbol,
             )
-            plot.addItem(item)
-            plot_layers["coverage_markers"].append(item)
             if show_peak_labels:
                 label = assignment_marker_label(assignments)
                 if label:
@@ -332,31 +403,6 @@ def add_assignment_markers(
             plot_layers["unknown_peaks"].append(item)
             unknown_count += 1
     return explained, int(len(peak_records))
-
-
-def _nearest_phase_marker_from_sets(
-    obs_x: float,
-    observed_fwhm: float,
-    phase_peak_sets: list[tuple[str, str, np.ndarray]],
-) -> tuple[str, str] | None:
-    tolerance = max(0.20, min(0.90, max(float(observed_fwhm or 0.0), 0.12) * 1.55))
-    best: tuple[str, str] | None = None
-    best_delta = tolerance
-    for color, label, phase_positions in phase_peak_sets:
-        if len(phase_positions) == 0:
-            continue
-        delta = float(np.min(np.abs(np.asarray(phase_positions, dtype=float) - float(obs_x))))
-        if delta <= best_delta:
-            best_delta = delta
-            best = (color, label)
-    return best
-
-
-def primary_assignment(assignments):
-    return max(
-        assignments,
-        key=lambda assignment: float(getattr(assignment, "intensity_ratio", 0.0)),
-    )
 
 
 def assignment_marker_label(assignments) -> str:

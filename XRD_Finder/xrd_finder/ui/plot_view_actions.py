@@ -8,6 +8,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from xrd_finder.ui.plot_view_settings import PlotViewSettings, PlotViewSettingsWidget, plot_style_from_view_settings
+from xrd_finder.ui.styled_grid_item import StyledGridItem
 
 
 def _axis_label(label: str, unit: str) -> str:
@@ -16,12 +17,35 @@ def _axis_label(label: str, unit: str) -> str:
 
 
 def _x_unit_for_scale(scale: str, unit: str) -> str:
-    unit = unit.strip()
-    if scale == "d" and unit.lower() in {"", "deg", "degree", "degrees"}:
+    unit = str(unit or "").strip()
+    if not unit:
+        return ""
+    if scale == "d" and unit.lower() in {"deg", "degree", "degrees"}:
         return "A"
-    if scale == "2theta" and unit.lower() in {"", "a", "angstrom", "angstroms"}:
+    if scale == "2theta" and unit.lower() in {"a", "angstrom", "angstroms"}:
         return "deg"
     return unit
+
+
+def _apply_axis_appearance(
+    axis,
+    *,
+    color: str,
+    width: float,
+    font: QFont,
+    tick_length: int,
+    visible: bool,
+    values_visible: bool,
+) -> None:
+    axis_pen = pg.mkPen(color, width=width)
+    axis.setPen(axis_pen)
+    axis.setTickPen(axis_pen)
+    axis.setTextPen(pg.mkPen(color))
+    axis.setTickFont(font)
+    axis.setStyle(
+        showValues=bool(visible and values_visible),
+        tickLength=abs(int(tick_length)) if visible else 0,
+    )
 
 
 class PhaseFinderPlotViewActionsMixin:
@@ -144,7 +168,6 @@ class PhaseFinderPlotViewActionsMixin:
         self.grid_visible = settings.grid_visible
         self.show_hkl_labels = self._active_hkl_labels_requested() if hasattr(self, "_active_hkl_labels_requested") else bool(settings.hkl_labels_visible)
         self.cursor_vertical_line_enabled = settings.cursor_vertical_line_visible
-        self._apply_grid_settings(settings)
         self.match_plot.setBackground(settings.plot_background)
         if settings.plot_border_visible and settings.plot_border_width > 0:
             self.match_plot.setStyleSheet(
@@ -198,17 +221,19 @@ class PhaseFinderPlotViewActionsMixin:
             "left": settings.left_axis_values_visible,
             "right": settings.right_axis_values_visible,
         }
-        tick_length = abs(int(settings.tick_length))
         for axis_name in ("bottom", "left", "top", "right"):
             axis = self.match_plot.getAxis(axis_name)
-            axis.setPen(pg.mkPen(settings.axis_color, width=settings.axis_width))
-            axis.setTextPen(pg.mkPen(settings.axis_color))
-            axis.setTickFont(axis_font)
-            axis.setStyle(
-                showValues=bool(axis_visible[axis_name] and axis_values_visible[axis_name]),
-                tickLength=-tick_length if axis_visible[axis_name] else 0,
+            _apply_axis_appearance(
+                axis,
+                color=settings.axis_color,
+                width=settings.axis_width,
+                font=axis_font,
+                tick_length=settings.tick_length,
+                visible=axis_visible[axis_name],
+                values_visible=axis_values_visible[axis_name],
             )
             self._apply_tick_spacing(axis_name, axis, settings)
+        self._apply_grid_settings(settings)
         self._apply_x_axis_scale(settings)
         self._set_legend_visible(settings.legend_visible)
         self._set_cursor_vertical_line_enabled(settings.cursor_vertical_line_visible)
@@ -255,14 +280,25 @@ class PhaseFinderPlotViewActionsMixin:
             self._rebuild_visible_legend()
 
     def _apply_grid_settings(self, settings: PlotViewSettings) -> None:
-        if self._plot_grid_item is not None:
-            try:
-                self.match_plot.removeItem(self._plot_grid_item)
-            except Exception:
-                pass
-            self._plot_grid_item = None
-        alpha = max(0.0, min(float(settings.grid_alpha), 1.0)) if settings.grid_visible else 0.0
-        self.match_plot.showGrid(x=bool(settings.grid_visible), y=bool(settings.grid_visible), alpha=alpha)
+        self.match_plot.showGrid(x=False, y=False)
+        grid_item = getattr(self, "_plot_grid_item", None)
+        if grid_item is None and settings.grid_visible:
+            grid_item = StyledGridItem(
+                self.match_plot.getViewBox(),
+                self.match_plot.getAxis("bottom"),
+                self.match_plot.getAxis("left"),
+            )
+            self._plot_grid_item = grid_item
+        if grid_item is None:
+            return
+        grid_item.configure(
+            color=settings.grid_color,
+            width=settings.grid_width,
+            alpha=settings.grid_alpha,
+        )
+        grid_item.setVisible(bool(settings.grid_visible))
+        if settings.grid_visible:
+            grid_item.refresh()
 
     def _set_axis_visible(self, axis_name: str, visible: bool) -> None:
         self.match_plot.showAxis(axis_name, visible)

@@ -6,6 +6,9 @@ from xrd_finder.finder.models import FinderCandidateResult, ObservedPeak, PeakAs
 from xrd_finder.services.calculated_pattern_service import HKLPeak
 
 
+_MIN_PROFILE_CONTRIBUTION_FRACTION = 0.05
+
+
 def nearest_index(sorted_values: np.ndarray, value: float) -> int:
     index = int(np.searchsorted(sorted_values, value, side="left"))
     if index <= 0:
@@ -46,6 +49,33 @@ def nearest_phase_peak(
     return nearest_peak_from_sorted(observed_two_theta, usable, positions, tolerance)
 
 
+def _profile_contribution(candidate: FinderCandidateResult, two_theta: float) -> float | None:
+    """Return the candidate's fitted contribution at an observed peak."""
+    positions = np.asarray(getattr(candidate, "two_theta", []) or [], dtype=float)
+    profile = np.asarray(getattr(candidate, "profile", []) or [], dtype=float)
+    if positions.size < 2 or positions.size != profile.size:
+        return None
+    finite = np.isfinite(positions) & np.isfinite(profile)
+    positions = positions[finite]
+    profile = profile[finite]
+    if positions.size < 2:
+        return None
+    order = np.argsort(positions)
+    positions = positions[order]
+    profile = profile[order]
+    contribution = float(np.interp(float(two_theta), positions, profile, left=0.0, right=0.0))
+    return max(contribution, 0.0) if np.isfinite(contribution) else None
+
+
+def _has_material_profile_contribution(candidate: FinderCandidateResult, observed: ObservedPeak) -> bool:
+    """Reject a coincident line when its fitted phase contribution is negligible."""
+    contribution = _profile_contribution(candidate, observed.two_theta)
+    observed_height = max(float(getattr(observed, "intensity", 0.0) or 0.0), 0.0)
+    if contribution is None or observed_height <= 0.0:
+        return True
+    return contribution >= observed_height * _MIN_PROFILE_CONTRIBUTION_FRACTION
+
+
 class AssignmentBuilder:
     def assign_observed_peaks(
         self,
@@ -67,6 +97,8 @@ class AssignmentBuilder:
             for candidate, usable_peaks, peak_positions in prepared_phase_peaks:
                 nearest = nearest_peak_from_sorted(observed.two_theta, usable_peaks, peak_positions, observed_tolerance)
                 if nearest is None:
+                    continue
+                if not _has_material_profile_contribution(candidate, observed):
                     continue
                 peak, delta = nearest
                 assignments.append(

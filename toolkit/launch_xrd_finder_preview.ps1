@@ -1,5 +1,6 @@
 param(
-    [string]$AppId = "xrd_finder"
+    [string]$AppId = "xrd_finder",
+    [string]$ProjectPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -439,6 +440,14 @@ function Set-ProgressText {
 }
 
 $appRoot = Resolve-AppRoot
+$associationScript = Join-Path $appRoot "toolkit\register_xpff_file_type.ps1"
+if (Test-Path -LiteralPath $associationScript) {
+    try {
+        & $associationScript -AppRoot $appRoot -Quiet
+    } catch {
+        # File association repair must never block application startup.
+    }
+}
 $toolkitRoot = Join-Path $env:LOCALAPPDATA "Sci"
 $envRoot = Join-Path $toolkitRoot "env"
 $appsRoot = Join-Path $toolkitRoot "apps"
@@ -650,6 +659,10 @@ try {
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $pythonExe
     $startInfo.Arguments = "-m $entryModule"
+    if ($ProjectPath) {
+        $escapedProjectPath = $ProjectPath.Replace('"', '\"')
+        $startInfo.Arguments += " --project `"$escapedProjectPath`""
+    }
     $startInfo.WorkingDirectory = $appRoot
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true

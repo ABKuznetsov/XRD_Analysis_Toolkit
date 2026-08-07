@@ -1,21 +1,32 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import asdict, fields
+
 from xrd_finder.core.finder_state import FinderProjectState
 from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.ui.element_filter import element_sort_key
+from xrd_finder.ui.plot_view_settings import PlotViewSettings
 
 
 class PhaseFinderProjectStateActionsMixin:
     def _sync_finder_state_to_project(self) -> None:
         if not hasattr(self, "candidate_table"):
             return
+        if hasattr(self, "_save_active_profile_state"):
+            self._save_active_profile_state()
         current = self.tree.current_object()
         right_tab = self.right_tabs.tabText(self.right_tabs.currentIndex()) if self.right_tabs.count() else "Elements"
+        try:
+            view_range = [list(axis_range) for axis_range in self._plot_view_range()]
+        except Exception:
+            view_range = []
         self.project.finder_state = FinderProjectState(
             checked_pattern_ids=self.tree.checked_pattern_ids(),
             checked_phase_ids=self.tree.checked_phase_ids(),
             current_object_type=current[0] if current else "",
             current_object_id=current[1] if current else "",
+            tree_expansion_state=self.tree.expansion_state(),
             show_all_selected_patterns=bool(self.show_all_selected_patterns),
             pattern_stack_offset_percent=int(self.pattern_stack_offset_percent),
             normalize_observed_patterns=bool(self.normalize_observed_patterns),
@@ -31,6 +42,11 @@ class PhaseFinderProjectStateActionsMixin:
             match_zero_shifts={str(key): float(value) for key, value in self.match_zero_shifts.items()},
             match_cell_scales={str(key): float(value) for key, value in self.match_cell_scales.items()},
             match_alignment_scores={str(key): str(value) for key, value in self.match_alignment_scores.items()},
+            profile_states=deepcopy(self.profile_states),
+            phase_colors={str(key): str(value) for key, value in self.phase_colors.items()},
+            observed_pattern_colors={str(key): str(value) for key, value in self.observed_pattern_colors.items()},
+            plot_view_settings=asdict(self.plot_view_settings),
+            plot_view_range=view_range,
             selected_elements=sorted(self.selected_elements, key=element_sort_key),
             selected_element_order=list(self.selected_element_order),
             element_states=dict(self.element_states),
@@ -50,6 +66,12 @@ class PhaseFinderProjectStateActionsMixin:
         state = getattr(self.project, "finder_state", None)
         if state is None:
             return
+        self.profile_states = deepcopy(getattr(state, "profile_states", {}) or {})
+        self.phase_colors = dict(getattr(state, "phase_colors", {}) or {})
+        self.observed_pattern_colors = dict(getattr(state, "observed_pattern_colors", {}) or {})
+        self.show_all_selected_patterns = False
+        self._restore_project_plot_view_settings(getattr(state, "plot_view_settings", {}) or {})
+        self.tree.restore_expansion_state(getattr(state, "tree_expansion_state", {}) or {})
         self.tree.set_checked_pattern_ids(state.checked_pattern_ids)
         self.tree.set_checked_phase_ids(state.checked_phase_ids)
         if state.current_object_type and state.current_object_id:
@@ -76,10 +98,34 @@ class PhaseFinderProjectStateActionsMixin:
                 break
         self._set_grid_visible(self.grid_visible)
         self._refresh_observed_pattern_plot()
-        if self.match_candidates and self._match_candidates_have_local_structures():
+        if self.match_candidates and self._match_candidates_have_structures():
             self._recalculate_match_profile(auto_zoom=False)
         else:
             self._update_match_table()
+        saved_range = getattr(state, "plot_view_range", []) or []
+        valid_range = len(saved_range) == 2 and all(
+            isinstance(axis_range, (list, tuple)) and len(axis_range) == 2
+            for axis_range in saved_range
+        )
+        if valid_range:
+            self._restore_plot_view_range(
+                (
+                    (float(saved_range[0][0]), float(saved_range[0][1])),
+                    (float(saved_range[1][0]), float(saved_range[1][1])),
+                )
+            )
+
+    def _restore_project_plot_view_settings(self, stored: dict) -> None:
+        if not isinstance(stored, dict) or not stored:
+            return
+        defaults = asdict(PlotViewSettings())
+        valid_names = {field.name for field in fields(PlotViewSettings)}
+        values = {name: stored.get(name, defaults[name]) for name in valid_names}
+        settings = PlotViewSettings(**values)
+        panel = getattr(self, "plot_settings_panel", None)
+        if panel is not None and hasattr(panel, "set_settings"):
+            panel.set_settings(settings, emit=False)
+        self._apply_plot_view_settings(settings)
 
     def _restore_filter_state(self, state: FinderProjectState) -> None:
         self.element_states = dict(state.element_states)
@@ -114,23 +160,31 @@ class PhaseFinderProjectStateActionsMixin:
         self.match_zero_shifts = {str(key): float(value) for key, value in state.match_zero_shifts.items()}
         self.match_cell_scales = {str(key): float(value) for key, value in state.match_cell_scales.items()}
         self.match_alignment_scores = {str(key): str(value) for key, value in state.match_alignment_scores.items()}
+        stored_structures = self._finder_candidate_structure_overrides(
+            self._active_pattern(),
+            self.match_candidates,
+        )
         for candidate in self.match_candidates:
+            candidate_key = self._candidate_key(candidate)
+            structure = None
             try:
                 local_path = self._candidate_local_cif_path(candidate)
-                if local_path is None:
-                    continue
-                _phase, structure = create_phase_from_cif(local_path)
-                phase_name = self._candidate_phase_name(candidate)
-                if phase_name:
-                    structure.name = phase_name
-                self.match_structures[self._candidate_key(candidate)] = structure
+                if local_path is not None:
+                    _phase, structure = create_phase_from_cif(local_path)
+                    phase_name = self._candidate_phase_name(candidate)
+                    if phase_name:
+                        structure.name = phase_name
             except Exception:
-                continue
+                structure = None
+            if structure is None:
+                structure = stored_structures.get(candidate_key)
+            if structure is not None:
+                self.match_structures[candidate_key] = structure
         self._update_match_table()
         if 0 <= state.match_current_row < self.match_table.rowCount():
             self.match_table.selectRow(state.match_current_row)
 
-    def _match_candidates_have_local_structures(self) -> bool:
+    def _match_candidates_have_structures(self) -> bool:
         return bool(self.match_candidates) and all(
             self._candidate_key(candidate) in self.match_structures
             for candidate in self.match_candidates

@@ -35,13 +35,15 @@ from pathlib import Path
 from xrd_finder.core.pattern import Pattern
 from xrd_finder.core.project import Project
 from xrd_finder.core.finder_state import FinderProjectState
+from xrd_finder.core.series import SeriesAnalysis
 from xrd_finder.core.structure import AtomSite, CellParameters, Structure
 from xrd_finder.finder import FinderInput, FinderService
 from xrd_finder.finder.models import candidate_structure_override
 from xrd_finder.finder.fingerprint_matching import fingerprint_match_score
 from xrd_finder.io.cif_loader import create_phase_from_cif
+from xrd_finder.io.scientific_folder_import import collect_scientific_folder_groups, unique_series_name
 from xrd_finder.io.xy_loader import load_xy
-from xrd_finder.io.project_io import load_project_manifest, save_project_manifest
+from xrd_finder.io.project_io import PORTABLE_PROJECT_SUFFIX, load_project_manifest, save_project_manifest
 from xrd_finder.services.calculated_pattern_service import (
     CU_KA1_WAVELENGTH,
     CalculatedPatternService,
@@ -143,6 +145,8 @@ class AnalysisWindow(QDialog):
         self.tree.object_open_requested.connect(self._open_project_object)
         self.tree.object_rename_requested.connect(self._rename_project_object)
         self.tree.object_delete_requested.connect(self._delete_project_object)
+        self.tree.series_create_requested.connect(self._create_project_series)
+        self.tree.object_move_to_series_requested.connect(self._move_project_object_to_series)
         self.tree.itemSelectionChanged.connect(self._on_project_tree_selection_changed)
         self.tree.pattern_selection_changed.connect(lambda _ids: self._on_project_tree_selection_changed())
         self.tree.phase_selection_changed.connect(lambda _ids: self._on_project_tree_selection_changed())
@@ -158,6 +162,8 @@ class AnalysisWindow(QDialog):
         self.project_controls.newProjectRequested.connect(self._new_project)
         self.project_controls.loadProjectRequested.connect(self._load_project)
         self.project_controls.saveProjectRequested.connect(self._save_project)
+        self.project_controls.saveProjectAsRequested.connect(self._save_project_as)
+        self.project_controls.addSeriesRequested.connect(self._create_project_series)
         self.project_controls.importRequested.connect(self._import_scientific_files)
         self.project_controls.moveRequested.connect(self._move_current_tree_object)
         self._register_drop_target(self.project_controls)
@@ -203,7 +209,14 @@ class AnalysisWindow(QDialog):
         if current is None:
             return
         object_type, object_id = current
-        objects = self.project.patterns if object_type == "pattern" else self.project.phases
+        if object_type == "series":
+            objects = self.project.series
+        elif object_type == "pattern":
+            objects = self.project.patterns
+        elif object_type == "phase":
+            objects = self.project.phases
+        else:
+            return
         index = next((i for i, project_object in enumerate(objects) if project_object.id == object_id), -1)
         new_index = index + direction
         if index < 0 or new_index < 0 or new_index >= len(objects):
@@ -242,6 +255,7 @@ class AnalysisWindow(QDialog):
         self.project.refinements.clear()
         self.project.analyses.clear()
         self.project.series.clear()
+        self.project.root_path = ""
         self.project.touch()
         self.tree.set_project(self.project)
         self._after_new_project()
@@ -252,41 +266,62 @@ class AnalysisWindow(QDialog):
             self,
             "Load XRD project",
             self._last_directory(),
-            "XRD project (*.xrd-project.json *.json);;JSON files (*.json);;All files (*.*)",
+            "XRD Phase Finder File (*.xpff)",
         )
         if not path:
             return
+        self._open_project_path(path)
+
+    def _open_project_path(self, path: str | Path) -> bool:
         try:
             project = load_project_manifest(path)
         except Exception as exc:
             QMessageBox.warning(self, "Load project failed", str(exc))
-            return
-        self._remember_directory(path)
+            return False
+        self._remember_directory(str(path))
         self.project = project
         self.setWindowTitle(f"{self._base_title} - {project.name}")
         self.tree.set_project(project)
         self._after_project_loaded()
         self.project_changed.emit()
+        return True
 
     def _save_project(self) -> bool:
-        default_path = self.project.root_path or str(Path(self._last_directory()) / f"{self.project.name}.xrd-project.json")
+        if not self.project.root_path or Path(self.project.root_path).suffix.lower() != PORTABLE_PROJECT_SUFFIX:
+            return self._save_project_as()
+        return self._write_project(self.project.root_path)
+
+    def _save_project_as(self) -> bool:
+        current_path = Path(self.project.root_path) if self.project.root_path else None
+        if current_path is not None and current_path.suffix.lower() == PORTABLE_PROJECT_SUFFIX:
+            default_path = str(current_path)
+        else:
+            default_path = str(Path(self._last_directory()) / f"{self.project.name}{PORTABLE_PROJECT_SUFFIX}")
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Save XRD project",
+            "Save XRD Phase Finder File",
             default_path,
-            "XRD project (*.xrd-project.json *.json);;JSON files (*.json);;All files (*.*)",
+            "XRD Phase Finder File (*.xpff)",
         )
         if not path:
             return False
+        selected = Path(path)
+        if selected.suffix == "":
+            path = str(selected.with_suffix(PORTABLE_PROJECT_SUFFIX))
+        return self._write_project(path)
+
+    def _write_project(self, path: str | Path) -> bool:
+        path = str(path)
         try:
-            self.project.root_path = path
             self._sync_finder_state_to_project()
             self.project.touch()
             save_project_manifest(self.project, path)
+            self.project.root_path = path
         except Exception as exc:
             QMessageBox.warning(self, "Save project failed", str(exc))
             return False
         QMessageBox.information(self, "Project saved", f"Project saved to:\n{path}")
+        self._remember_directory(path)
         return True
 
     def _after_new_project(self) -> None:
@@ -306,12 +341,24 @@ class AnalysisWindow(QDialog):
             return
         self._import_scientific_paths([Path(path) for path in paths])
 
-    def _import_scientific_paths(self, paths: list[Path]) -> None:
+    def _import_scientific_paths(
+        self,
+        paths: list[Path],
+        *,
+        target_series_id: str | None = None,
+        use_current_series: bool = True,
+        refresh: bool = True,
+        show_errors: bool = True,
+        remember_directory: bool = True,
+    ) -> tuple[bool, list[str]]:
         paths = [path for path in paths if path.is_file()]
         if not paths:
-            return
-        self._remember_directory(paths[0])
+            return False, []
+        if remember_directory:
+            self._remember_directory(paths[0])
         imported = False
+        if use_current_series:
+            target_series_id = self._series_id_for_new_project_object()
         errors: list[str] = []
         for path in paths:
             suffix = path.suffix.lower()
@@ -324,19 +371,76 @@ class AnalysisWindow(QDialog):
                     self._after_cif_import(path, phase, structure)
                     self.project.phases.append(phase)
                     self.project.structures.append(structure)
+                    if target_series_id:
+                        self.project.assign_object_to_series("phase", phase.id, target_series_id)
                 else:
                     load_xy(path)
-                    self.project.patterns.append(Pattern.create(name=path.stem, source_path=str(path)))
+                    pattern = Pattern.create(name=path.stem, source_path=str(path))
+                    self.project.patterns.append(pattern)
+                    if target_series_id:
+                        self.project.assign_object_to_series("pattern", pattern.id, target_series_id)
                 imported = True
             except Exception as exc:
                 errors.append(f"{path.name}: {exc}")
 
-        if imported:
-            self.tree.set_project(self.project)
-            self._on_project_tree_selection_changed()
-            if hasattr(self, "_refresh_project_phase_candidates"):
-                self._refresh_project_phase_candidates()
-            self.project_changed.emit()
+        if imported and refresh:
+            self._finalize_scientific_import()
+        if errors and show_errors:
+            QMessageBox.warning(self, "Import", "\n".join(errors[:5]))
+        return imported, errors
+
+    def _finalize_scientific_import(self) -> None:
+        self.tree.set_project(self.project)
+        self._on_project_tree_selection_changed()
+        if hasattr(self, "_refresh_project_phase_candidates"):
+            self._refresh_project_phase_candidates()
+        self.project_changed.emit()
+
+    def _import_scientific_drop_paths(self, paths: list[Path]) -> None:
+        files = [path for path in paths if path.is_file()]
+        directories = [path for path in paths if path.is_dir()]
+        if not files and not directories:
+            return
+        self._remember_directory(paths[0])
+        imported_any = False
+        errors: list[str] = []
+        if files:
+            imported, file_errors = self._import_scientific_paths(
+                files,
+                refresh=False,
+                show_errors=False,
+                remember_directory=False,
+            )
+            imported_any = imported_any or imported
+            errors.extend(file_errors)
+
+        existing_names = [series.name for series in self.project.series]
+        for directory in directories:
+            groups = collect_scientific_folder_groups(directory, self.IMPORT_SUFFIXES)
+            if not groups:
+                errors.append(f"{directory.name}: no supported XRD/CIF files")
+                continue
+            for group in groups:
+                series_name = unique_series_name(group.name, existing_names)
+                series = SeriesAnalysis.create(name=series_name, kind="collection")
+                self.project.series.append(series)
+                imported, group_errors = self._import_scientific_paths(
+                    list(group.paths),
+                    target_series_id=series.id,
+                    use_current_series=False,
+                    refresh=False,
+                    show_errors=False,
+                    remember_directory=False,
+                )
+                errors.extend(f"{group.name}/{error}" for error in group_errors)
+                if imported:
+                    imported_any = True
+                    existing_names.append(series_name)
+                else:
+                    self.project.series = [item for item in self.project.series if item.id != series.id]
+
+        if imported_any:
+            self._finalize_scientific_import()
         if errors:
             QMessageBox.warning(self, "Import", "\n".join(errors[:5]))
 
@@ -358,7 +462,7 @@ class AnalysisWindow(QDialog):
             event.ignore()
             return
         event.acceptProposedAction()
-        self._import_scientific_paths(paths)
+        self._import_scientific_drop_paths(paths)
 
     def _drop_file_paths(self, event) -> list[Path]:
         mime_data = event.mimeData()
@@ -369,7 +473,7 @@ class AnalysisWindow(QDialog):
             if not url.isLocalFile():
                 continue
             path = Path(url.toLocalFile())
-            if path.is_file() and path.suffix.lower() in self.IMPORT_SUFFIXES:
+            if path.is_dir() or (path.is_file() and path.suffix.lower() in self.IMPORT_SUFFIXES):
                 paths.append(path)
         return paths
 
@@ -389,7 +493,7 @@ class AnalysisWindow(QDialog):
                 paths = self._drop_file_paths(event)
                 if paths:
                     event.acceptProposedAction()
-                    self._import_scientific_paths(paths)
+                    self._import_scientific_drop_paths(paths)
                     return True
         return super().eventFilter(watched, event)
 
@@ -588,7 +692,7 @@ class PhaseFinderWindow(
         self.show_all_selected_patterns = False
         self.pattern_stack_offset_percent = 10
         self.normalize_observed_patterns = False
-        self.observed_pattern_plot_context: dict[str, dict[str, float]] = {}
+        self.observed_pattern_plot_context: dict[str, dict[str, object]] = {}
         self.observed_pattern_colors: dict[str, str] = {}
         # Phase colors are project-wide, so the same phase keeps the same color
         # when several observed patterns are shown or activated in turn.
@@ -946,6 +1050,7 @@ class PhaseFinderWindow(
         self.match_table = SelectedCandidatesTableWidget()
         self.match_table.rowClicked.connect(self._on_match_row_clicked)
         self.match_table.contextRequested.connect(self._show_match_context_menu)
+        self.match_table.phaseNameEdited.connect(self._rename_selected_match_phase)
         self.candidate_panel = QWidget()
         candidate_layout = QVBoxLayout(self.candidate_panel)
         candidate_layout.setContentsMargins(0, 0, 0, 0)
@@ -1017,6 +1122,8 @@ class PhaseFinderWindow(
         self._active_gain_stage = ""
         self._gain_overlap_locked = False
         self.profile_states.clear()
+        self.phase_colors.clear()
+        self.observed_pattern_colors.clear()
         self.match_profile_result_cache.clear()
         self.active_profile_pattern_id = None
         self.active_overlay_entry_id = None

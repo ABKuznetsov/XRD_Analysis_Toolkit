@@ -10,6 +10,8 @@ class ProjectControlsWidget(QWidget):
     newProjectRequested = Signal()
     loadProjectRequested = Signal()
     saveProjectRequested = Signal()
+    saveProjectAsRequested = Signal()
+    addSeriesRequested = Signal()
     importRequested = Signal()
     moveRequested = Signal(int)
 
@@ -37,27 +39,43 @@ class ProjectControlsWidget(QWidget):
         load_project_button = QPushButton("Load project")
         load_project_button.setAutoDefault(False)
         load_project_button.setMinimumHeight(34)
-        load_project_button.setToolTip("Load a saved XRD project manifest.")
+        load_project_button.setToolTip("Open an XRD Phase Finder File (.xpff).")
         load_project_button.setStyleSheet(command_button_style("#0b8043", "#35a96c"))
         load_project_button.clicked.connect(self.loadProjectRequested)
 
         save_project_button = QPushButton("Save project")
         save_project_button.setAutoDefault(False)
         save_project_button.setMinimumHeight(34)
-        save_project_button.setToolTip("Save the current project manifest, including processed XRD curves.")
+        save_project_button.setToolTip("Save the current portable .xpff project, including source XRD and user CIF files.")
         save_project_button.setStyleSheet(command_button_style("#2367a5", "#5a9bd8"))
         save_project_button.clicked.connect(self.saveProjectRequested)
+
+        save_project_as_button = QPushButton("Save project as...")
+        save_project_as_button.setAutoDefault(False)
+        save_project_as_button.setMinimumHeight(30)
+        save_project_as_button.setToolTip("Save a portable XRD Phase Finder File under a new name.")
+        save_project_as_button.clicked.connect(self.saveProjectAsRequested)
 
         project_layout.addWidget(new_project_button)
         project_layout.addWidget(load_project_button)
         project_layout.addWidget(save_project_button)
+        project_layout.addWidget(save_project_as_button)
 
         import_button = QPushButton("Import XRD / CIF")
         import_button.setAutoDefault(False)
         import_button.setMinimumHeight(34)
-        import_button.setToolTip("Import XRD patterns and CIF structures. You can also drag files into the window.")
+        import_button.setToolTip(
+            "Import XRD patterns and CIF structures. Drag files or a folder into the window; "
+            "the folder and its direct subfolders become separate series."
+        )
         import_button.setStyleSheet(command_button_style("#e9328f", "#ff65b3"))
         import_button.clicked.connect(self.importRequested)
+
+        add_series_button = QPushButton("Add series")
+        add_series_button.setAutoDefault(False)
+        add_series_button.setMinimumHeight(30)
+        add_series_button.setToolTip("Add a named series to the project tree. Select it before importing related XRD/CIF files.")
+        add_series_button.clicked.connect(self.addSeriesRequested)
 
         order_row = QHBoxLayout()
         order_row.setContentsMargins(0, 0, 0, 0)
@@ -66,12 +84,12 @@ class ProjectControlsWidget(QWidget):
 
         move_up_button = QToolButton()
         move_up_button.setText("Up")
-        move_up_button.setToolTip("Move selected XRD or CIF up")
+        move_up_button.setToolTip("Move selected series, XRD or CIF up")
         move_up_button.clicked.connect(lambda: self.moveRequested.emit(-1))
 
         move_down_button = QToolButton()
         move_down_button.setText("Down")
-        move_down_button.setToolTip("Move selected XRD or CIF down")
+        move_down_button.setToolTip("Move selected series, XRD or CIF down")
         move_down_button.clicked.connect(lambda: self.moveRequested.emit(1))
 
         order_row.addWidget(move_up_button)
@@ -79,5 +97,6 @@ class ProjectControlsWidget(QWidget):
         order_row.addStretch(1)
 
         layout.addLayout(project_layout)
+        layout.addWidget(add_series_button)
         layout.addWidget(import_button)
         layout.addLayout(order_row)

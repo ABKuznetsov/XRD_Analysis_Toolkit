@@ -16,13 +16,14 @@ class ObservedPatternPlotData:
     y: np.ndarray
     height: float
     offset: float = 0.0
+    intensity_scale: float = 1.0
 
     @property
     def plotted_y(self) -> np.ndarray:
         return self.y + self.offset
 
     @property
-    def context(self) -> dict[str, float]:
+    def context(self) -> dict[str, object]:
         finite_y = self.y[np.isfinite(self.y)]
         raw_min = float(np.nanmin(finite_y)) if finite_y.size else 0.0
         raw_max = float(np.nanmax(finite_y)) if finite_y.size else 1.0
@@ -33,6 +34,7 @@ class ObservedPatternPlotData:
             "plot_min": raw_min + float(self.offset),
             "plot_max": raw_max + float(self.offset),
             "height": float(self.height),
+            "intensity_scale": float(self.intensity_scale),
         }
 
 
@@ -96,13 +98,28 @@ def load_observed_patterns(
             continue
         if data is None or len(data) == 0:
             continue
+        intensity_scale = 1.0
         if normalize:
+            finite_y = np.asarray(data[:, 1], dtype=float)
+            finite_y = finite_y[np.isfinite(finite_y)]
+            maximum = float(np.nanmax(finite_y)) if finite_y.size else 0.0
+            if np.isfinite(maximum) and maximum > 0.0:
+                intensity_scale = 100.0 / maximum
             data = normalize_intensity(data)
         x = np.asarray(data[:, 0], dtype=float)
         y = np.asarray(data[:, 1], dtype=float)
         finite_y = y[np.isfinite(y)]
         height = float(np.nanmax(finite_y) - np.nanmin(finite_y)) if finite_y.size else 0.0
-        loaded.append(ObservedPatternPlotData(pattern, name, x, y, height))
+        loaded.append(
+            ObservedPatternPlotData(
+                pattern,
+                name,
+                x,
+                y,
+                height,
+                intensity_scale=intensity_scale,
+            )
+        )
     return loaded
 
 
@@ -122,6 +139,14 @@ def apply_pattern_offsets(
         offsets[item.pattern.id] = y_offset
         previous_height = item.height
     return [
-        ObservedPatternPlotData(item.pattern, item.name, item.x, item.y, item.height, offsets.get(item.pattern.id, 0.0))
+        ObservedPatternPlotData(
+            item.pattern,
+            item.name,
+            item.x,
+            item.y,
+            item.height,
+            offsets.get(item.pattern.id, 0.0),
+            item.intensity_scale,
+        )
         for item in patterns
     ]

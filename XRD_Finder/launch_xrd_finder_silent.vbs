@@ -1,5 +1,5 @@
 Option Explicit
-Dim fso, shell, scriptDir, appRoot, previewScript, command
+Dim fso, shell, scriptDir, appRoot, previewScript, command, argument
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
 scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
@@ -12,6 +12,10 @@ If Not fso.FileExists(previewScript) Then
 End If
 
 command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " & Quote(previewScript) & " -AppId xrd_finder"
+If WScript.Arguments.Count > 0 Then
+    argument = WScript.Arguments.Item(0)
+    command = command & " -ProjectPath " & Quote(argument)
+End If
 shell.Run command, 0, False
 
 Function Quote(value)

@@ -336,7 +336,12 @@ class PhaseFinderObservedPatternActionsMixin:
                         pass
                     self.match_plot.addItem(label)
                     self.plot_layers.setdefault("pattern_legends", []).append(label)
-            self.observed_pattern_plot_context[item.pattern.id] = item.context
+            plot_context = item.context
+            # Marker placement must use the curve exactly as it is displayed,
+            # after normalization, cropping, and multi-pattern stacking.
+            plot_context["display_x"] = np.asarray(x_plot, dtype=float)
+            plot_context["display_y"] = np.asarray(y, dtype=float)
+            self.observed_pattern_plot_context[item.pattern.id] = plot_context
             x_values.append(x_plot)
             y_values.append(y)
 
