@@ -79,6 +79,15 @@ def _save_portable_project(project: Project, target: Path) -> None:
             _embed_collection_sources(archive, data.get("patterns", []), "xrd", ".xy", file_members)
             _embed_collection_sources(archive, data.get("phases", []), "cif", ".cif", file_members)
             _embed_collection_sources(archive, data.get("structures", []), "cif", ".cif", file_members)
+            finder_state = data.get("finder_state", {})
+            if isinstance(finder_state, dict):
+                _embed_path_mapping(
+                    archive,
+                    finder_state.get("candidate_cif_paths"),
+                    "candidates",
+                    ".cif",
+                    file_members,
+                )
             archive.writestr(
                 PORTABLE_MANIFEST_NAME,
                 json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8"),
@@ -120,6 +129,37 @@ def _embed_collection_sources(
         record["source_path"] = member
 
 
+def _embed_path_mapping(
+    archive: zipfile.ZipFile,
+    paths: Any,
+    folder: str,
+    default_suffix: str,
+    file_members: dict[str, str],
+) -> None:
+    """Rewrite local mapping values to deduplicated ZIP member paths."""
+    if not isinstance(paths, dict):
+        return
+    for key, raw_path in paths.items():
+        source_path = str(raw_path or "").strip()
+        source = Path(source_path)
+        if not source_path or not source.is_file():
+            raise ValueError(f"Candidate CIF for {key!r} is absent or unreadable: {source_path}")
+        try:
+            source_key = str(source.resolve()).casefold()
+        except OSError:
+            source_key = str(source.absolute()).casefold()
+        member = file_members.get(source_key)
+        if member is None:
+            suffix = source.suffix.lower() or default_suffix
+            member = f"assets/{folder}/{_safe_member_stem(str(key))}{suffix}"
+            try:
+                archive.write(source, member)
+            except OSError as exc:
+                raise ValueError(f"Candidate CIF for {key!r} is absent or unreadable: {source_path}") from exc
+            file_members[source_key] = member
+        paths[key] = member
+
+
 def _safe_member_stem(value: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._")
     return safe or "asset"
@@ -141,6 +181,11 @@ def _load_portable_project(source: Path) -> Project:
                 continue
             extracted = _extract_portable_member(archive, member, extraction_root)
             item.source_path = str(extracted)
+        project.finder_state.candidate_cif_paths = _extract_path_mapping(
+            archive,
+            project.finder_state.candidate_cif_paths,
+            extraction_root,
+        )
     project.root_path = str(source)
     project.prune_series_memberships()
     return project
@@ -153,6 +198,23 @@ def _portable_extraction_root(source: Path) -> Path:
     root = Path(tempfile.gettempdir()) / "XRDPhaseFinder" / "projects" / digest
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def _extract_path_mapping(
+    archive: zipfile.ZipFile,
+    paths: dict[str, str],
+    extraction_root: Path,
+) -> dict[str, str]:
+    """Return candidate keys mapped to project-private extracted paths."""
+    if not isinstance(paths, dict):
+        return {}
+    extracted_paths: dict[str, str] = {}
+    for key, member in paths.items():
+        member_path = str(member or "").strip()
+        if not member_path:
+            continue
+        extracted_paths[str(key)] = str(_extract_portable_member(archive, member_path, extraction_root))
+    return extracted_paths
 
 
 def _extract_portable_member(archive: zipfile.ZipFile, member: str, root: Path) -> Path:

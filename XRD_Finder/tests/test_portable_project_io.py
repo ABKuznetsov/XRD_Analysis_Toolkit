@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -62,6 +63,69 @@ class PortableProjectIoTest(unittest.TestCase):
         self.assertEqual(restored.series[0].pattern_ids, [pattern.id])
         self.assertEqual(restored.finder_state.phase_colors, {phase.id: "#123456"})
         self.assertEqual(restored.finder_state.profile_states[pattern.id]["marker_scale"], 1.5)
+
+    def test_xpff_embeds_shared_match_candidate_cif_without_project_phase(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            first_xrd_path = tmp_path / "first.xy"
+            second_xrd_path = tmp_path / "second.xy"
+            cif_path = tmp_path / "candidate.cif"
+            first_xrd_path.write_text("10 100\n20 200\n", encoding="utf-8")
+            second_xrd_path.write_text("10 80\n20 160\n", encoding="utf-8")
+            cif_path.write_text("data_basio3\n_cell_length_a 1\n", encoding="utf-8")
+            first_pattern = Pattern.create("First", str(first_xrd_path))
+            second_pattern = Pattern.create("Second", str(second_xrd_path))
+            candidate_key = "USER:BaSiO3"
+            candidate = {"Source": "USER", "Entry": "BaSiO3", "Name": "BaSiO3"}
+            project = Project(name="Candidate-only project", patterns=[first_pattern, second_pattern])
+            project.finder_state.match_candidates = [candidate]
+            project.finder_state.profile_states = {
+                first_pattern.id: {"candidates": [candidate]},
+                second_pattern.id: {"candidates": [candidate]},
+            }
+            project.finder_state.candidate_cif_paths = {candidate_key: str(cif_path)}
+
+            target = tmp_path / "candidate-only.xpff"
+            save_project_manifest(project, target)
+            cif_path.unlink()
+
+            with zipfile.ZipFile(target) as archive:
+                candidate_members = [name for name in archive.namelist() if name.startswith("assets/candidates/")]
+            self.assertEqual(len(candidate_members), 1)
+
+            restored = load_project_manifest(target)
+            extracted_path = Path(restored.finder_state.candidate_cif_paths[candidate_key])
+            self.assertTrue(extracted_path.is_file())
+            self.assertEqual(extracted_path.read_text(encoding="utf-8"), "data_basio3\n_cell_length_a 1\n")
+            for pattern in (first_pattern, second_pattern):
+                restored_candidate = restored.finder_state.profile_states[pattern.id]["candidates"][0]
+                self.assertEqual(f"{restored_candidate['Source']}:{restored_candidate['Entry']}", candidate_key)
+
+    def test_xpff_manifest_without_candidate_cif_paths_uses_empty_mapping(self) -> None:
+        with TemporaryDirectory() as directory:
+            target = Path(directory) / "legacy.xpff"
+            data = {"name": "Legacy project", "patterns": [], "phases": [], "structures": [], "series": {}, "finder_state": {}}
+            with zipfile.ZipFile(target, mode="w") as archive:
+                archive.writestr("project.json", json.dumps(data))
+
+            restored = load_project_manifest(target)
+
+            self.assertEqual(restored.finder_state.candidate_cif_paths, {})
+
+    def test_xpff_save_keeps_existing_file_when_candidate_cif_is_missing(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            target = tmp_path / "existing.xpff"
+            target.write_bytes(b"previous project")
+            candidate_key = "USER:Missing"
+            missing_path = tmp_path / "missing.cif"
+            project = Project(name="Missing candidate CIF")
+            project.finder_state.candidate_cif_paths = {candidate_key: str(missing_path)}
+
+            with self.assertRaisesRegex(ValueError, r"USER:Missing.*missing\.cif"):
+                save_project_manifest(project, target)
+
+            self.assertEqual(target.read_bytes(), b"previous project")
 
 
 if __name__ == "__main__":
