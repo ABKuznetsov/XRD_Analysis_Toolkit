@@ -73,12 +73,14 @@ class PhaseFinderCandidateStructureActionsMixin:
             cached_path = self.local_phase_cache.cif_path("COD", entry_id)
             if cached_path is not None:
                 return cached_path
+            self._require_candidate_network_allowed(source, entry_id)
             entry = self._candidate_to_cod_entry(candidate)
             return self.local_phase_cache.download_cod_entry(entry, self.cod_online)
         if source == "MP" and entry_id:
             cached_path = self.local_phase_cache.cif_path("MP", entry_id)
             if cached_path is not None:
                 return cached_path
+            self._require_candidate_network_allowed(source, entry_id)
             target_dir = self.local_phase_cache.root / "materials_project_cif"
             cif_path = self.materials_project.download_cif(entry_id, target_dir)
             self.local_phase_cache.index_cif(cif_path, source="MP", entry_id=entry_id)
@@ -87,6 +89,7 @@ class PhaseFinderCandidateStructureActionsMixin:
             cached_path = self.local_phase_cache.cif_path("AFLOW", entry_id)
             if cached_path is not None:
                 return cached_path
+            self._require_candidate_network_allowed(source, entry_id)
             target_dir = self.local_phase_cache.root / "aflow_cif"
             cif_path = self.aflow.download_cif(entry_id, target_dir, url_hint=candidate.get("Notes", ""))
             self.local_phase_cache.index_cif(cif_path, source="AFLOW", entry_id=entry_id)
@@ -95,11 +98,16 @@ class PhaseFinderCandidateStructureActionsMixin:
             cached_path = self.local_phase_cache.cif_path("OQMD", entry_id)
             if cached_path is not None:
                 return cached_path
+            self._require_candidate_network_allowed(source, entry_id)
             target_dir = self.local_phase_cache.root / "oqmd_cif"
             cif_path = self.oqmd.download_cif(entry_id, target_dir, url_hint=candidate.get("Notes", ""), formula_hint=candidate.get("Formula", ""))
             self.local_phase_cache.index_cif(cif_path, source="OQMD", entry_id=entry_id)
             return cif_path
         raise ValueError("Select a saved COD, CCDC, USER, Materials Project, AFLOW, or OQMD row with an entry id.")
+
+    def _require_candidate_network_allowed(self, source: str, entry_id: str) -> None:
+        if getattr(self, "_suppress_candidate_network", False):
+            raise ValueError(f"Remote CIF download is disabled during project load ({source}:{entry_id}).")
 
     def _candidate_needs_remote_cif(self, candidate: dict[str, str]) -> bool:
         source = self._candidate_source(candidate)

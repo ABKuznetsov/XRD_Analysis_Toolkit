@@ -286,6 +286,10 @@ class AnalysisWindow(QDialog):
         self.project_changed.emit()
         return True
 
+    def _show_project_load_warnings(self, warnings: list[str]) -> None:
+        details = "\n".join(f"• {warning}" for warning in warnings)
+        QMessageBox.warning(self, "Project loaded with warnings", details)
+
     def _save_project(self) -> bool:
         if not self.project.root_path or Path(self.project.root_path).suffix.lower() != PORTABLE_PROJECT_SUFFIX:
             return self._save_project_as()

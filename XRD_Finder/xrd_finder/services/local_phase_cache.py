@@ -22,6 +22,10 @@ DEFAULT_CACHE_ROOT = default_phase_cache_root()
 DERIVED_CACHE_VERSION = 9
 
 
+def _embedded_source_dir_name(source: str) -> str:
+    return f"source-{source.encode('utf-8', errors='surrogatepass').hex()}"
+
+
 @dataclass(slots=True)
 class CachedPhaseEntry:
     source: str
@@ -399,10 +403,10 @@ class LocalPhaseCache:
             return CachedPhaseEntry(source="USER", entry_id=entry_id, name=entry_id, cif_path=str(target_path))
         return entry
 
-    def install_embedded_cif(self, cif_path: str | Path, source: str, entry_id: str) -> Path:
-        existing_path = self.cif_path(source, entry_id)
-        if existing_path is not None:
-            return existing_path
+    def install_embedded_cif(self, cif_path: str | Path, source: str, entry_id: str) -> Path | None:
+        existing_entry = self.get(source, entry_id)
+        if existing_entry is not None:
+            return Path(existing_entry.cif_path) if existing_entry.cif_path else None
 
         source_path = Path(cif_path)
         if not source_path.is_file():
@@ -410,15 +414,28 @@ class LocalPhaseCache:
         if not source or not entry_id:
             raise ValueError("Embedded CIF source and entry id are required.")
 
-        source_dir = re.sub(r"[^A-Za-z0-9._-]+", "_", source).strip("._") or "unknown"
+        source_dir = _embedded_source_dir_name(source)
         cache_key = hashlib.sha256(f"{source}\0{entry_id}".encode("utf-8")).hexdigest()[:24]
         target_dir = self.root / "embedded_cif" / source_dir
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / f"{cache_key}.cif"
         if target_path.resolve() != source_path.resolve():
             shutil.copy2(source_path, target_path)
-        self.index_cif(target_path, source=source, entry_id=entry_id)
-        return target_path
+        if self.index_cif(target_path, source=source, entry_id=entry_id, if_absent=True):
+            return target_path
+
+        concurrent_entry = self.get(source, entry_id)
+        concurrent_path = (
+            Path(concurrent_entry.cif_path)
+            if concurrent_entry is not None and concurrent_entry.cif_path
+            else None
+        )
+        if (
+            target_path.resolve() != source_path.resolve()
+            and (concurrent_path is None or target_path.resolve() != concurrent_path.resolve())
+        ):
+            target_path.unlink(missing_ok=True)
+        return concurrent_path
 
     def cif_path(self, source: str, entry_id: str) -> Path | None:
         with self._connect() as connection:
@@ -543,7 +560,9 @@ class LocalPhaseCache:
         source: str,
         entry_id: str,
         fallback: CodEntry | None = None,
-    ) -> None:
+        *,
+        if_absent: bool = False,
+    ) -> bool:
         cif_path = Path(cif_path)
         try:
             _phase, structure = create_phase_from_cif(cif_path)
@@ -591,7 +610,7 @@ class LocalPhaseCache:
             derived_version=derived_version,
         )
         with self._connect() as connection:
-            self._upsert(connection, entry, keep_cif=False)
+            return self._upsert(connection, entry, keep_cif=False, insert_only=if_absent)
 
     def _calculate_cached_peaks(self, structure) -> list:
         try:
@@ -864,6 +883,7 @@ class LocalPhaseCache:
             connection.execute(f"delete from phase_elements where source in ({placeholders})", sources)
             connection.execute(f"delete from phase_peaks where source in ({placeholders})", sources)
             connection.execute(f"delete from search_cache where source in ({placeholders})", sources)
+        self._remove_cache_dirs([f"embedded_cif/{_embedded_source_dir_name(source)}" for source in sources])
 
     def _remove_cache_dirs(self, names: list[str]) -> None:
         root = self.root.resolve()
@@ -874,7 +894,14 @@ class LocalPhaseCache:
             if path.exists():
                 shutil.rmtree(path)
 
-    def _upsert(self, connection: sqlite3.Connection, entry: CachedPhaseEntry, keep_cif: bool) -> None:
+    def _upsert(
+        self,
+        connection: sqlite3.Connection,
+        entry: CachedPhaseEntry,
+        keep_cif: bool,
+        *,
+        insert_only: bool = False,
+    ) -> bool:
         old_cif = ""
         if keep_cif:
             row = connection.execute(
@@ -896,13 +923,10 @@ class LocalPhaseCache:
                 if getattr(entry, "derived_version", 0) == 0:
                     setattr(entry, "derived_version", row["derived_version"])
         cif_path = old_cif or entry.cif_path
-        connection.execute(
-            """
-            insert into phases(
-                source, entry_id, formula, name, spacegroup, source_text, elements, formula_key, cif_path,
-                a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, top_peaks_json, derived_version, updated_at
-            )
-            values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        conflict_clause = (
+            "on conflict(source, entry_id) do nothing"
+            if insert_only
+            else """
             on conflict(source, entry_id) do update set
                 formula = excluded.formula,
                 name = excluded.name,
@@ -924,6 +948,16 @@ class LocalPhaseCache:
                 top_peaks_json = excluded.top_peaks_json,
                 derived_version = excluded.derived_version,
                 updated_at = excluded.updated_at
+            """
+        )
+        cursor = connection.execute(
+            f"""
+            insert into phases(
+                source, entry_id, formula, name, spacegroup, source_text, elements, formula_key, cif_path,
+                a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, top_peaks_json, derived_version, updated_at
+            )
+            values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            {conflict_clause}
             """,
             (
                 entry.source,
@@ -950,8 +984,11 @@ class LocalPhaseCache:
                 time.time(),
             ),
         )
+        if cursor.rowcount == 0:
+            return False
         self._replace_phase_elements(connection, entry.source, entry.entry_id, " ".join(sorted(formula_elements(entry.formula))))
         self._replace_phase_peaks(connection, entry.source, entry.entry_id, entry.peaks_json)
+        return True
 
     def _replace_phase_elements(
         self,

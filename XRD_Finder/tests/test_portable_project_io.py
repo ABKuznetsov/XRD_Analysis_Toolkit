@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 import zipfile
 
 from xrd_finder.core.pattern import Pattern
@@ -11,10 +12,46 @@ from xrd_finder.core.phase import Phase
 from xrd_finder.core.project import Project
 from xrd_finder.core.series import SeriesAnalysis
 from xrd_finder.core.structure import Structure
-from xrd_finder.io.project_io import load_project_manifest, save_project_manifest
+from xrd_finder.io import project_io
+from xrd_finder.io.project_io import _extract_portable_member, load_project_manifest, save_project_manifest
 
 
 class PortableProjectIoTest(unittest.TestCase):
+    def test_xpff_rejects_unsafe_asset_member_paths_before_file_io(self) -> None:
+        """Fails if native path parsing can reinterpret a crafted ZIP member."""
+
+        class ArchiveMustNotBeOpened:
+            def __init__(self) -> None:
+                self.opened: list[str] = []
+
+            def open(self, member: str, mode: str):
+                self.opened.append(member)
+                raise AssertionError(f"unsafe member reached archive I/O: {member}")
+
+        malicious_members = [
+            "not-assets/phase.cif",
+            "/assets/absolute.cif",
+            "assets\\backslash.cif",
+            "assets/..\\escape.cif",
+            "assets/C:drive-relative.cif",
+            "assets/C:/drive-absolute.cif",
+            "assets/name:stream.cif",
+            "assets//empty-component.cif",
+            "assets/./dot-component.cif",
+            "assets/../parent-component.cif",
+            "assets/",
+        ]
+        archive = ArchiveMustNotBeOpened()
+        with TemporaryDirectory() as directory, patch.object(Path, "mkdir") as mkdir:
+            root = Path(directory) / "extracted"
+            for member in malicious_members:
+                with self.subTest(member=member):
+                    with self.assertRaisesRegex(ValueError, r"Unsafe file path"):
+                        _extract_portable_member(archive, member, root)  # type: ignore[arg-type]
+
+        self.assertEqual(archive.opened, [])
+        mkdir.assert_not_called()
+
     def test_xpff_embeds_xrd_cif_and_project_state(self) -> None:
         with TemporaryDirectory() as directory:
             self._assert_portable_round_trip(Path(directory))
@@ -112,6 +149,42 @@ class PortableProjectIoTest(unittest.TestCase):
 
             self.assertEqual(restored.finder_state.candidate_cif_paths, {})
 
+    def test_xpff_save_rejects_missing_project_collection_assets_atomically(self) -> None:
+        """Fails if a non-empty project asset path survives as a machine-local path."""
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            missing_path = tmp_path / "missing-source.dat"
+            cases = [
+                (
+                    "pattern",
+                    Project(name="Missing pattern asset", patterns=[Pattern.create("Missing pattern", str(missing_path))]),
+                    "Missing pattern",
+                ),
+                (
+                    "phase",
+                    Project(name="Missing phase asset", phases=[Phase.create("Missing phase", str(missing_path))]),
+                    "Missing phase",
+                ),
+                (
+                    "structure",
+                    Project(
+                        name="Missing structure asset",
+                        structures=[Structure.create("Missing structure", str(missing_path))],
+                    ),
+                    "Missing structure",
+                ),
+            ]
+
+            for label, project, display_name in cases:
+                with self.subTest(collection=label):
+                    target = tmp_path / f"existing-{label}.xpff"
+                    target.write_bytes(b"previous project")
+
+                    with self.assertRaisesRegex(ValueError, rf"{display_name}.*missing-source\.dat"):
+                        save_project_manifest(project, target)
+
+                    self.assertEqual(target.read_bytes(), b"previous project")
+
     def test_xpff_save_keeps_existing_file_when_candidate_cif_is_missing(self) -> None:
         with TemporaryDirectory() as directory:
             tmp_path = Path(directory)
@@ -178,6 +251,36 @@ class PortableProjectIoTest(unittest.TestCase):
             restored = load_project_manifest(target)
             self.assertEqual(Path(restored.finder_state.candidate_cif_paths[first_key]).read_text(encoding="utf-8"), "data_first\n")
             self.assertEqual(Path(restored.finder_state.candidate_cif_paths[second_key]).read_text(encoding="utf-8"), "data_second\n")
+
+    def test_path_deduplication_uses_platform_case_normalization(self) -> None:
+        """Fails if case-sensitive platforms merge paths that differ only by case."""
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            first_path = tmp_path / "first.cif"
+            second_path = tmp_path / "second.cif"
+            first_path.write_bytes(b"data_upper\n")
+            second_path.write_bytes(b"data_lower\n")
+            mapping = {"USER:Upper": str(first_path), "USER:Lower": str(second_path)}
+            archive_path = tmp_path / "paths.zip"
+
+            def case_distinct_resolve(path: Path, *args, **kwargs) -> Path:
+                if path == first_path:
+                    return Path("Z:/Case/Phase.cif")
+                if path == second_path:
+                    return Path("Z:/case/phase.cif")
+                return path.absolute()
+
+            with zipfile.ZipFile(archive_path, mode="w") as archive:
+                with (
+                    patch.object(Path, "resolve", autospec=True, side_effect=case_distinct_resolve),
+                    patch.object(project_io.os.path, "normcase", side_effect=lambda value: value),
+                ):
+                    project_io._embed_path_mapping(archive, mapping, "candidates", ".cif", {})
+
+            self.assertNotEqual(mapping["USER:Upper"], mapping["USER:Lower"])
+            with zipfile.ZipFile(archive_path) as archive:
+                self.assertEqual(archive.read(mapping["USER:Upper"]), b"data_upper\n")
+                self.assertEqual(archive.read(mapping["USER:Lower"]), b"data_lower\n")
 
 
 if __name__ == "__main__":
