@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import asdict, fields
+from pathlib import Path
 
 from xrd_finder.core.finder_state import FinderProjectState
 from xrd_finder.io.cif_loader import create_phase_from_cif
@@ -10,6 +11,43 @@ from xrd_finder.ui.plot_view_settings import PlotViewSettings
 
 
 class PhaseFinderProjectStateActionsMixin:
+    def _collect_project_candidate_cif_paths(self) -> dict[str, str]:
+        """Resolve one readable local CIF path for every saved candidate key."""
+        candidates = list(self.match_candidates)
+        for profile_state in self.profile_states.values():
+            if isinstance(profile_state, dict):
+                candidates.extend(profile_state.get("candidates", []) or [])
+
+        existing_paths = getattr(self.project.finder_state, "candidate_cif_paths", {}) or {}
+        candidate_paths: dict[str, str] = {}
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            source = str(candidate.get("Source", "") or candidate.get("Qual.", "")).strip().upper()
+            entry = str(candidate.get("Entry", "")).strip()
+            if source not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"} or not entry:
+                continue
+            candidate_key = self._candidate_key(candidate)
+            if candidate_key in candidate_paths:
+                continue
+
+            local_path = self._candidate_local_cif_path(candidate)
+            possible_paths = (local_path, existing_paths.get(candidate_key))
+            for possible_path in possible_paths:
+                if possible_path is None:
+                    continue
+                path = Path(possible_path)
+                try:
+                    with path.open("rb"):
+                        pass
+                except OSError:
+                    continue
+                candidate_paths[candidate_key] = str(path)
+                break
+            else:
+                raise ValueError(f"Cannot save CIF asset for phase {source}:{entry}: no readable local CIF is available.")
+        return candidate_paths
+
     def _sync_finder_state_to_project(self) -> None:
         if not hasattr(self, "candidate_table"):
             return
@@ -42,6 +80,7 @@ class PhaseFinderProjectStateActionsMixin:
             match_zero_shifts={str(key): float(value) for key, value in self.match_zero_shifts.items()},
             match_cell_scales={str(key): float(value) for key, value in self.match_cell_scales.items()},
             match_alignment_scores={str(key): str(value) for key, value in self.match_alignment_scores.items()},
+            candidate_cif_paths=self._collect_project_candidate_cif_paths(),
             profile_states=deepcopy(self.profile_states),
             phase_colors={str(key): str(value) for key, value in self.phase_colors.items()},
             observed_pattern_colors={str(key): str(value) for key, value in self.observed_pattern_colors.items()},
