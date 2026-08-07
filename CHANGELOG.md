@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.3.0 - 2026-08-07
+
+### Added
+
+- Added portable `.xpff` project containers with embedded XRD patterns, user CIF references, series, selected phases and saved plot state.
+- Added multiple project series, whole-folder drag-and-drop import and series-level visibility controls.
+- Added Windows `.xpff` file association and direct project opening from Explorer.
+- Added in-place Save alongside Save As and editable phase display names.
+- Added configurable outward axis ticks and grid color/width controls.
+
+### Changed
+
+- Improved multi-pattern figures with per-pattern labels, scalable annotations and consistent colors for the same phase.
+- Preserved project-tree expansion state while editing and reopening projects.
+- Kept candidate preview profiles and sticks independent from accepted-phase plot layers.
+- Improved normalized-pattern marker placement and split-color markers for genuine overlapping phases.
+
+### Fixed
+
+- Prevented weak fitted phase contributions from producing false overlap markers.
+- Restored strong phase-supported markers that were hidden by structured neighbouring peaks.
+- Fixed crop-all processing, plot unit removal and several project persistence edge cases.
+
 ## 1.2.0 - 2026-07-27
 
 ### Added
@@ -180,7 +203,6 @@
 - `XRD_Finder/xrd_finder/ui/analysis_windows.py` is still large and should be split further before adding batch-processing workflows.
 - Quantification and I/Ic values are practical estimates for phase identification, not a replacement for full-profile refinement.
 - Large COD/RRUFF databases are intentionally user-managed and are not bundled in the release.
-
 
 
 

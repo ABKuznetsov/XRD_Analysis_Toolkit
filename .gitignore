@@ -27,5 +27,5 @@ build/
 .vscode/
 installer/output/
 *.exe
-installer/
-
+installer/*
+!installer/XRD_Analysis_Toolkit.iss

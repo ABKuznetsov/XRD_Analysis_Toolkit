@@ -4,10 +4,41 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QInputDialog, QMessageBox
 
+from xrd_finder.core.series import SeriesAnalysis
 from xrd_finder.io.cif_loader import create_phase_from_cif
 
 
 class PhaseFinderProjectTreeActionsMixin:
+    def _create_project_series(self) -> None:
+        default_name = f"Series {len(self.project.series) + 1}"
+        name, accepted = QInputDialog.getText(self, "Add series", "Name:", text=default_name)
+        name = name.strip()
+        if not accepted or not name:
+            return
+        series = SeriesAnalysis.create(name=name, kind="collection")
+        self.project.series.append(series)
+        self.project.touch()
+        self.tree.set_project(self.project)
+        self.tree.select_object("series", series.id)
+        self.project_changed.emit()
+
+    def _move_project_object_to_series(self, object_type: str, object_id: str, series_id: str) -> None:
+        if object_type not in {"pattern", "phase"}:
+            return
+        objects = self.project.patterns if object_type == "pattern" else self.project.phases
+        if not any(project_object.id == object_id for project_object in objects):
+            return
+        if series_id and not any(series.id == series_id for series in self.project.series):
+            return
+        self.project.assign_object_to_series(object_type, object_id, series_id or None)
+        self.project.touch()
+        self.tree.set_project(self.project)
+        self.tree.select_object(object_type, object_id)
+        self.project_changed.emit()
+
+    def _series_id_for_new_project_object(self) -> str | None:
+        return self.tree.current_series_id()
+
     def _after_cif_import(self, path: Path, phase, structure) -> None:
         try:
             entry = self.local_phase_cache.add_user_cif(path)
@@ -80,6 +111,9 @@ class PhaseFinderProjectTreeActionsMixin:
         elif object_type == "phase":
             current = next((phase for phase in self.project.phases if phase.id == object_id), None)
             current_name = current.name if current is not None else ""
+        elif object_type == "series":
+            current = next((series for series in self.project.series if series.id == object_id), None)
+            current_name = current.name if current is not None else ""
         if not current_name:
             return
         new_name, accepted = QInputDialog.getText(self, "Rename", "Name:", text=current_name)
@@ -104,6 +138,11 @@ class PhaseFinderProjectTreeActionsMixin:
             structure = self._structure_for_phase(object_id)
             if structure is not None:
                 structure.name = new_name
+        elif object_type == "series":
+            current = next((series for series in self.project.series if series.id == object_id), None)
+            if current is None:
+                return
+            current.name = new_name
         self.project.touch()
         self.tree.set_project(self.project)
         self.tree.select_object(object_type, object_id)
@@ -111,6 +150,9 @@ class PhaseFinderProjectTreeActionsMixin:
         self._refresh_observed_pattern_plot()
 
     def _delete_project_object(self, object_type: str, object_id: str) -> None:
+        if object_type == "series":
+            self._delete_project_series(object_id)
+            return
         if object_type not in {"pattern", "phase"}:
             return
         if object_type == "pattern":
@@ -132,6 +174,7 @@ class PhaseFinderProjectTreeActionsMixin:
             return
         if object_type == "pattern":
             self.project.patterns = [pattern for pattern in self.project.patterns if pattern.id != object_id]
+            self.project.remove_object_from_series("pattern", object_id)
             if hasattr(self, "profile_states"):
                 self.profile_states.pop(object_id, None)
             if hasattr(self, "_invalidate_match_profile_cache"):
@@ -140,6 +183,7 @@ class PhaseFinderProjectTreeActionsMixin:
             phase = current
             structure_id = phase.structure_id
             self.project.phases = [item for item in self.project.phases if item.id != object_id]
+            self.project.remove_object_from_series("phase", object_id)
             self.project.structures = [
                 structure
                 for structure in self.project.structures
@@ -170,6 +214,31 @@ class PhaseFinderProjectTreeActionsMixin:
             self._recalculate_match_profile()
         else:
             self._update_match_table()
+
+    def _delete_project_series(self, series_id: str) -> None:
+        series = next((item for item in self.project.series if item.id == series_id), None)
+        if series is None:
+            return
+        item_count = len(series.pattern_ids) + len(series.phase_ids)
+        item_label = "item" if item_count == 1 else "items"
+        detail = (
+            f"\n\n{item_count} {item_label} will remain in the project under 'No series'."
+            if item_count
+            else ""
+        )
+        answer = QMessageBox.question(
+            self,
+            "Delete series",
+            f"Delete series '{series.name}'?{detail}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.project.series = [item for item in self.project.series if item.id != series_id]
+        self.project.touch()
+        self.tree.set_project(self.project)
+        self.project_changed.emit()
 
     def _refresh_project_phase_candidates(self) -> None:
         if not hasattr(self, "candidate_table"):

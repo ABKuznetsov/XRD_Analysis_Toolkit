@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(slots=True)
@@ -9,6 +10,7 @@ class FinderProjectState:
     checked_phase_ids: list[str] = field(default_factory=list)
     current_object_type: str = ""
     current_object_id: str = ""
+    tree_expansion_state: dict[str, bool] = field(default_factory=dict)
     show_all_selected_patterns: bool = False
     pattern_stack_offset_percent: int = 10
     normalize_observed_patterns: bool = False
@@ -24,6 +26,11 @@ class FinderProjectState:
     match_zero_shifts: dict[str, float] = field(default_factory=dict)
     match_cell_scales: dict[str, float] = field(default_factory=dict)
     match_alignment_scores: dict[str, str] = field(default_factory=dict)
+    profile_states: dict[str, dict[str, Any]] = field(default_factory=dict)
+    phase_colors: dict[str, str] = field(default_factory=dict)
+    observed_pattern_colors: dict[str, str] = field(default_factory=dict)
+    plot_view_settings: dict[str, Any] = field(default_factory=dict)
+    plot_view_range: list[list[float]] = field(default_factory=list)
     selected_elements: list[str] = field(default_factory=list)
     selected_element_order: list[str] = field(default_factory=list)
     element_states: dict[str, str] = field(default_factory=dict)

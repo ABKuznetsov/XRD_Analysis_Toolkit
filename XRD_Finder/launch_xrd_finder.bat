@@ -11,6 +11,10 @@ if not exist "%PREVIEW_SCRIPT%" (
     exit /b 1
 )
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PREVIEW_SCRIPT%" -AppId xrd_finder
+if "%~1"=="" (
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PREVIEW_SCRIPT%" -AppId xrd_finder
+) else (
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PREVIEW_SCRIPT%" -AppId xrd_finder -ProjectPath "%~1"
+)
 endlocal
 exit /b %ERRORLEVEL%

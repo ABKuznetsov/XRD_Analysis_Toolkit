@@ -210,6 +210,7 @@ class CandidateTableWidget(QTableWidget):
 class SelectedCandidatesTableWidget(QTableWidget):
     rowClicked = Signal(int)
     contextRequested = Signal(QPoint)
+    phaseNameEdited = Signal(int, str)
 
     HEADERS = ["Color", "Phase", "Fit / Peaks", "Quant. (%)", "I/Ic"]
 
@@ -218,11 +219,15 @@ class SelectedCandidatesTableWidget(QTableWidget):
         self.setToolTip(
             "Selected phases\n"
             "Single click: show the calculated profile and markers for this phase.\n"
-            "Right click: change color, export CIF, remove phase, or clear the list."
+            "Double click the Phase cell to rename the phase for tables and figures.\n"
+            "Right click: rename, change color, export CIF, remove phase, or clear the list."
         )
         self.setHorizontalHeaderLabels(self.HEADERS)
         self.verticalHeader().setVisible(False)
-        self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked
+            | QTableWidget.EditTrigger.EditKeyPressed
+        )
         self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.setAlternatingRowColors(True)
         self.setMinimumHeight(190)
@@ -232,6 +237,7 @@ class SelectedCandidatesTableWidget(QTableWidget):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._emit_context_request)
         self.cellClicked.connect(self._emit_row_clicked)
+        self.itemChanged.connect(self._emit_phase_name_edited)
         self._resize_columns()
         self.horizontalHeader().setToolTip(
             "Selected phases included in the calculated total profile."
@@ -253,6 +259,8 @@ class SelectedCandidatesTableWidget(QTableWidget):
                         if color.isValid():
                             item.setBackground(color)
                             item.setForeground(QColor("#ffffff" if color.lightness() < 150 else "#111111"))
+                    if column != 1:
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     self.setItem(row_index, column, item)
             self._resize_columns()
         finally:
@@ -270,6 +278,18 @@ class SelectedCandidatesTableWidget(QTableWidget):
         if row >= 0:
             self.selectRow(row)
         self.contextRequested.emit(self.viewport().mapToGlobal(point))
+
+    def _emit_phase_name_edited(self, item: QTableWidgetItem) -> None:
+        if item.column() != 1:
+            return
+        self.phaseNameEdited.emit(item.row(), item.text().strip())
+
+    def edit_phase_name(self, row: int) -> None:
+        item = self.item(row, 1)
+        if item is None:
+            return
+        self.setCurrentItem(item)
+        self.editItem(item)
 
     def _resize_columns(self) -> None:
         header = self.horizontalHeader()

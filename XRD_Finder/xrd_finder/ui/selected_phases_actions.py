@@ -22,15 +22,78 @@ class PhaseFinderSelectedPhasesActionsMixin:
         has_structure = self._candidate_has_structure(candidate)
         menu = QMenu(self)
         recalculate_action = menu.addAction("Recalculate selected profile", self._recalculate_match_profile)
+        rename_action = menu.addAction("Rename phase...", self._edit_selected_match_phase_name)
         menu.addAction("Change color...", self._change_selected_match_color)
         export_action = menu.addAction("Export phase CIF...", self._export_match_table_cif)
         for action in (recalculate_action, export_action):
             action.setEnabled(has_structure)
             if not has_structure:
                 action.setToolTip("This selected item is a reference pattern; no CIF structure is available.")
+        rename_action.setEnabled(candidate is not None)
         menu.addAction("Remove selected phase", self._remove_selected_match_candidate)
         menu.addAction("Clear working set", self._clear_match_list)
         menu.exec(global_point)
+
+    def _edit_selected_match_phase_name(self) -> None:
+        row = self.match_table.currentRow()
+        if 0 <= row < len(self.match_candidates):
+            self.match_table.edit_phase_name(row)
+
+    def _rename_selected_match_phase(self, row: int, name: str) -> None:
+        if row < 0 or row >= len(self.match_candidates):
+            return
+        candidate = self.match_candidates[row]
+        clean_name = str(name).strip()
+        if not clean_name:
+            self._update_match_table()
+            return
+        if clean_name == self._candidate_phase_name(candidate):
+            return
+
+        candidate["_DisplayName"] = clean_name
+        key = self._candidate_key(candidate)
+        # A phase keeps one display name across all observed patterns, just as
+        # it keeps one project-wide color. This updates inactive profile states
+        # so their local legends change immediately in multi-pattern mode.
+        for state in getattr(self, "profile_states", {}).values():
+            state_candidates = state.get("candidates", []) if isinstance(state, dict) else []
+            if not isinstance(state_candidates, list):
+                continue
+            for state_candidate in state_candidates:
+                if isinstance(state_candidate, dict) and self._candidate_key(state_candidate) == key:
+                    state_candidate["_DisplayName"] = clean_name
+        structure = self.match_structures.get(key)
+        if structure is not None:
+            structure.name = clean_name
+
+        try:
+            source_path = str(self._candidate_cif_path(candidate))
+        except Exception:
+            source_path = ""
+        project_changed = False
+        if source_path:
+            for phase in self.project.phases:
+                if phase.source_path != source_path:
+                    continue
+                phase.name = clean_name
+                project_structure = next(
+                    (item for item in self.project.structures if item.id == phase.structure_id),
+                    None,
+                )
+                if project_structure is not None:
+                    project_structure.name = clean_name
+                project_changed = True
+
+        if hasattr(self, "_save_active_profile_state"):
+            self._save_active_profile_state()
+        if project_changed:
+            active_pattern_id = self._current_profile_pattern_id() if hasattr(self, "_current_profile_pattern_id") else None
+            self.project.touch()
+            self.tree.set_project(self.project)
+            if active_pattern_id:
+                self.tree.select_object("pattern", active_pattern_id)
+            self.project_changed.emit()
+        self._recalculate_match_profile(auto_zoom=False)
 
     def _add_selected_candidate_to_match_list(self) -> None:
         candidate = self._selected_candidate_row()

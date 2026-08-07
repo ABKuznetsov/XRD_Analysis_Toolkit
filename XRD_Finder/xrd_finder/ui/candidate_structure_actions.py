@@ -9,14 +9,7 @@ from xrd_finder.io.cif_loader import create_phase_from_cif
 
 class PhaseFinderCandidateStructureActionsMixin:
     def _phase_legend_label(self, candidate: dict[str, str]) -> str:
-        phase = self._candidate_phase_name(candidate) or candidate.get("Entry", "") or "phase"
-        source = self._candidate_source(candidate)
-        entry = candidate.get("Entry", "")
-        if source and entry:
-            return f"{phase} {source}#{entry}"
-        if entry:
-            return f"{phase} #{entry}"
-        return phase
+        return self._candidate_phase_name(candidate) or candidate.get("Entry", "") or "phase"
 
     def _selected_candidate_row(self) -> dict[str, str] | None:
         return self.candidate_table.selected_row_values()
@@ -55,7 +48,11 @@ class PhaseFinderCandidateStructureActionsMixin:
         return candidate.get("Source", "") or candidate.get("Qual.", "")
 
     def _candidate_phase_name(self, candidate: dict[str, str]) -> str:
-        return candidate.get("Phase", "") or candidate.get("Candidate phase", "")
+        return (
+            candidate.get("_DisplayName", "")
+            or candidate.get("Phase", "")
+            or candidate.get("Candidate phase", "")
+        )
 
     def _candidate_cif_path(self, candidate: dict[str, str]) -> Path:
         source = self._candidate_source(candidate)
@@ -238,12 +235,17 @@ class PhaseFinderCandidateStructureActionsMixin:
     def _add_candidate_to_project(self, candidate: dict[str, str]):
         cif_path = self._candidate_cif_path(candidate)
         source_path = str(cif_path)
+        phase_name = self._candidate_phase_name(candidate)
         for phase in self.project.phases:
             if phase.source_path == source_path:
                 structure = next((item for item in self.project.structures if item.id == phase.structure_id), None)
+                if phase_name:
+                    phase.name = phase_name
+                    if structure is not None:
+                        structure.name = phase_name
+                    self.project.touch()
                 return phase, structure
         phase, structure = create_phase_from_cif(cif_path)
-        phase_name = self._candidate_phase_name(candidate)
         if phase_name:
             phase.name = phase_name
             structure.name = phase_name
@@ -252,5 +254,9 @@ class PhaseFinderCandidateStructureActionsMixin:
             structure.formula = candidate["Formula"]
         self.project.phases.append(phase)
         self.project.structures.append(structure)
+        if hasattr(self, "_series_id_for_new_project_object"):
+            series_id = self._series_id_for_new_project_object()
+            if series_id:
+                self.project.assign_object_to_series("phase", phase.id, series_id)
         self.project.touch()
         return phase, structure

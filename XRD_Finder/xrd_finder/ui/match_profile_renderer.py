@@ -103,7 +103,7 @@ def draw_match_profile_result(
     match_plot,
     plot_layers: dict[str, list],
     show_all_selected_patterns: bool,
-    active_plot_context: dict[str, float],
+    active_plot_context: dict[str, object],
     pattern_id: str | None = None,
     phase_color: Callable[[dict[str, str], int], str],
     phase_legend_label: Callable[[dict[str, str]], str],
@@ -124,11 +124,33 @@ def draw_match_profile_result(
 ) -> None:
     style = style or PlotStyle()
     x = np.asarray(result.pattern_x, dtype=float)
-    background = np.asarray(result.background, dtype=float)
-    calculated_total = np.asarray(result.calculated_total, dtype=float)
-    observed_y = np.asarray(result.pattern_y, dtype=float)
-    observed_ymax = float(np.nanmax(result.pattern_y)) if result.pattern_y else 100.0
-    observed_ymin = float(np.nanmin(result.pattern_y)) if result.pattern_y else 0.0
+    result_observed_y = np.asarray(result.pattern_y, dtype=float)
+    finite_result_y = result_observed_y[np.isfinite(result_observed_y)]
+    source_min = float(np.nanmin(finite_result_y)) if finite_result_y.size else 0.0
+    source_max = float(np.nanmax(finite_result_y)) if finite_result_y.size else 1.0
+    try:
+        target_min = float(active_plot_context.get("raw_min", source_min))
+        target_max = float(active_plot_context.get("raw_max", source_max))
+    except (TypeError, ValueError):
+        target_min, target_max = source_min, source_max
+    source_span = source_max - source_min
+    target_span = target_max - target_min
+    if (
+        np.isfinite(source_span)
+        and np.isfinite(target_span)
+        and source_span > 1.0e-12
+        and target_span > 1.0e-12
+    ):
+        intensity_scale = target_span / source_span
+        intensity_intercept = target_min - source_min * intensity_scale
+    else:
+        intensity_scale = 1.0
+        intensity_intercept = 0.0
+    background = np.asarray(result.background, dtype=float) * intensity_scale + intensity_intercept
+    calculated_total = np.asarray(result.calculated_total, dtype=float) * intensity_scale + intensity_intercept
+    observed_y = result_observed_y * intensity_scale + intensity_intercept
+    observed_ymax = float(np.nanmax(observed_y)) if observed_y.size else 100.0
+    observed_ymin = float(np.nanmin(observed_y)) if observed_y.size else 0.0
     active_plot_offset = float(active_plot_context.get("offset", 0.0))
     observed_y_plot = observed_y + active_plot_offset
     observed_ymin_plot = observed_ymin + active_plot_offset
@@ -158,7 +180,7 @@ def draw_match_profile_result(
         color = phase_color(candidate, index)
         phase_label = phase_legend_label(candidate)
         phase_assignment_styles[str(candidate_result.candidate_key)] = (color, phase_label)
-        profile = np.asarray(candidate_result.profile, dtype=float)
+        profile = np.asarray(candidate_result.profile, dtype=float) * intensity_scale
         match_scales[key] = float(candidate_result.scale)
         match_quantities[key] = float(candidate_result.quantity_percent)
         match_iic[key] = _candidate_iic_value(candidate, estimate_candidate_iic)
@@ -307,10 +329,24 @@ def draw_match_profile_result(
         )
         _tag_plot_item(difference_item, pattern_id)
         plot_layers["difference"].append(difference_item)
+    marker_observed_y_plot = observed_y_plot
+    try:
+        display_x = np.asarray(active_plot_context.get("display_x", []), dtype=float)
+        display_y = np.asarray(active_plot_context.get("display_y", []), dtype=float)
+        display_mask = np.isfinite(display_x) & np.isfinite(display_y)
+        display_x = display_x[display_mask]
+        display_y = display_y[display_mask]
+        if display_x.size >= 2 and display_x.size == display_y.size:
+            order = np.argsort(display_x)
+            display_x = display_x[order]
+            display_y = display_y[order]
+            marker_observed_y_plot = np.interp(x, display_x, display_y)
+    except (TypeError, ValueError):
+        marker_observed_y_plot = observed_y_plot
     marker_layer_counts = {layer: len(plot_layers.get(layer, [])) for layer in ("coverage_markers", "peak_labels", "unknown_peaks")}
     explained, total_observed = add_peak_coverage_markers(
         x,
-        observed_y_plot,
+        marker_observed_y_plot,
         np.clip(observed_y - background, 0.0, None),
         phase_peak_sets,
         getattr(result, "observed_peaks", []),
