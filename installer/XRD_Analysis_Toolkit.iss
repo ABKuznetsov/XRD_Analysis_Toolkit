@@ -1,5 +1,5 @@
 ﻿#define MyAppName "XRD Phase Finder"
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.3.1"
 #define MyAppPublisher "ABKuznetsov"
 #define MyAppURL "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit"
 #define MyAppExeName "launch_xrd_finder_silent.vbs"
@@ -41,7 +41,7 @@ Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription:
 Name: "setupenv"; Description: "Prepare shared Sci Python environment after install"; GroupDescription: "Environment:"; Flags: checkedonce
 
 [Files]
-Source: "..\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "installer\*,.git\*,.venv\*,.agents\*,.codex\*,__pycache__\*,*.pyc,*.pyo,*.log,*.flag,*.signal,.DS_Store,.ruff_cache\*,.pytest_cache\*,build\*,dist\*,xrd_manager_data\*,diagnostics_runtime\*,benchmark_data\*,document_sync\*,document_work\*,tmp\*,docx_render_check\*,render_check_50case\*,docs\superpowers\*,XRD_Finder\data\*,XRD_Finder\tests\*,XRD_Finder\xrd_analysis_toolkit.egg-info\*,scripts\add_cod_targets_to_cache.py,scripts\evaluate_realistic_xrd_gain.py,scripts\evaluate_realistic_xrd_match.py,scripts\generate_realistic_xrd_gain_csv.py,scripts\inspect_download_zips.py,scripts\rruff_benchmark_probe.py,scripts\run_xrd_benchmark_20.py,scripts\summarize_realistic_xrd_gain.py,scripts\update_phase_finder_article.py"
+Source: "..\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "installer\*,.git\*,.venv\*,.agents\*,.codex\*,.worktrees\*,__pycache__\*,*.pyc,*.pyo,*.log,*.flag,*.signal,.DS_Store,.ruff_cache\*,.pytest_cache\*,build\*,dist\*,xrd_manager_data\*,diagnostics_runtime\*,benchmark_data\*,document_sync\*,document_work\*,tmp\*,docx_render_check\*,render_check_50case\*,docs\superpowers\*,XRD_Finder\data\*,XRD_Finder\tests\*,XRD_Finder\xrd_analysis_toolkit.egg-info\*,scripts\add_cod_targets_to_cache.py,scripts\evaluate_realistic_xrd_gain.py,scripts\evaluate_realistic_xrd_match.py,scripts\generate_realistic_xrd_gain_csv.py,scripts\inspect_download_zips.py,scripts\rruff_benchmark_probe.py,scripts\run_xrd_benchmark_20.py,scripts\summarize_realistic_xrd_gain.py,scripts\update_phase_finder_article.py"
 
 [Icons]
 Name: "{group}\XRD Phase Finder"; Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\XRD_Finder\launch_xrd_finder_silent.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\XRD_Finder\icon.ico"

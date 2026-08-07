@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.3.1 - 2026-08-07
+
+### Added
+
+- Embedded CIF data for every phase used by Match, Gain or per-pattern assignments directly in portable `.xpff` projects.
+- Restored missing embedded phases into the local user library when a project is opened on another computer.
+
+### Changed
+
+- Stored a shared phase only once when it is used by several XRD patterns.
+- Preferred the exact embedded CIF for project profiles, markers and derived phase data.
+- Kept existing local phase records unchanged when their source and entry keys already exist.
+
+### Fixed
+
+- Preserved phase markers and editable phase assignments when transferring a project to a computer without the original user CIF files.
+
 ## 1.3.0 - 2026-08-07
 
 ### Added
@@ -203,7 +220,6 @@
 - `XRD_Finder/xrd_finder/ui/analysis_windows.py` is still large and should be split further before adding batch-processing workflows.
 - Quantification and I/Ic values are practical estimates for phase identification, not a replacement for full-profile refinement.
 - Large COD/RRUFF databases are intentionally user-managed and are not bundled in the release.
-
 
 
 
