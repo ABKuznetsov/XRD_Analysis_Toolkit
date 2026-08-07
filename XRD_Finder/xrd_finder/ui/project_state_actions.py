@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import asdict, fields
+from pathlib import Path
 
 from xrd_finder.core.finder_state import FinderProjectState
 from xrd_finder.io.cif_loader import create_phase_from_cif
@@ -10,6 +11,54 @@ from xrd_finder.ui.plot_view_settings import PlotViewSettings
 
 
 class PhaseFinderProjectStateActionsMixin:
+    def _collect_project_candidate_cif_paths(self) -> dict[str, str]:
+        """Resolve one readable local CIF path for every saved candidate key."""
+        candidates = list(self.match_candidates)
+        for profile_state in self.profile_states.values():
+            if isinstance(profile_state, dict):
+                candidates.extend(profile_state.get("candidates", []) or [])
+
+        existing_paths = getattr(self.project.finder_state, "candidate_cif_paths", {}) or {}
+        candidate_paths: dict[str, str] = {}
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            source = str(candidate.get("Source", "") or candidate.get("Qual.", "")).strip().upper()
+            entry = str(candidate.get("Entry", "")).strip()
+            if source not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"} or not entry:
+                continue
+            candidate_key = self._candidate_key(candidate)
+            if candidate_key in candidate_paths:
+                continue
+
+            local_path = self._candidate_local_cif_path(candidate)
+            possible_paths = (local_path, existing_paths.get(candidate_key))
+            for possible_path in possible_paths:
+                if possible_path is None:
+                    continue
+                path = Path(possible_path)
+                try:
+                    with path.open("rb"):
+                        pass
+                except OSError:
+                    continue
+                candidate_paths[candidate_key] = str(path)
+                break
+            else:
+                display_name = str(
+                    candidate.get("_DisplayName", "")
+                    or candidate.get("Phase", "")
+                    or candidate.get("Candidate phase", "")
+                    or candidate.get("Name", "")
+                    or candidate.get("Formula", "")
+                    or entry
+                )
+                raise ValueError(
+                    f"Cannot save CIF asset for phase {display_name!r} ({source}:{entry}): "
+                    "no readable local CIF is available."
+                )
+        return candidate_paths
+
     def _sync_finder_state_to_project(self) -> None:
         if not hasattr(self, "candidate_table"):
             return
@@ -42,6 +91,7 @@ class PhaseFinderProjectStateActionsMixin:
             match_zero_shifts={str(key): float(value) for key, value in self.match_zero_shifts.items()},
             match_cell_scales={str(key): float(value) for key, value in self.match_cell_scales.items()},
             match_alignment_scores={str(key): str(value) for key, value in self.match_alignment_scores.items()},
+            candidate_cif_paths=self._collect_project_candidate_cif_paths(),
             profile_states=deepcopy(self.profile_states),
             phase_colors={str(key): str(value) for key, value in self.phase_colors.items()},
             observed_pattern_colors={str(key): str(value) for key, value in self.observed_pattern_colors.items()},
@@ -66,6 +116,8 @@ class PhaseFinderProjectStateActionsMixin:
         state = getattr(self.project, "finder_state", None)
         if state is None:
             return
+        self._project_restore_warnings: list[str] = []
+        self._install_embedded_candidate_cifs(state)
         self.profile_states = deepcopy(getattr(state, "profile_states", {}) or {})
         self.phase_colors = dict(getattr(state, "phase_colors", {}) or {})
         self.observed_pattern_colors = dict(getattr(state, "observed_pattern_colors", {}) or {})
@@ -90,7 +142,11 @@ class PhaseFinderProjectStateActionsMixin:
         if state.candidate_rows:
             self._set_candidate_rows(self._candidate_state_rows(state.candidate_rows))
             if 0 <= state.candidate_current_row < self.candidate_table.rowCount():
-                self.candidate_table.selectRow(state.candidate_current_row)
+                previous_block_state = self.candidate_table.blockSignals(True)
+                try:
+                    self.candidate_table.selectRow(state.candidate_current_row)
+                finally:
+                    self.candidate_table.blockSignals(previous_block_state)
         self._restore_match_state(state)
         for index in range(self.right_tabs.count()):
             if self.right_tabs.tabText(index) == state.right_tab:
@@ -98,8 +154,13 @@ class PhaseFinderProjectStateActionsMixin:
                 break
         self._set_grid_visible(self.grid_visible)
         self._refresh_observed_pattern_plot()
-        if self.match_candidates and self._match_candidates_have_structures():
-            self._recalculate_match_profile(auto_zoom=False)
+        if self.match_candidates:
+            previous_network_suppression = bool(getattr(self, "_suppress_candidate_network", False))
+            self._suppress_candidate_network = True
+            try:
+                self._recalculate_match_profile(auto_zoom=False)
+            finally:
+                self._suppress_candidate_network = previous_network_suppression
         else:
             self._update_match_table()
         saved_range = getattr(state, "plot_view_range", []) or []
@@ -114,6 +175,26 @@ class PhaseFinderProjectStateActionsMixin:
                     (float(saved_range[1][0]), float(saved_range[1][1])),
                 )
             )
+        if self._project_restore_warnings:
+            show_warnings = getattr(self, "_show_project_load_warnings", None)
+            if callable(show_warnings):
+                show_warnings(list(self._project_restore_warnings))
+
+    def _install_embedded_candidate_cifs(self, state: FinderProjectState) -> None:
+        candidate_paths = getattr(state, "candidate_cif_paths", {}) or {}
+        for candidate_key, candidate_path in candidate_paths.items():
+            source, separator, entry_id = str(candidate_key).partition(":")
+            path = Path(candidate_path)
+            if not separator or not source or not entry_id or not path.is_file():
+                continue
+            try:
+                if self.local_phase_cache.get(source, entry_id) is None:
+                    self.local_phase_cache.install_embedded_cif(path, source, entry_id)
+            except Exception as exc:
+                self._project_restore_warnings.append(
+                    f"Could not install embedded CIF {source}:{entry_id} in the local phase library; "
+                    f"the project will keep using its embedded copy: {exc}"
+                )
 
     def _restore_project_plot_view_settings(self, stored: dict) -> None:
         if not isinstance(stored, dict) or not stored:
@@ -167,17 +248,42 @@ class PhaseFinderProjectStateActionsMixin:
         for candidate in self.match_candidates:
             candidate_key = self._candidate_key(candidate)
             structure = None
+            restore_error: Exception | None = None
+            used_saved_structure = False
             try:
                 local_path = self._candidate_local_cif_path(candidate)
-                if local_path is not None:
-                    _phase, structure = create_phase_from_cif(local_path)
-                    phase_name = self._candidate_phase_name(candidate)
-                    if phase_name:
-                        structure.name = phase_name
-            except Exception:
+                if local_path is None:
+                    raise FileNotFoundError("no readable CIF is available")
+                _phase, structure = create_phase_from_cif(local_path)
+                phase_name = self._candidate_phase_name(candidate)
+                if phase_name:
+                    structure.name = phase_name
+            except Exception as exc:
+                restore_error = exc
                 structure = None
             if structure is None:
                 structure = stored_structures.get(candidate_key)
+                used_saved_structure = structure is not None
+            if restore_error is not None:
+                source = str(candidate.get("Source", "") or candidate.get("Qual.", "") or "unknown")
+                entry_id = str(candidate.get("Entry", "") or "unknown")
+                display_name = str(
+                    candidate.get("_DisplayName", "")
+                    or candidate.get("Phase", "")
+                    or candidate.get("Candidate phase", "")
+                    or candidate.get("Name", "")
+                    or candidate.get("Formula", "")
+                    or entry_id
+                )
+                details = str(restore_error).strip() or type(restore_error).__name__
+                if used_saved_structure:
+                    warning = (
+                        f"Could not restore CIF for phase {display_name!r} ({source}:{entry_id}); "
+                        f"using saved structure only: {details}"
+                    )
+                else:
+                    warning = f"Could not restore phase {display_name!r} ({source}:{entry_id}): {details}"
+                self._project_restore_warnings.append(warning)
             if structure is not None:
                 self.match_structures[candidate_key] = structure
         self._update_match_table()

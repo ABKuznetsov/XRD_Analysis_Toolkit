@@ -236,6 +236,8 @@ class PhaseFinderCandidateInfoActionsMixin:
             candidate["Match (%)"] = f"{probability:.0f}%"
 
     def _enrich_candidate_from_local_cache(self, candidate: dict[str, str]) -> bool:
+        if self._candidate_embedded_cif_path(candidate) is not None:
+            return False
         source = self._candidate_source(candidate)
         entry_id = candidate.get("Entry", "")
         entry = self.local_phase_cache.get(source, entry_id) if source and entry_id else None
@@ -367,6 +369,8 @@ class PhaseFinderCandidateInfoActionsMixin:
         return peaks
 
     def _cached_diffraction_rows_for_candidate(self, candidate: dict[str, str]) -> list[list[str]]:
+        if self._candidate_embedded_cif_path(candidate) is not None:
+            return []
         source = self._candidate_source(candidate)
         entry_id = candidate.get("Entry", "")
         if not source or not entry_id:

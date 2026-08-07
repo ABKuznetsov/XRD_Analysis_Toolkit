@@ -79,6 +79,22 @@ def _save_portable_project(project: Project, target: Path) -> None:
             _embed_collection_sources(archive, data.get("patterns", []), "xrd", ".xy", file_members)
             _embed_collection_sources(archive, data.get("phases", []), "cif", ".cif", file_members)
             _embed_collection_sources(archive, data.get("structures", []), "cif", ".cif", file_members)
+            finder_state = data.get("finder_state", {})
+            if isinstance(finder_state, dict):
+                candidate_cif_paths = finder_state.get("candidate_cif_paths")
+                if isinstance(candidate_cif_paths, dict):
+                    finder_state["candidate_cif_paths"] = {
+                        key: value
+                        for key, value in candidate_cif_paths.items()
+                        if str(key) in _referenced_candidate_keys(finder_state)
+                    }
+                _embed_path_mapping(
+                    archive,
+                    finder_state.get("candidate_cif_paths"),
+                    "candidates",
+                    ".cif",
+                    file_members,
+                )
             archive.writestr(
                 PORTABLE_MANIFEST_NAME,
                 json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8"),
@@ -104,20 +120,89 @@ def _embed_collection_sources(
         if not raw_path:
             continue
         source = Path(raw_path)
+        record_name = str(record.get("name", "") or record.get("id", "") or f"item-{index + 1}")
         if not source.is_file():
-            continue
-        try:
-            source_key = str(source.resolve()).casefold()
-        except OSError:
-            source_key = str(source.absolute()).casefold()
+            raise ValueError(
+                f"Cannot save {folder.upper()} asset for {record_name!r}: "
+                f"source file is absent or unreadable: {raw_path}"
+            )
+        source_key = _source_path_key(source)
         member = file_members.get(source_key)
         if member is None:
             record_id = _safe_member_stem(str(record.get("id", "") or f"item-{index + 1}"))
             suffix = source.suffix.lower() or default_suffix
             member = f"assets/{folder}/{record_id}{suffix}"
-            archive.write(source, member)
+            try:
+                archive.write(source, member)
+            except OSError as exc:
+                raise ValueError(
+                    f"Cannot save {folder.upper()} asset for {record_name!r}: "
+                    f"source file is absent or unreadable: {raw_path}"
+                ) from exc
             file_members[source_key] = member
         record["source_path"] = member
+
+
+def _embed_path_mapping(
+    archive: zipfile.ZipFile,
+    paths: Any,
+    folder: str,
+    default_suffix: str,
+    file_members: dict[str, str],
+) -> None:
+    """Rewrite local mapping values to deduplicated ZIP member paths."""
+    if not isinstance(paths, dict):
+        return
+    for key, raw_path in paths.items():
+        source_path = str(raw_path or "").strip()
+        source = Path(source_path)
+        if not source_path or not source.is_file():
+            raise ValueError(f"Candidate CIF for {key!r} is absent or unreadable: {source_path}")
+        source_key = _source_path_key(source)
+        member = file_members.get(source_key)
+        if member is None:
+            suffix = source.suffix.lower() or default_suffix
+            key_text = str(key)
+            key_digest = hashlib.sha256(key_text.encode("utf-8", errors="surrogatepass")).hexdigest()[:12]
+            member = f"assets/{folder}/{_safe_member_stem(key_text)}-{key_digest}{suffix}"
+            try:
+                archive.write(source, member)
+            except OSError as exc:
+                raise ValueError(f"Candidate CIF for {key!r} is absent or unreadable: {source_path}") from exc
+            file_members[source_key] = member
+        paths[key] = member
+
+
+def _source_path_key(source: Path) -> str:
+    """Return a resolved deduplication key using the host filesystem's case rules."""
+    try:
+        resolved = source.resolve()
+    except OSError:
+        resolved = source.absolute()
+    return os.path.normcase(str(resolved))
+
+
+def _referenced_candidate_keys(finder_state: dict[str, Any]) -> set[str]:
+    candidate_records: list[Any] = []
+    match_candidates = finder_state.get("match_candidates", [])
+    if isinstance(match_candidates, list):
+        candidate_records.extend(match_candidates)
+    profile_states = finder_state.get("profile_states", {})
+    if isinstance(profile_states, dict):
+        for state in profile_states.values():
+            if isinstance(state, dict):
+                candidates = state.get("candidates", [])
+                if isinstance(candidates, list):
+                    candidate_records.extend(candidates)
+    keys: set[str] = set()
+    for candidate in candidate_records:
+        if not isinstance(candidate, dict):
+            continue
+        source = str(candidate.get("Source", "") or candidate.get("Qual.", ""))
+        entry = str(candidate.get("Entry", ""))
+        if source or entry:
+            keys.add(f"{source}:{entry}")
+    return keys
 
 
 def _safe_member_stem(value: str) -> str:
@@ -141,6 +226,11 @@ def _load_portable_project(source: Path) -> Project:
                 continue
             extracted = _extract_portable_member(archive, member, extraction_root)
             item.source_path = str(extracted)
+        project.finder_state.candidate_cif_paths = _extract_path_mapping(
+            archive,
+            project.finder_state.candidate_cif_paths,
+            extraction_root,
+        )
     project.root_path = str(source)
     project.prune_series_memberships()
     return project
@@ -155,11 +245,39 @@ def _portable_extraction_root(source: Path) -> Path:
     return root
 
 
+def _extract_path_mapping(
+    archive: zipfile.ZipFile,
+    paths: dict[str, str],
+    extraction_root: Path,
+) -> dict[str, str]:
+    """Return candidate keys mapped to project-private extracted paths."""
+    if not isinstance(paths, dict):
+        return {}
+    extracted_paths: dict[str, str] = {}
+    for key, member in paths.items():
+        member_path = str(member or "").strip()
+        if not member_path:
+            continue
+        extracted_paths[str(key)] = str(_extract_portable_member(archive, member_path, extraction_root))
+    return extracted_paths
+
+
 def _extract_portable_member(archive: zipfile.ZipFile, member: str, root: Path) -> Path:
+    raw_parts = member.split("/")
     member_path = PurePosixPath(member)
-    if member_path.is_absolute() or ".." in member_path.parts or not member_path.parts:
+    if (
+        not member.startswith("assets/")
+        or "\\" in member
+        or ":" in member
+        or any(part in {"", ".", ".."} for part in raw_parts)
+        or member_path.is_absolute()
+        or not member_path.parts
+    ):
         raise ValueError(f"Unsafe file path in {PORTABLE_PROJECT_TYPE_NAME}: {member}")
-    target = root.joinpath(*member_path.parts)
+    resolved_root = root.resolve()
+    target = resolved_root.joinpath(*member_path.parts).resolve()
+    if target == resolved_root or resolved_root not in target.parents:
+        raise ValueError(f"Unsafe file path in {PORTABLE_PROJECT_TYPE_NAME}: {member}")
     target.parent.mkdir(parents=True, exist_ok=True)
     with archive.open(member, mode="r") as source_stream, target.open("wb") as target_stream:
         while True:

@@ -26,6 +26,7 @@ class FinderProjectState:
     match_zero_shifts: dict[str, float] = field(default_factory=dict)
     match_cell_scales: dict[str, float] = field(default_factory=dict)
     match_alignment_scores: dict[str, str] = field(default_factory=dict)
+    candidate_cif_paths: dict[str, str] = field(default_factory=dict)
     profile_states: dict[str, dict[str, Any]] = field(default_factory=dict)
     phase_colors: dict[str, str] = field(default_factory=dict)
     observed_pattern_colors: dict[str, str] = field(default_factory=dict)
