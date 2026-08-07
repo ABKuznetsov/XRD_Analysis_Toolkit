@@ -8,7 +8,7 @@ An `.xpff` project must reopen on another computer with the same selected phases
 
 The container stores the original CIF for every CIF-backed phase used by any saved pattern profile. This includes USER, COD, MP, CCDC, AFLOW and OQMD candidates. It does not embed every search result: only candidates present in a saved Match/Gain working set or linked project phase are included.
 
-Embedded phase assets remain private to the opened project. Loading an `.xpff` file must not add them automatically to the global USER library or make them appear in unrelated projects.
+Embedded phase assets are authoritative for the opened project. When the same source/entry key is absent from the local phase library, loading an `.xpff` file also copies and indexes that CIF locally. Existing local entries are not overwritten.
 
 ## Data Model
 
@@ -38,16 +38,17 @@ If a selected phase has no readable CIF, saving must report the phase name and s
 
 1. Validate archive member paths with the existing traversal protection.
 2. Extract candidate CIF assets into the private temporary directory derived from the `.xpff` identity.
-3. Rewrite the candidate-path mapping to the extracted files.
-4. Restore Match/Gain candidates, colors, names, quantities and per-pattern links.
-5. Resolve CIF paths from the project mapping before consulting the machine-wide cache.
-6. Parse the extracted CIF files and recalculate phase profiles and markers through the existing Finder pipeline.
+3. For every missing source/entry key, copy and index the extracted CIF in the local phase library without replacing an existing entry.
+4. Rewrite the candidate-path mapping to the extracted files.
+5. Restore Match/Gain candidates, colors, names, quantities and per-pattern links.
+6. Resolve CIF paths from the project mapping before consulting the machine-wide cache.
+7. Parse the extracted CIF files and recalculate phase profiles and markers through the existing Finder pipeline.
 
 For older `.xpff` files without embedded candidate assets, loading remains backward compatible. Locally cached phases are restored as before. Database-backed missing phases may use the existing download path when the user activates or recalculates them; private USER CIF files that were never embedded must be reported as unavailable.
 
 ## Editing Behavior
 
-Restored phases behave like phases selected on the original computer. The user can rename them, change colors, remove them, recalculate profiles and add other phases. These edits update project state and are saved into the next `.xpff` file. Embedded assets do not create permanent USER-library entries unless the user explicitly requests that action elsewhere.
+Restored phases behave like phases selected on the original computer. The user can rename them, change colors, remove them, recalculate profiles and add other phases. These edits update project state and are saved into the next `.xpff` file. A missing local-library phase is installed automatically from the embedded CIF under its original source/entry key; this does not add a node to the current project tree.
 
 ## Error Handling
 
@@ -62,7 +63,7 @@ Restored phases behave like phases selected on the original computer. The user c
 - Restore the working set with an empty simulated local cache and verify that a structure can be parsed for recalculation.
 - Verify one phase shared by several patterns is embedded once while every pattern restores its own fitted state and markers.
 - Verify multiple patterns and multiple sources use their own saved candidates while duplicate CIF paths are embedded once.
-- Verify that loading does not add embedded assets to the global USER library.
+- Verify that loading adds missing embedded assets to the local phase library once, preserves their source/entry identity, and does not overwrite existing entries.
 - Verify backward compatibility with an older `.xpff` lacking the new mapping.
 - Verify Save fails atomically and names the unresolved selected phase when its CIF is missing.
 

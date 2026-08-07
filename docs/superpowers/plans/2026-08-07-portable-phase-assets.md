@@ -2,15 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make every `.xpff` project self-contained: all CIF-backed phases used by Match/Gain are embedded once, restored on another computer, recalculated automatically, and remain editable without populating the global USER library.
+**Goal:** Make every `.xpff` project self-contained: all CIF-backed phases used by Match/Gain are embedded once, restored on another computer, recalculated automatically, remain editable, and are added to the local phase library when absent.
 
-**Architecture:** Extend `FinderProjectState` with a candidate-key-to-CIF-path map. During UI state synchronization, collect the unique candidates referenced by the active Match list and every per-pattern `profile_states[*].candidates`, resolve their local CIF files, and save those paths. The portable ZIP writer embeds and deduplicates the files under `assets/candidates/`; the loader extracts them to the existing project-private temporary directory. Candidate resolution prefers this project-private map, so the normal structure parser and profile renderer restore calculated curves and markers unchanged.
+**Architecture:** Extend `FinderProjectState` with a candidate-key-to-CIF-path map. During UI state synchronization, collect the unique candidates referenced by the active Match list and every per-pattern `profile_states[*].candidates`, resolve their local CIF files, and save those paths. The portable ZIP writer embeds and deduplicates the files under `assets/candidates/`; the loader extracts them to the existing project-private temporary directory. On project restoration, missing source/entry keys are copied into and indexed by the local phase library, while project calculations still prefer the embedded copy for reproducibility.
 
 **Tech Stack:** Python 3.11, dataclasses, `zipfile`, PySide6 UI mixins, `unittest`.
 
 ## Global Constraints
 
-- Do not add embedded candidates to `Project.phases`, `Project.structures`, the project tree, or the global USER cache.
+- Do not add embedded candidates to `Project.phases`, `Project.structures`, or the project tree. Add a phase to the local library only when its source/entry key is absent, and never overwrite an existing local entry.
 - Embed only CIF-backed candidates actually referenced by the saved Match/Gain working sets.
 - Store one CIF asset per unique candidate/source file even when the phase occurs in many patterns.
 - Preserve per-pattern candidate membership in `profile_states`; quantities and marker positions continue to be recalculated from the restored CIF and XRD data.
@@ -183,7 +183,9 @@ git commit -m "Save CIF assets for all used project phases"
 ### Task 3: Restore embedded CIFs before local/global caches
 
 **Files:**
+- Modify: `XRD_Finder/xrd_finder/services/local_phase_cache.py`
 - Modify: `XRD_Finder/xrd_finder/ui/candidate_structure_actions.py`
+- Modify: `XRD_Finder/xrd_finder/ui/project_state_actions.py`
 - Modify: `XRD_Finder/tests/test_portable_candidate_state.py`
 
 - [ ] **Step 1: Write failing resolution tests**
@@ -193,7 +195,9 @@ Using the same harness, assert that `_candidate_local_cif_path(candidate)`:
 - returns the embedded path from `project.finder_state.candidate_cif_paths` even when the local cache is empty;
 - prefers the embedded project copy over a different global cache copy;
 - ignores a missing embedded path and falls back to the existing cache/project-phase logic;
-- does not index or copy the embedded file into the global USER library.
+- copies and indexes an embedded phase in the local library when its source/entry key is absent;
+- preserves the original source/entry key and does not overwrite an existing local entry;
+- performs the import only once when one phase is shared by several patterns.
 
 - [ ] **Step 2: Run the focused test and verify RED**
 
@@ -207,7 +211,7 @@ Expected failure: current resolution checks the local cache first and never cons
 
 - [ ] **Step 3: Implement project-private resolution**
 
-At the start of `_candidate_local_cif_path()`, compute `_candidate_key(candidate)`, inspect `self.project.finder_state.candidate_cif_paths`, and return the mapped `Path` only when it is a file. Then retain all current USER/project-phase/database cache fallbacks unchanged.
+During project restoration, import every missing embedded candidate into the local phase library, preserving the candidate source and entry id. Add a focused cache helper that copies the CIF into a durable cache-owned path before indexing it; do not index the temporary extraction path directly. At the start of `_candidate_local_cif_path()`, compute `_candidate_key(candidate)`, inspect `self.project.finder_state.candidate_cif_paths`, and return the mapped `Path` when it is a file so the project uses its exact embedded asset. Then retain all current USER/project-phase/database cache fallbacks unchanged.
 
 Because `_restore_match_state()` already calls `_candidate_local_cif_path()`, parses the CIF with `create_phase_from_cif()`, and then invokes `_recalculate_match_profile()`, no separate marker restoration path is needed.
 
@@ -262,7 +266,8 @@ Open a saved `.xpff` in an isolated/empty local phase-cache setup and confirm:
 - the shared phase is available to every linked pattern;
 - calculated profiles and phase markers appear automatically;
 - renaming a phase remains possible;
-- the phase is not added to the global USER database or project tree unless the user explicitly requests it;
+- each missing embedded phase is added once to the local phase library without appearing in the project tree;
+- an existing local phase with the same source/entry key is not overwritten;
 - saving the reopened project again remains portable.
 
 - [ ] **Step 4: Review the diff for scope and compatibility**
@@ -273,7 +278,7 @@ Run:
 git diff origin/main HEAD -- XRD_Finder/xrd_finder/core/finder_state.py XRD_Finder/xrd_finder/io/project_io.py XRD_Finder/xrd_finder/ui/project_state_actions.py XRD_Finder/xrd_finder/ui/candidate_structure_actions.py XRD_Finder/tests/test_portable_project_io.py XRD_Finder/tests/test_portable_candidate_state.py
 ```
 
-Confirm there are no unrelated edits, no network access during Save, and no automatic USER-library mutation.
+Confirm there are no unrelated edits, no network access during Save or Load, no overwrite of existing local-library entries, and no automatic `Project.phases`, `Project.structures`, or tree mutation.
 
 - [ ] **Step 5: Record final verification evidence**
 
