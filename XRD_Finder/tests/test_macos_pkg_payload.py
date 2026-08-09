@@ -21,9 +21,12 @@ def test_macos_pkg_keeps_and_validates_required_finder_modules() -> None:
 def test_macos_pkg_excludes_local_development_artifacts() -> None:
     script = BUILD_SCRIPT.read_text(encoding="utf-8")
     excluded_paths = (
+        ".ruff_cache/",
         "PORTABLE_CHANGES.md",
         "PORTABLE_README.md",
+        "docs/superpowers/",
         "manuscript_work/",
+        "scripts/",
         "XRD_Finder/benchmark_results/",
         "XRD_Finder/requirements-dev.txt",
         "XRD_Finder/scripts/",

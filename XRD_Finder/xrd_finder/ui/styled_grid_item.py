@@ -4,7 +4,7 @@ import math
 from collections.abc import Sequence
 
 import pyqtgraph as pg
-from PySide6.QtCore import QLineF, QRectF
+from PySide6.QtCore import QLineF, QRectF, Qt
 from PySide6.QtGui import QColor, QPen
 
 
@@ -63,6 +63,8 @@ class StyledGridItem(pg.GraphicsObject):
         self._pen.setWidthF(0.7)
         self._pen.setCosmetic(True)
         self.setZValue(-1000.0)
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.setAcceptHoverEvents(False)
         self._view_box.addItem(self, ignoreBounds=True)
         self._view_box.sigRangeChanged.connect(self.refresh)
         self.refresh()

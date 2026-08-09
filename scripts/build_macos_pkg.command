@@ -46,14 +46,17 @@ rsync -a \
     --exclude "*.pyo" \
     --exclude ".venv/" \
     --exclude ".pytest_cache/" \
+    --exclude ".ruff_cache/" \
     --exclude "build/" \
     --exclude "dist/" \
     --exclude "*.egg-info/" \
     --exclude "PORTABLE_CHANGES.md" \
     --exclude "PORTABLE_README.md" \
+    --exclude "docs/superpowers/" \
     --exclude "manuscript_assets/" \
     --exclude "manuscript_work/" \
     --exclude "install_xrd_finder_windows_runtime.bat" \
+    --exclude "scripts/" \
     --exclude "scripts/manuscript/" \
     --exclude "XRD_Finder/benchmark_results/" \
     --exclude "XRD_Finder/install_windows_runtime_direct.bat" \

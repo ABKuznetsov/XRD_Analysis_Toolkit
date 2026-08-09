@@ -22,18 +22,19 @@
       "type": "installer",
       "platform": "macos",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.1/XRD_Phase_Finder_macOS_1.3.1.pkg",
-      "sha256": "dfa882b4098e34efcaa73df2f4516385e71131023eb3984f6827cfe2989c6f68",
-      "size_bytes": 6198631
+      "sha256": "6073e12b6ece8e66ee1b47b8a125b7116d8874adf37d68327473ad00ac494e20",
+      "size_bytes": 6172477
     }
   ],
   "summary": [
     "Embed every phase CIF used by Match, Gain or per-pattern assignments directly in the portable .xpff project.",
     "Restore missing embedded phases to the local user library without overwriting existing source and entry keys.",
     "Reuse one embedded CIF when the same phase is assigned to several XRD patterns.",
-    "Prefer the exact project-embedded CIF for reproducible profiles, markers and derived phase data."
+    "Prefer the exact project-embedded CIF for reproducible profiles, markers and derived phase data.",
+    "Prevent a macOS graphics crash when an observed pattern is selected directly on the plot."
   ],
   "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.1/XRD_Phase_Finder_Setup_1.3.1.exe",
   "installer_sha256": "107fa28e5a8c947c5c945576fe169cd89d66e19ecbb7eb3954f84cfe3d1e4bdf",
   "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.1/XRD_Phase_Finder_macOS_1.3.1.pkg",
-  "macos_installer_sha256": "dfa882b4098e34efcaa73df2f4516385e71131023eb3984f6827cfe2989c6f68"
+  "macos_installer_sha256": "6073e12b6ece8e66ee1b47b8a125b7116d8874adf37d68327473ad00ac494e20"
 }

@@ -4,6 +4,7 @@ from html import escape
 
 import numpy as np
 import pyqtgraph as pg
+from PySide6.QtCore import QTimer
 
 from xrd_finder.core.pattern import Pattern
 from xrd_finder.services.preprocessing_service import auto_preprocess_for_scoring
@@ -466,9 +467,16 @@ class PhaseFinderObservedPatternActionsMixin:
         if signal is None:
             return
         try:
-            signal.connect(lambda *_args, pid=pattern_id: self._set_active_pattern_from_plot(pid))
+            signal.connect(lambda *_args, pid=pattern_id: self._queue_active_pattern_from_plot(pid))
         except Exception:
             pass
+
+    def _queue_active_pattern_from_plot(self, pattern_id: str) -> None:
+        if not pattern_id:
+            return
+        # Selecting a tree item redraws the plot. Wait until pyqtgraph has
+        # finished dispatching the mouse release to the curve being replaced.
+        QTimer.singleShot(0, lambda pid=pattern_id: self._set_active_pattern_from_plot(pid))
 
     def _set_active_pattern_from_plot(self, pattern_id: str) -> None:
         if not pattern_id:

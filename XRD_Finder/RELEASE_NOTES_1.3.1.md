@@ -9,4 +9,13 @@
 - Prefer the exact embedded CIF for project profiles, markers and derived phase data so the project remains reproducible.
 - Keep legacy `.xpff` projects compatible and report any phase data that cannot be restored.
 
-Download: [XRD_Phase_Finder_Setup_1.3.1.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.1/XRD_Phase_Finder_Setup_1.3.1.exe)
+## macOS stability update
+
+- Prevent a graphics crash when an observed pattern is selected directly on the plot.
+- Keep the custom plot grid outside mouse-event handling.
+- Exclude development-only files from the macOS installer.
+
+Downloads:
+
+- [Windows installer](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.1/XRD_Phase_Finder_Setup_1.3.1.exe)
+- [macOS installer](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.1/XRD_Phase_Finder_macOS_1.3.1.pkg)

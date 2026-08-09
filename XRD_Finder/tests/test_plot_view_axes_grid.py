@@ -9,7 +9,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pyqtgraph as pg
-from PySide6.QtCore import QRectF
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter
 from PySide6.QtWidgets import QApplication
 
@@ -92,6 +92,16 @@ class StyledGridItemTests(unittest.TestCase):
         self.assertEqual(item.pen.color().name(), "#123456")
         self.assertAlmostEqual(item.pen.color().alphaF(), 0.4, places=2)
         self.assertAlmostEqual(item.pen.widthF(), 1.75)
+        plot.deleteLater()
+
+    def test_grid_does_not_accept_mouse_buttons(self) -> None:
+        plot = pg.PlotWidget()
+        item = StyledGridItem(
+            plot.getViewBox(),
+            plot.getAxis("bottom"),
+            plot.getAxis("left"),
+        )
+        self.assertEqual(item.acceptedMouseButtons(), Qt.MouseButton.NoButton)
         plot.deleteLater()
 
     def test_refresh_uses_axis_tick_spacing(self) -> None:
