@@ -4,7 +4,7 @@ from html import escape
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
 
 from xrd_finder.core.pattern import Pattern
 from xrd_finder.services.preprocessing_service import auto_preprocess_for_scoring
@@ -18,6 +18,29 @@ from xrd_finder.ui.pattern_plot_helpers import (
 )
 
 
+class DraggableLegendTextItem(pg.TextItem):
+    def __init__(self, *args, moved_callback=None, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._moved_callback = moved_callback
+        self._drag_offset = None
+        self.setAcceptHoverEvents(True)
+
+    def mouseDragEvent(self, event) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            event.ignore()
+            return
+        parent = self.parentItem()
+        point = parent.mapFromScene(event.scenePos()) if parent is not None else event.scenePos()
+        if event.isStart() or self._drag_offset is None:
+            self._drag_offset = self.pos() - point
+        self.setPos(point + self._drag_offset)
+        if event.isFinish():
+            self._drag_offset = None
+            if self._moved_callback is not None:
+                self._moved_callback(self)
+        event.accept()
+
+
 class PhaseFinderObservedPatternActionsMixin:
     def _multi_pattern_legend_html(self, pattern: Pattern, observed_color: str) -> str:
         settings = getattr(self, "plot_view_settings", None)
@@ -26,8 +49,15 @@ class PhaseFinderObservedPatternActionsMixin:
             f'<span style="color:{escape(observed_color)}; font-weight:600;">'
             f'{escape(str(pattern.name))}</span>'
         ]
+        if not bool(getattr(settings, "multi_legend_phase_names_visible", True)):
+            return (
+                f'<div style="font-family:Segoe UI; font-size:{font_size}pt; white-space:nowrap;">'
+                + lines[0]
+                + "</div>"
+            )
         candidates = self._profile_candidates_for_pattern(pattern) if hasattr(self, "_profile_candidates_for_pattern") else []
         seen: set[str] = set()
+        phase_labels: list[str] = []
         for index, candidate in enumerate(candidates):
             key = self._candidate_key(candidate) if hasattr(self, "_candidate_key") else str(index)
             if key in seen:
@@ -37,10 +67,12 @@ class PhaseFinderObservedPatternActionsMixin:
             phase_name = self._phase_legend_label(candidate) if hasattr(self, "_phase_legend_label") else candidate.get("Phase", "")
             if not phase_name:
                 continue
-            lines.append(
+            phase_labels.append(
                 f'<span style="color:{escape(color)}; font-size:{font_size + 2}pt;">&#9679;</span>'
                 f'&nbsp;<span style="color:#111111;">{escape(str(phase_name))}</span>'
             )
+        if phase_labels:
+            lines.append("&nbsp;&nbsp;&nbsp;".join(phase_labels))
         return (
             f'<div style="font-family:Segoe UI; font-size:{font_size}pt; white-space:nowrap;">'
             + "<br>".join(lines)
@@ -60,6 +92,116 @@ class PhaseFinderObservedPatternActionsMixin:
             color = self._observed_pattern_color(pattern_id)
             item.setHtml(self._multi_pattern_legend_html(pattern, color))
             item.setVisible(visible)
+        QTimer.singleShot(0, self._fit_multi_pattern_legends_to_canvas)
+
+    def _fit_multi_pattern_legends_to_canvas(self) -> None:
+        if not getattr(self, "show_all_selected_patterns", False):
+            return
+        labels = [
+            item
+            for item in self.plot_layers.get("pattern_legends", [])
+            if item is not None and item.isVisible()
+        ]
+        if not labels:
+            return
+        manual_positions = getattr(self, "_multi_legend_manual_positions", {})
+        automatic_labels = [
+            item for item in labels if getattr(item, "_xrd_pattern_id", "") not in manual_positions
+        ]
+        if not automatic_labels:
+            return
+        y_min, y_max = self.match_plot.getViewBox().viewRange()[1]
+        span = max(float(y_max) - float(y_min), 1.0)
+        pixel_span = max(float(self.match_plot.height()) - 80.0, 1.0)
+        data_per_pixel = span / pixel_span
+        available_height = max(float(self.match_plot.height()) - 70.0, 1.0)
+        natural_height = sum(float(item.boundingRect().height()) for item in automatic_labels)
+        natural_height += max(len(automatic_labels) - 1, 0) * 2.0
+        scale = min(1.0, available_height / max(natural_height, 1.0))
+
+        entries = []
+        for item in automatic_labels:
+            pattern_id = getattr(item, "_xrd_pattern_id", "")
+            context = self.observed_pattern_plot_context.get(pattern_id, {})
+            x = np.asarray(context.get("display_x", []), dtype=float)
+            y = np.asarray(context.get("display_y", []), dtype=float)
+            finite = np.isfinite(x) & np.isfinite(y) if x.size == y.size else np.zeros(0, dtype=bool)
+            x = x[finite]
+            y = y[finite]
+            baseline = float(np.nanpercentile(y, 8)) if y.size else float(item.pos().y())
+            entries.append({"item": item, "x": x, "y": y, "baseline": baseline})
+        entries.sort(key=lambda entry: float(entry["baseline"]), reverse=True)
+
+        clearance = 3.0 * data_per_pixel
+        placements = []
+        alignment = str(
+            getattr(getattr(self, "plot_view_settings", None), "multi_legend_alignment", "Auto")
+            or "Auto"
+        )
+        for index, entry in enumerate(entries):
+            item = entry["item"]
+            previous_entry = entries[index - 1] if index > 0 else None
+            upper = (
+                float(previous_entry["baseline"]) - clearance
+                if previous_entry is not None
+                else float(y_max) - clearance
+            )
+            current_x = entry["x"]
+            if current_x.size:
+                x_min = float(np.nanmin(current_x))
+                x_max = float(np.nanmax(current_x))
+            else:
+                x_min, x_max = self.match_plot.getViewBox().viewRange()[0]
+            x_span = max(float(x_max) - float(x_min), 1.0)
+            plot_width = max(float(self.match_plot.width()) - 100.0, 1.0)
+            label_width = float(item.boundingRect().width()) * scale / plot_width * x_span
+            minimum_anchor = x_min + min(label_width, x_span * 0.9)
+            if alignment == "Left":
+                anchors = np.asarray([minimum_anchor])
+            elif alignment == "Center":
+                anchors = np.asarray([(minimum_anchor + x_max) * 0.5])
+            elif alignment == "Right":
+                anchors = np.asarray([x_max])
+            else:
+                anchors = np.linspace(minimum_anchor, x_max, 28)
+            best_anchor = float(x_max)
+            best_lower = float(entry["baseline"]) + clearance
+            best_score = -float("inf")
+            for anchor in anchors:
+                lower = float(entry["baseline"]) + clearance
+                if current_x.size:
+                    current_y = entry["y"]
+                    mask = (current_x >= float(anchor) - label_width) & (current_x <= float(anchor))
+                    if np.any(mask):
+                        lower = float(np.nanmax(current_y[mask])) + clearance
+                free_height = upper - lower
+                right_preference = 0.01 * span * (float(anchor) - x_min) / x_span
+                score = free_height + right_preference
+                if score > best_score:
+                    best_score = score
+                    best_anchor = float(anchor)
+                    best_lower = lower
+            label_height_at_full_scale = float(item.boundingRect().height()) * data_per_pixel
+            safe_height = max(upper - best_lower, data_per_pixel)
+            scale = min(scale, safe_height / max(label_height_at_full_scale, data_per_pixel))
+            placements.append((item, best_anchor, best_lower, upper))
+
+        scale = max(min(scale, 1.0), 0.35)
+        for item, x_position, lower, upper in placements:
+            half_height = float(item.boundingRect().height()) * scale * data_per_pixel * 0.5
+            center = (float(lower) + float(upper)) * 0.5
+            center = min(max(center, float(lower) + half_height), float(upper) - half_height)
+            item.setScale(scale)
+            item.setPos(float(x_position), float(center))
+            item._xrd_screen_scale = scale
+
+    def _remember_multi_legend_position(self, item) -> None:
+        pattern_id = getattr(item, "_xrd_pattern_id", "")
+        if not pattern_id:
+            return
+        positions = dict(getattr(self, "_multi_legend_manual_positions", {}))
+        positions[pattern_id] = (float(item.pos().x()), float(item.pos().y()))
+        self._multi_legend_manual_positions = positions
 
     def _set_pattern_display_mode(self, mode: str) -> None:
         if hasattr(self, "_save_active_profile_state"):
@@ -322,14 +464,21 @@ class PhaseFinderObservedPatternActionsMixin:
                         12.0,
                     )
                     label_y = local_top + label_clearance
-                    label = pg.TextItem(
+                    label = DraggableLegendTextItem(
                         "",
-                        anchor=(1.0, 1.0),
+                        anchor=(1.0, 0.5),
                         fill=pg.mkBrush(255, 255, 255, 205),
                         border=pg.mkPen(color, width=0.8),
+                        moved_callback=self._remember_multi_legend_position,
                     )
                     label.setHtml(self._multi_pattern_legend_html(item.pattern, color))
-                    label.setPos(label_x, label_y)
+                    manual_position = getattr(self, "_multi_legend_manual_positions", {}).get(
+                        item.pattern.id
+                    )
+                    if manual_position is not None:
+                        label.setPos(float(manual_position[0]), float(manual_position[1]))
+                    else:
+                        label.setPos(label_x, label_y)
                     label.setVisible(legend_visible)
                     try:
                         label._xrd_pattern_id = item.pattern.id
@@ -353,6 +502,8 @@ class PhaseFinderObservedPatternActionsMixin:
 
         if x_values and y_values and not self.match_plot_view_initialized:
             self._reset_match_plot_view()
+        if self.show_all_selected_patterns:
+            QTimer.singleShot(0, self._fit_multi_pattern_legends_to_canvas)
 
     def _redraw_estimated_background_components_for_current_view(self) -> None:
         patterns = self._patterns_to_display()

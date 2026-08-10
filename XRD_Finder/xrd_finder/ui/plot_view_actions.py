@@ -94,6 +94,8 @@ class PhaseFinderPlotViewActionsMixin:
             "grid_width",
             "legend_visible",
             "legend_font_size",
+            "multi_legend_alignment",
+            "multi_legend_phase_names_visible",
             "cursor_vertical_line_visible",
             "hkl_labels_visible",
             "layer_observed_visible",
@@ -145,9 +147,20 @@ class PhaseFinderPlotViewActionsMixin:
             self._apply_grid_settings(settings)
             if (
                 getattr(self, "show_all_selected_patterns", False)
-                and getattr(previous_settings, "legend_font_size", None) != settings.legend_font_size
+                and (
+                    getattr(previous_settings, "legend_font_size", None) != settings.legend_font_size
+                    or getattr(previous_settings, "multi_legend_alignment", None)
+                    != settings.multi_legend_alignment
+                    or getattr(previous_settings, "multi_legend_phase_names_visible", None)
+                    != settings.multi_legend_phase_names_visible
+                )
                 and hasattr(self, "_refresh_multi_pattern_legends")
             ):
+                if (
+                    getattr(previous_settings, "multi_legend_alignment", None)
+                    != settings.multi_legend_alignment
+                ):
+                    self._multi_legend_manual_positions = {}
                 self._refresh_multi_pattern_legends()
             self._set_legend_visible(settings.legend_visible)
             self._set_cursor_vertical_line_enabled(settings.cursor_vertical_line_visible)

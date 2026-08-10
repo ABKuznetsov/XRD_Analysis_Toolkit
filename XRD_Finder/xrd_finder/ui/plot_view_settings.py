@@ -82,6 +82,8 @@ class PlotViewSettings:
     grid_alpha: float = 0.18
     legend_visible: bool = True
     legend_font_size: int = 10
+    multi_legend_alignment: str = "Auto"
+    multi_legend_phase_names_visible: bool = True
     cursor_vertical_line_visible: bool = False
     hkl_labels_visible: bool = False
     layer_observed_visible: bool = True
@@ -712,6 +714,12 @@ class PlotViewSettingsWidget(QScrollArea):
         self.legend_checkbox.setChecked(True)
         self.legend_checkbox.toggled.connect(self._emit_settings)
         self.legend_font_spin = self._spin(7, 36, 10)
+        self.multi_legend_alignment_combo = QComboBox()
+        self.multi_legend_alignment_combo.addItems(["Auto", "Right", "Center", "Left"])
+        self.multi_legend_alignment_combo.currentTextChanged.connect(self._emit_settings)
+        self.multi_legend_phase_names_checkbox = QCheckBox()
+        self.multi_legend_phase_names_checkbox.setChecked(True)
+        self.multi_legend_phase_names_checkbox.toggled.connect(self._emit_settings)
         self.cursor_line_checkbox = QCheckBox()
         self.cursor_line_checkbox.toggled.connect(self._emit_settings)
         self.hkl_labels_checkbox = QCheckBox()
@@ -735,6 +743,8 @@ class PlotViewSettingsWidget(QScrollArea):
         form.addRow("Grid alpha", self.grid_alpha_spin)
         form.addRow("Legend", self.legend_checkbox)
         form.addRow("Legend / XRD text size", self.legend_font_spin)
+        form.addRow("Multi-XRD legend alignment", self.multi_legend_alignment_combo)
+        form.addRow("Phase names in Multi-XRD legend", self.multi_legend_phase_names_checkbox)
         form.addRow("Vertical cursor line", self.cursor_line_checkbox)
         form.addRow("HKL labels", self.hkl_labels_checkbox)
         return widget
@@ -1036,6 +1046,10 @@ class PlotViewSettingsWidget(QScrollArea):
             grid_alpha=float(self.grid_alpha_spin.value()),
             legend_visible=bool(self.legend_checkbox.isChecked()),
             legend_font_size=int(self.legend_font_spin.value()),
+            multi_legend_alignment=self.multi_legend_alignment_combo.currentText(),
+            multi_legend_phase_names_visible=bool(
+                self.multi_legend_phase_names_checkbox.isChecked()
+            ),
             cursor_vertical_line_visible=bool(self.cursor_line_checkbox.isChecked()),
             hkl_labels_visible=bool(self.hkl_labels_checkbox.isChecked()),
             layer_observed_visible=bool(self.layer_observed_checkbox.isChecked()),
@@ -1163,6 +1177,10 @@ class PlotViewSettingsWidget(QScrollArea):
         self.grid_alpha_spin.setValue(settings.grid_alpha)
         self.legend_checkbox.setChecked(settings.legend_visible)
         self.legend_font_spin.setValue(settings.legend_font_size)
+        self.multi_legend_alignment_combo.setCurrentText(settings.multi_legend_alignment)
+        self.multi_legend_phase_names_checkbox.setChecked(
+            settings.multi_legend_phase_names_visible
+        )
         self.cursor_line_checkbox.setChecked(settings.cursor_vertical_line_visible)
         self.hkl_labels_checkbox.setChecked(settings.hkl_labels_visible)
         self.layer_observed_checkbox.setChecked(settings.layer_observed_visible)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pyqtgraph as pg
@@ -8,6 +9,7 @@ from xrd_finder.ui.pattern_plot_helpers import ensure_right_legend
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QImage, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -19,6 +21,19 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QVBoxLayout,
 )
+
+
+def recommended_multi_pattern_export_height(
+    current_height: int,
+    legend_heights: list[float],
+) -> int:
+    """Return a canvas height that gives every per-pattern legend its own band."""
+    if not legend_heights:
+        return max(1, int(current_height))
+    # Axis labels/title need a fixed margin. Each XRD band then gets the actual
+    # legend height plus clear space above and below the neighbouring profiles.
+    required = 150 + sum(max(78, int(math.ceil(height)) + 34) for height in legend_heights)
+    return max(int(current_height), min(required, 5000))
 
 
 class PlotExportDialog(QDialog):
@@ -174,7 +189,7 @@ class PhaseFinderPlotActionsMixin:
         menu.exec(self.match_plot.mapToGlobal(point))
 
     def _export_plot_image(self) -> None:
-        source_image = self.match_plot.grab().toImage()
+        source_image = self._publication_plot_image()
         if source_image.isNull():
             QMessageBox.warning(self, "Export figure", "Could not capture the current plot.")
             return
@@ -199,6 +214,54 @@ class PhaseFinderPlotActionsMixin:
             self._remember_directory(path)
         except Exception as exc:
             QMessageBox.warning(self, "Export figure", f"Could not save the publication figure:\n{exc}")
+
+    def _publication_plot_image(self) -> QImage:
+        """Render multi-pattern figures tall enough for their individual legends."""
+        plot = self.match_plot
+        current_width = max(1, int(plot.width()))
+        current_height = max(1, int(plot.height()))
+        if not getattr(self, "show_all_selected_patterns", False):
+            return plot.grab().toImage()
+        if not bool(getattr(getattr(self, "plot_view_settings", None), "legend_visible", True)):
+            return plot.grab().toImage()
+
+        labels = [
+            item
+            for item in self.plot_layers.get("pattern_legends", [])
+            if item is not None and item.isVisible()
+        ]
+        old_label_scales = [float(item.scale()) for item in labels]
+        old_minimum = plot.minimumSize()
+        old_maximum = plot.maximumSize()
+        old_policy = plot.sizePolicy()
+        resized = False
+        try:
+            for item in labels:
+                item.setScale(1.0)
+            target_height = recommended_multi_pattern_export_height(
+                current_height,
+                [float(item.boundingRect().height()) for item in labels],
+            )
+            if target_height > current_height:
+                plot.setFixedSize(current_width, target_height)
+                resized = True
+            QApplication.processEvents()
+            if hasattr(self, "_fit_multi_pattern_legends_to_canvas"):
+                self._fit_multi_pattern_legends_to_canvas()
+                QApplication.processEvents()
+            return plot.grab().toImage()
+        finally:
+            for item, scale in zip(labels, old_label_scales):
+                item.setScale(scale)
+            if resized:
+                plot.setMinimumSize(old_minimum)
+                plot.setMaximumSize(old_maximum)
+                plot.setSizePolicy(old_policy)
+            QApplication.processEvents()
+            if hasattr(self, "_apply_plot_view_aspect"):
+                self._apply_plot_view_aspect()
+            if hasattr(self, "_fit_multi_pattern_legends_to_canvas"):
+                self._fit_multi_pattern_legends_to_canvas()
 
     def _layer_action(self, label: str, layer: str, checked: bool | None = None, enabled: bool = True):
         action = self._make_action(label)

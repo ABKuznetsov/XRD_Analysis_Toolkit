@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.3.2 - 2026-08-10
+
+### Added
+
+- Added configurable Auto, Right, Center and Left alignment for per-pattern Multi-XRD legends.
+- Added direct mouse dragging for individual Multi-XRD legend boxes.
+- Added an option to hide phase names while retaining sample names and phase markers.
+
+### Changed
+
+- Rendered multi-pattern publication exports on an automatically taller canvas without reducing the configured legend font size.
+- Compacted multiple phase names into one legend row and kept colored phase markers consistent across patterns.
+
+### Fixed
+
+- Prevented per-pattern legend boxes from overlapping neighbouring XRD profiles and strong peaks where a safe placement corridor is available.
+- Improved screen fitting and restored clear colored frames around individual sample legends.
+- Prevented a macOS graphics crash when an observed pattern is selected directly on the plot.
+
 ## 1.3.1 - 2026-08-07
 
 ### Added
@@ -220,6 +239,4 @@
 - `XRD_Finder/xrd_finder/ui/analysis_windows.py` is still large and should be split further before adding batch-processing workflows.
 - Quantification and I/Ic values are practical estimates for phase identification, not a replacement for full-profile refinement.
 - Large COD/RRUFF databases are intentionally user-managed and are not bundled in the release.
-
-
 

@@ -1,21 +1,21 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "channel": "stable",
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
-  "published_at": "2026-08-07",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.3.1",
-  "release_notes_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/XRD_Finder/RELEASE_NOTES_1.3.1.md",
+  "published_at": "2026-08-10",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.3.2",
+  "release_notes_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/XRD_Finder/RELEASE_NOTES_1.3.2.md",
   "assets": [
     {
-      "name": "XRD_Phase_Finder_Setup_1.3.1.exe",
+      "name": "XRD_Phase_Finder_Setup_1.3.2.exe",
       "type": "installer",
       "platform": "windows-x64",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.1/XRD_Phase_Finder_Setup_1.3.1.exe",
-      "sha256": "107fa28e5a8c947c5c945576fe169cd89d66e19ecbb7eb3954f84cfe3d1e4bdf",
-      "size_bytes": 6700693
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.2/XRD_Phase_Finder_Setup_1.3.2.exe",
+      "sha256": "6202ab290a9f57bfa8485759d60054539c300723aa017e9c623746e50725a6bb",
+      "size_bytes": 6703441
     },
     {
       "name": "XRD_Phase_Finder_macOS_1.3.1.pkg",
@@ -27,14 +27,14 @@
     }
   ],
   "summary": [
-    "Embed every phase CIF used by Match, Gain or per-pattern assignments directly in the portable .xpff project.",
-    "Restore missing embedded phases to the local user library without overwriting existing source and entry keys.",
-    "Reuse one embedded CIF when the same phase is assigned to several XRD patterns.",
-    "Prefer the exact project-embedded CIF for reproducible profiles, markers and derived phase data.",
+    "Render Multi-XRD publication figures on an automatically taller export canvas.",
+    "Align or drag individual sample legend boxes without covering strong peaks and neighbouring patterns.",
+    "Optionally hide phase names from per-pattern legends while retaining phase markers.",
+    "Keep screen previews compact while exporting legends at full configured size.",
     "Prevent a macOS graphics crash when an observed pattern is selected directly on the plot."
   ],
-  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.1/XRD_Phase_Finder_Setup_1.3.1.exe",
-  "installer_sha256": "107fa28e5a8c947c5c945576fe169cd89d66e19ecbb7eb3954f84cfe3d1e4bdf",
+  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.2/XRD_Phase_Finder_Setup_1.3.2.exe",
+  "installer_sha256": "6202ab290a9f57bfa8485759d60054539c300723aa017e9c623746e50725a6bb",
   "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.1/XRD_Phase_Finder_macOS_1.3.1.pkg",
   "macos_installer_sha256": "6073e12b6ece8e66ee1b47b8a125b7116d8874adf37d68327473ad00ac494e20"
 }
