@@ -94,6 +94,7 @@ class PhaseFinderCandidateSearchActionsMixin:
             success,
             failure,
             with_progress=True,
+            operation_name="match.search",
         )
 
     def _prepare_candidate_database_search(self) -> None:
@@ -129,6 +130,7 @@ class PhaseFinderCandidateSearchActionsMixin:
             lambda progress: self.candidate_search_service.search_text(query, options, progress=progress),
             success,
             with_progress=True,
+            operation_name="match.search",
         )
 
     def _search_from_controls(self) -> None:
@@ -161,6 +163,7 @@ class PhaseFinderCandidateSearchActionsMixin:
             lambda progress: self.candidate_search_service.search_elements(elements, options, progress=progress),
             success,
             with_progress=True,
+            operation_name="match.search",
         )
 
     def _candidate_search_options(self) -> CandidateSearchOptions:

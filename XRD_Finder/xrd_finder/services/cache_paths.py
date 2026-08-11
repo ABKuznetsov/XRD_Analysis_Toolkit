@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 APP_DATA_ENV = "XRD_FINDER_DATA_DIR"
+LOG_DIR_ENV = "XRD_FINDER_LOG_DIR"
 APP_DATA_DIR_NAME = "data"
 
 
@@ -18,3 +19,14 @@ def default_data_root() -> Path:
 
 def default_phase_cache_root() -> Path:
     return default_data_root() / "cod_cache"
+
+
+def default_diagnostic_log_root() -> Path:
+    env_path = os.environ.get(LOG_DIR_ENV)
+    if env_path:
+        return Path(env_path).expanduser()
+    return default_data_root().parent / "logs"
+
+
+def default_xrd_import_root() -> Path:
+    return default_data_root() / "imports" / "xrd"

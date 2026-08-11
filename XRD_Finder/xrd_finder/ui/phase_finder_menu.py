@@ -1,6 +1,21 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QMenuBar, QWidget
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtWidgets import QMenuBar, QMessageBox, QWidget
+
+from xrd_finder.services.cache_paths import default_diagnostic_log_root
+
+
+def _open_diagnostic_logs(owner: QWidget) -> None:
+    log_root = default_diagnostic_log_root()
+    log_root.mkdir(parents=True, exist_ok=True)
+    if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_root))):
+        QMessageBox.warning(
+            owner,
+            "Diagnostic logs",
+            f"Could not open the folder.\n\n{log_root}",
+        )
 
 
 def build_phase_finder_menu_bar(owner: QWidget) -> QMenuBar:
@@ -75,5 +90,9 @@ def build_phase_finder_menu_bar(owner: QWidget) -> QMenuBar:
 
     help_menu = menu_bar.addMenu("Help")
     help_menu.addAction("Phase Finder help")
+    help_menu.addAction(
+        "Open diagnostic logs folder",
+        lambda _checked=False: _open_diagnostic_logs(owner),
+    )
 
     return menu_bar

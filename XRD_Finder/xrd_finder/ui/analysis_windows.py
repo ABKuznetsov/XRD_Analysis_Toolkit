@@ -62,6 +62,7 @@ from xrd_finder.services.match_pdf2_service import MatchPdf2Service
 from xrd_finder.services.materials_project_service import MaterialsProjectService
 from xrd_finder.services.preprocessing_service import estimate_background
 from xrd_finder.services.refinement_service import RefinementService
+from xrd_finder.services.runtime_diagnostics import traced_operation
 from xrd_finder.services.indexed_cell_matching import IndexedCellMatchingService
 from xrd_finder.services.rruff_service import RruffService
 from xrd_finder.ui.pattern_plot_helpers import (
@@ -314,6 +315,7 @@ class AnalysisWindow(QDialog):
             path = str(selected.with_suffix(PORTABLE_PROJECT_SUFFIX))
         return self._write_project(path)
 
+    @traced_operation("project.save")
     def _write_project(self, path: str | Path) -> bool:
         path = str(path)
         try:
@@ -345,6 +347,7 @@ class AnalysisWindow(QDialog):
             return
         self._import_scientific_paths([Path(path) for path in paths])
 
+    @traced_operation("import.scientific")
     def _import_scientific_paths(
         self,
         paths: list[Path],
@@ -1189,7 +1192,16 @@ class PhaseFinderWindow(
         self.candidate_search_service.shutdown_background_downloads()
         event.accept()
 
-    def _run_background_task(self, title: str, label: str, task, on_success, on_error=None, with_progress: bool = False) -> None:
+    def _run_background_task(
+        self,
+        title: str,
+        label: str,
+        task,
+        on_success,
+        on_error=None,
+        with_progress: bool = False,
+        operation_name: str = "background.task",
+    ) -> None:
         dialog = QProgressDialog(label, "", 0, 0, self)
         dialog.setWindowTitle(title)
         dialog.setCancelButton(None)
@@ -1197,7 +1209,12 @@ class PhaseFinderWindow(
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
         dialog.show()
 
-        handle = BackgroundTaskHandle(task, self, accepts_progress=with_progress)
+        handle = BackgroundTaskHandle(
+            task,
+            self,
+            accepts_progress=with_progress,
+            operation_name=operation_name,
+        )
         self._background_tasks.add(handle)
 
         def cleanup() -> None:
@@ -1600,6 +1617,7 @@ class PhaseFinderWindow(
 
         return {phase_id: phase_matches for phase_id, phase_matches in matches.items() if phase_matches}
 
+    @traced_operation("match.profile")
     def _recalculate_match_profile(self, auto_zoom: bool = False) -> None:
         self._activate_current_profile_state()
         self._save_active_profile_state()
@@ -1918,6 +1936,7 @@ class PhaseFinderWindow(
         self._observed_probability_cache = (key, np.asarray(observed[:, 0], dtype=float), corrected, records)
         return self._observed_probability_cache[1], self._observed_probability_cache[2], self._observed_probability_cache[3]
 
+    @traced_operation("gain.rank")
     def _rank_candidate_rows_by_peak_probability(
         self,
         rows: list[list[str]],

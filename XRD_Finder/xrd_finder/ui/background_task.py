@@ -5,23 +5,33 @@ import traceback
 
 from PySide6.QtCore import QObject, QThread, Signal
 
+from xrd_finder.services.runtime_diagnostics import trace_operation
+
 
 class BackgroundTaskWorker(QObject):
     finished = Signal(object)
     failed = Signal(str, str)
     progress = Signal(str, int, int)
 
-    def __init__(self, task: Callable, accepts_progress: bool = False) -> None:
+    def __init__(
+        self,
+        task: Callable,
+        accepts_progress: bool = False,
+        operation_name: str = "background.task",
+    ) -> None:
         super().__init__()
         self._task = task
         self._accepts_progress = accepts_progress
+        self._operation_name = operation_name
 
     def run(self) -> None:
         try:
-            if self._accepts_progress:
-                self.finished.emit(self._task(self.progress.emit))
-            else:
-                self.finished.emit(self._task())
+            with trace_operation(self._operation_name):
+                if self._accepts_progress:
+                    result = self._task(self.progress.emit)
+                else:
+                    result = self._task()
+            self.finished.emit(result)
         except Exception as exc:
             self.failed.emit(str(exc), traceback.format_exc())
 
@@ -31,10 +41,20 @@ class BackgroundTaskHandle(QObject):
     failed = Signal(str, str)
     progress = Signal(str, int, int)
 
-    def __init__(self, task: Callable, parent: QObject | None = None, accepts_progress: bool = False) -> None:
+    def __init__(
+        self,
+        task: Callable,
+        parent: QObject | None = None,
+        accepts_progress: bool = False,
+        operation_name: str = "background.task",
+    ) -> None:
         super().__init__(parent)
         self._thread = QThread(self)
-        self._worker = BackgroundTaskWorker(task, accepts_progress=accepts_progress)
+        self._worker = BackgroundTaskWorker(
+            task,
+            accepts_progress=accepts_progress,
+            operation_name=operation_name,
+        )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._on_finished)

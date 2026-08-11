@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pyqtgraph as pg
 
+from xrd_finder.services.runtime_diagnostics import traced_operation
 from xrd_finder.ui.pattern_plot_helpers import ensure_right_legend
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QImage, QPixmap
@@ -188,6 +189,7 @@ class PhaseFinderPlotActionsMixin:
         menu.addAction("Clear profile overlays", self._clear_calculated_overlay)
         menu.exec(self.match_plot.mapToGlobal(point))
 
+    @traced_operation("export.figure")
     def _export_plot_image(self) -> None:
         source_image = self._publication_plot_image()
         if source_image.isNull():

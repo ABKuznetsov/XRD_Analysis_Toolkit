@@ -639,6 +639,7 @@ try {
 
     $env:PYTHONDONTWRITEBYTECODE = "1"
     $env:XRD_FINDER_DATA_DIR = $dataRoot
+    $env:XRD_FINDER_LOG_DIR = $logsRoot
     $env:MPLCONFIGDIR = Join-Path $finderRoot "matplotlib"
     $env:QT_OPENGL = "software"
     $env:QT_QUICK_BACKEND = "software"
@@ -668,6 +669,7 @@ try {
     $startInfo.CreateNoWindow = $true
     $startInfo.EnvironmentVariables["PYTHONDONTWRITEBYTECODE"] = "1"
     $startInfo.EnvironmentVariables["XRD_FINDER_DATA_DIR"] = $dataRoot
+    $startInfo.EnvironmentVariables["XRD_FINDER_LOG_DIR"] = $logsRoot
     $startInfo.EnvironmentVariables["XRD_FINDER_PREPARED_FILE"] = $preparedFile
     $startInfo.EnvironmentVariables["XRD_FINDER_SHOW_SIGNAL_FILE"] = $showSignalFile
     $startInfo.EnvironmentVariables["XRD_FINDER_READY_FILE"] = $readyFile

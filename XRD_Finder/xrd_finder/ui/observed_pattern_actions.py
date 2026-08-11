@@ -8,6 +8,7 @@ from PySide6.QtCore import QTimer, Qt
 
 from xrd_finder.core.pattern import Pattern
 from xrd_finder.services.preprocessing_service import auto_preprocess_for_scoring
+from xrd_finder.services.runtime_diagnostics import traced_operation
 from xrd_finder.ui.observed_patterns import apply_pattern_offsets, load_observed_patterns, normalize_intensity, observed_pattern_data, processed_pattern_data
 from xrd_finder.ui.pattern_plot_helpers import (
     calculate_profile_for_structure,
@@ -285,6 +286,7 @@ class PhaseFinderObservedPatternActionsMixin:
             return False
         return bool(pattern is not None and pattern.processed_background_removed)
 
+    @traced_operation("preprocess.auto")
     def _pattern_auto_preprocessing_result(self, pattern: Pattern | None):
         if pattern is None:
             return None
@@ -368,6 +370,7 @@ class PhaseFinderObservedPatternActionsMixin:
         pattern = self._active_pattern()
         return [pattern] if pattern is not None else []
 
+    @traced_operation("plot.observed")
     def _draw_observed_patterns(self, active_override=None) -> None:
         if hasattr(self, "_clear_profile_plot_layers"):
             self._clear_profile_plot_layers(include_observed=True, rebuild_legend=False)
