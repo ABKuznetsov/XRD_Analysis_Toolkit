@@ -7,6 +7,7 @@ import pyqtgraph as pg
 
 from xrd_finder.services.runtime_diagnostics import traced_operation
 from xrd_finder.ui.pattern_plot_helpers import ensure_right_legend
+from xrd_finder.ui.plot_layer_items import remove_pattern_layer_items
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QImage, QPixmap
 from PySide6.QtWidgets import (
@@ -545,8 +546,16 @@ class PhaseFinderPlotActionsMixin:
             layers[0:0] = ["observed", "pattern_legends"]
         self._remove_plot_layer_items(layers, rebuild_legend=rebuild_legend)
 
-    def _clear_calculated_overlay(self) -> None:
-        self._clear_profile_plot_layers(rebuild_legend=False)
+    def _clear_calculated_overlay(self, pattern_id: str | None = None) -> None:
+        if pattern_id:
+            remove_pattern_layer_items(
+                self.match_plot,
+                self.plot_layers,
+                self._PROFILE_OVERLAY_LAYERS,
+                pattern_id,
+            )
+        else:
+            self._clear_profile_plot_layers(rebuild_legend=False)
         self.active_overlay_entry_id = None
         self._rebuild_visible_legend()
 

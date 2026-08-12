@@ -14,20 +14,23 @@ class PostMatchPipeline:
     should_autozoom: Callable[[], bool]
 
     def candidate_added(self) -> None:
-        """Preserve the current UI sequence while keeping stage ownership separate."""
+        """Refine first, then render the final profile once and refresh Gain."""
 
-        self.run_profile_stage()
         self.run_cell_stage()
+        self.run_profile_stage()
         self.run_gain_stage()
 
     def run_profile_stage(self) -> None:
-        self.refresh_selected_profile(auto_zoom=self.should_autozoom())
+        self.refresh_selected_profile(
+            auto_zoom=self.should_autozoom(),
+            active_only=True,
+        )
 
     def run_cell_stage(self) -> bool:
         return bool(
             self.refine_indexed_cells(
                 show_messages=False,
-                recalculate=True,
+                recalculate=False,
                 latest_only=True,
             )
         )

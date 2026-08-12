@@ -90,7 +90,7 @@ Identify unexplained peaks
   - Checkboxes control what is visible in the plot.
   - Order arrows change plot and legend order.
 - **Projects**
-  - Save project writes one portable `.xpff` (XRD Phase Finder File) containing source XRD data, user CIF files, series, processed curves, selected phase assignments and Finder UI state.
+  - Save project writes one portable `.xpff` (XRD Phase Finder File) containing source XRD data, user CIF files, series, processed curves, selected phase assignments, Finder UI state, per-pattern previews and the versioned scientific `analysis_summary` consumed by SCI Manager.
   - Windows installation associates `.xpff` with XRD Phase Finder, so a project can be opened by double-clicking the file.
 - **Plot**
   - Use mouse zoom/pan normally.

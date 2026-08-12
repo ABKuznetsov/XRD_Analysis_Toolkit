@@ -1,0 +1,26 @@
+# XRD Phase Finder 1.4.0
+
+Version 1.4.0 turns `.xpff` into a portable scientific-result container while keeping it fully editable in XRD Phase Finder.
+
+## Portable XRD results
+
+- Stores source XRD patterns, processed curves, series, user CIF files, selected phases and Finder state in one `.xpff` file.
+- Stores a versioned `analysis_summary` for every calculated pattern: identified phases, estimated fractions, fit, explained peaks and unknown peak positions.
+- Deduplicates shared phases in `phase_catalog`; one phase can be referenced by many patterns.
+- Embeds a per-pattern PNG preview generated from the already rendered result without repeating Match or Gain.
+- Keeps old `.xpff` projects readable when they do not contain an analysis summary.
+
+## SCI Manager integration
+
+- Provides stable analysis, revision, pattern and phase identifiers.
+- Uses an RFC 8785/JCS `result_sha256` to distinguish scientific changes from presentation or metadata changes.
+- Keeps physical-sample links outside the scientific hash, so linking an XRD pattern to a laboratory sample does not create a false scientific revision.
+- Allows SCI Manager to display the Phase Finder result and revision history without recalculating it.
+
+## Compatibility
+
+- Match, Gain, phase assignment and quantification algorithms are unchanged by the XPFF contract.
+- User CIF assets remain embedded and are restored into the local phase library when absent.
+- Windows `.xpff` file association and double-click opening remain supported.
+
+The public schema is documented in `docs/xpff-analysis-summary-v1.md`.

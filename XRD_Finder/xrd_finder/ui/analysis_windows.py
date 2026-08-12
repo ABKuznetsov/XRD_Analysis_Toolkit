@@ -116,10 +116,12 @@ from xrd_finder.ui.selected_phases_actions import PhaseFinderSelectedPhasesActio
 from xrd_finder.ui.structure_overlay import draw_structure_overlay, prepare_structure_overlay
 from xrd_finder.ui.theme import is_dark_theme, window_style
 from xrd_finder.ui.xrd_plot import create_xrd_plot_widget
+from xrd_finder.ui.analysis_preview import capture_analysis_preview
 
 
 class AnalysisWindow(QDialog):
     project_changed = Signal()
+    background_status_changed = Signal(str)
     IMPORT_SUFFIXES = {".xy", ".txt", ".dat", ".csv", ".xye", ".cif"}
 
     def __init__(self, project: Project, title: str) -> None:
@@ -193,7 +195,24 @@ class AnalysisWindow(QDialog):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
         layout.addWidget(self.main_splitter)
+        self.background_status_label = QLabel("Ready")
+        self.background_status_label.setFixedHeight(20)
+        self.background_status_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.background_status_label.setStyleSheet(
+            "background: #20262d; border-top: 1px solid #3b4652; "
+            "color: #b8c5d6; padding: 1px 7px;"
+        )
+        layout.addWidget(self.background_status_label)
+        self.background_status_changed.connect(self._set_background_status)
+
+    def _set_background_status(self, message: str) -> None:
+        text = str(message or "Ready")
+        self.background_status_label.setText(text)
+        self.background_status_label.setToolTip(text)
 
     def _is_dark_theme(self) -> bool:
         return is_dark_theme(self)
@@ -205,6 +224,7 @@ class AnalysisWindow(QDialog):
         if object_type == "phase":
             self.tree.set_checked_phase_ids([object_id])
 
+    @traced_operation("project.reorder")
     def _move_current_tree_object(self, direction: int) -> None:
         current = self.tree.current_object()
         if current is None:
@@ -212,23 +232,165 @@ class AnalysisWindow(QDialog):
         object_type, object_id = current
         if object_type == "series":
             objects = self.project.series
+            visible_indices = list(range(len(objects)))
         elif object_type == "pattern":
-            objects = self.project.patterns
+            tree_changed, display_changed = self._move_pattern_order(object_id, direction)
+            if not tree_changed and not display_changed:
+                return
+            if tree_changed:
+                self._rebuild_tree_after_reorder(object_type, object_id)
+            self.project_changed.emit()
+            if display_changed:
+                self._refresh_plot_after_tree_reorder(object_type)
+            return
         elif object_type == "phase":
             objects = self.project.phases
+            visible_indices = self._active_tree_object_indices(object_type, objects)
         else:
             return
         index = next((i for i, project_object in enumerate(objects) if project_object.id == object_id), -1)
-        new_index = index + direction
-        if index < 0 or new_index < 0 or new_index >= len(objects):
+        try:
+            visible_index = visible_indices.index(index)
+        except ValueError:
             return
+        new_visible_index = visible_index + direction
+        if new_visible_index < 0 or new_visible_index >= len(visible_indices):
+            return
+        new_index = visible_indices[new_visible_index]
         objects[index], objects[new_index] = objects[new_index], objects[index]
         if object_type == "phase":
             self._sync_structures_to_phase_order()
-        self.tree.set_project(self.project)
-        self.tree.select_object(object_type, object_id)
+        # Rebuilding the tree normally emits pattern/phase selection signals
+        # and changing its current item emits another selection signal.  A
+        # reorder does not change the actual selection, so those signals used
+        # to run the complete scientific refresh several times and discard the
+        # Gain caches.  Keep the rebuild silent and refresh the plot once only
+        # when its visible stacking/order is affected.
+        self._rebuild_tree_after_reorder(object_type, object_id)
         self.project_changed.emit()
-        self._on_project_tree_selection_changed()
+        self._refresh_plot_after_tree_reorder(object_type)
+
+    def _move_pattern_order(self, pattern_id: str, direction: int) -> tuple[bool, bool]:
+        """Move inside a series first; at its edge move only the multi-XRD queue."""
+        series = self.project.series_for_object("pattern", pattern_id)
+        if series is not None:
+            group_ids = series.pattern_ids
+        else:
+            assigned_ids = {
+                item_id
+                for project_series in self.project.series
+                for item_id in project_series.pattern_ids
+            }
+            group_ids = [
+                pattern.id for pattern in self.project.patterns
+                if pattern.id not in assigned_ids
+            ]
+        try:
+            group_index = group_ids.index(pattern_id)
+        except ValueError:
+            return False, False
+        target_group_index = group_index + direction
+        if 0 <= target_group_index < len(group_ids):
+            target_id = group_ids[target_group_index]
+            if series is not None:
+                series.pattern_ids[group_index], series.pattern_ids[target_group_index] = (
+                    series.pattern_ids[target_group_index],
+                    series.pattern_ids[group_index],
+                )
+            else:
+                self._swap_project_objects_by_id(self.project.patterns, pattern_id, target_id)
+            display_changed = self._swap_pattern_display_ids(pattern_id, target_id)
+            return True, display_changed
+        if not bool(getattr(self, "show_all_selected_patterns", False)):
+            return False, False
+        return False, self._move_pattern_in_active_queue(pattern_id, direction)
+
+    def _move_pattern_in_active_queue(self, pattern_id: str, direction: int) -> bool:
+        checked = set(self.tree.checked_pattern_ids())
+        if pattern_id not in checked:
+            return False
+        order = self._normalized_pattern_display_order()
+        active_order = [item_id for item_id in order if item_id in checked]
+        try:
+            active_index = active_order.index(pattern_id)
+        except ValueError:
+            return False
+        target_index = active_index + direction
+        if target_index < 0 or target_index >= len(active_order):
+            return False
+        return self._swap_pattern_display_ids(pattern_id, active_order[target_index])
+
+    def _swap_pattern_display_ids(self, first_id: str, second_id: str) -> bool:
+        order = self._normalized_pattern_display_order()
+        try:
+            first_index = order.index(first_id)
+            second_index = order.index(second_id)
+        except ValueError:
+            return False
+        order[first_index], order[second_index] = order[second_index], order[first_index]
+        return True
+
+    def _normalized_pattern_display_order(self) -> list[str]:
+        available = [pattern.id for pattern in self.project.patterns]
+        available_set = set(available)
+        stored = list(getattr(self, "pattern_display_order_ids", []) or [])
+        order = [item_id for item_id in stored if item_id in available_set]
+        order.extend(item_id for item_id in available if item_id not in set(order))
+        self.pattern_display_order_ids = order
+        return order
+
+    @staticmethod
+    def _swap_project_objects_by_id(objects: list, first_id: str, second_id: str) -> None:
+        first_index = next(index for index, item in enumerate(objects) if item.id == first_id)
+        second_index = next(index for index, item in enumerate(objects) if item.id == second_id)
+        objects[first_index], objects[second_index] = objects[second_index], objects[first_index]
+
+    def _rebuild_tree_after_reorder(self, object_type: str, object_id: str) -> None:
+        signals_were_blocked = self.tree.blockSignals(True)
+        try:
+            self.tree.set_project(self.project)
+            self.tree.select_object(object_type, object_id)
+        finally:
+            self.tree.blockSignals(signals_were_blocked)
+
+    def _active_tree_object_indices(self, object_type: str, objects: list) -> list[int]:
+        """Return global-list indices of checked objects in their display order."""
+        active_ids = set(
+            self.tree.checked_pattern_ids()
+            if object_type == "pattern"
+            else self.tree.checked_phase_ids()
+        )
+        return [index for index, item in enumerate(objects) if item.id in active_ids]
+
+    def _refresh_plot_after_tree_reorder(self, object_type: str) -> None:
+        if not hasattr(self, "match_plot"):
+            return
+        needs_plot_refresh = object_type == "phase" or (
+            object_type == "pattern" and bool(getattr(self, "show_all_selected_patterns", False))
+        )
+        if not needs_plot_refresh:
+            if hasattr(self, "_update_profile_view_context"):
+                self._update_profile_view_context()
+            return
+        view_range = self._plot_view_range()
+        try:
+            self._refresh_observed_pattern_plot()
+            displayed_patterns = (
+                self._patterns_to_display()
+                if self.show_all_selected_patterns
+                else [self._active_pattern()]
+            )
+            has_profile_candidates = any(
+                self._profile_candidates_for_pattern(pattern)
+                for pattern in displayed_patterns
+                if pattern is not None
+            )
+            if has_profile_candidates:
+                self._recalculate_match_profile(auto_zoom=False, active_only=False)
+        finally:
+            self._restore_plot_view_range(view_range)
+            if hasattr(self, "_update_profile_view_context"):
+                self._update_profile_view_context()
 
     def _sync_structures_to_phase_order(self) -> None:
         phase_rank = {phase.id: index for index, phase in enumerate(self.project.phases)}
@@ -570,7 +732,8 @@ class PhaseFinderWindow(
     PhaseFinderDatabaseActionsMixin,
     AnalysisWindow,
 ):
-    def __init__(self, project: Project) -> None:
+    def __init__(self, project: Project, *, defer_initial_plot: bool = False) -> None:
+        self._defer_initial_plot = bool(defer_initial_plot)
         super().__init__(project, "Phase Finder")
         self.resize(1500, 850)
         self.right_tabs.setMinimumWidth(360)
@@ -623,12 +786,14 @@ class PhaseFinderWindow(
             self.materials_project,
             self.aflow,
             self.oqmd,
+            status_callback=self.background_status_changed.emit,
         )
         self._background_tasks: set[BackgroundTaskHandle] = set()
         self._start_match_pdf2_preload()
 
     def _init_runtime_state(self) -> None:
         self.finder_action_bar: FinderActionBar | None = None
+        self.pattern_display_order_ids = [pattern.id for pattern in self.project.patterns]
         self.search_input: QLineEdit | None = None
         self.name_input: QLineEdit | None = None
         self.elem_count_input: QLineEdit | None = None
@@ -706,6 +871,7 @@ class PhaseFinderWindow(
         self.phase_colors: dict[str, str] = {}
         self.active_profile_pattern_id: str | None = None
         self.profile_states: dict[str, dict[str, object]] = {}
+        self.analysis_preview_paths: dict[str, str] = {}
         self.match_profile_result_cache: dict[tuple[object, ...], object] = {}
         self._profile_state_loading = False
         self.match_plot_view_initialized = False
@@ -784,11 +950,11 @@ class PhaseFinderWindow(
         return self._candidate_copy_list(candidates) if isinstance(candidates, list) else []
 
     def _invalidate_match_profile_cache(self, pattern_id: str | None = None) -> None:
-        try:
-            self.finder_service.clear_observed_cache()
-        except Exception:
-            pass
         if pattern_id is None:
+            try:
+                self.finder_service.clear_observed_cache()
+            except Exception:
+                pass
             self.match_profile_result_cache.clear()
             return
         self.match_profile_result_cache = {
@@ -853,6 +1019,7 @@ class PhaseFinderWindow(
         candidates: list[dict[str, str]],
         *,
         snap_peak_positions: bool = True,
+        cache_only: bool = False,
     ):
         finder_candidates, candidate_by_key = build_finder_candidate_inputs(
             candidates,
@@ -867,6 +1034,8 @@ class PhaseFinderWindow(
         result = self.match_profile_result_cache.get(cache_key)
         if result is not None:
             return result, candidate_by_key
+        if cache_only:
+            return None, candidate_by_key
         processed_observed = self._pattern_finder_observed_data(pattern)
         background_data = self._pattern_finder_background_data(pattern)
         structure_overrides = self._finder_candidate_structure_overrides(pattern, candidates)
@@ -984,27 +1153,26 @@ class PhaseFinderWindow(
 
     def _create_cursor_readout_panel(self) -> None:
         status_panel = QWidget()
-        status_layout = QHBoxLayout(status_panel)
+        status_layout = QVBoxLayout(status_panel)
         status_layout.setContentsMargins(0, 0, 0, 0)
-        status_layout.setSpacing(4)
+        status_layout.setSpacing(2)
         self.cursor_position_status_label = QLabel("2theta: -    I: -")
         self.cursor_position_status_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.cursor_position_status_label.setStyleSheet(
             "background: #20262d; border: 1px solid #3b4652; border-radius: 3px; "
             "color: #d7e3f4; font-weight: 700; padding: 6px 8px;"
         )
-        self.cursor_position_status_label.setMinimumHeight(30)
-        self.cursor_position_status_label.setMinimumWidth(118)
+        self.cursor_position_status_label.setMinimumHeight(24)
         self.scoring_status_label = QLabel(self._scoring_source_status_text())
         self.scoring_status_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.scoring_status_label.setStyleSheet(
             "background: #1b3030; border: 1px solid #3f6a6a; border-radius: 3px; "
             "color: #d7fff4; font-weight: 700; padding: 6px 8px;"
         )
-        self.scoring_status_label.setMinimumHeight(30)
+        self.scoring_status_label.setMinimumHeight(24)
         self.scoring_status_label.setToolTip("Profile used for match/gain scoring.")
-        status_layout.addWidget(self.cursor_position_status_label, 1)
-        status_layout.addWidget(self.scoring_status_label, 0)
+        status_layout.addWidget(self.cursor_position_status_label)
+        status_layout.addWidget(self.scoring_status_label)
         sidebar_layout = self.sidebar.layout()
         if sidebar_layout is not None:
             sidebar_layout.addWidget(status_panel)
@@ -1041,7 +1209,7 @@ class PhaseFinderWindow(
         self.match_plot.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.match_plot.customContextMenuRequested.connect(self._show_plot_context_menu)
         self._ensure_cursor_position_items()
-        if project.patterns:
+        if project.patterns and not self._defer_initial_plot:
             try:
                 self._refresh_observed_pattern_plot()
             except Exception:
@@ -1106,9 +1274,12 @@ class PhaseFinderWindow(
     def _after_project_loaded(self) -> None:
         self._reset_phase_finder_state(
             candidate_rows=self._project_phase_candidate_rows(),
-            refresh_observed=True,
+            refresh_observed=False,
         )
-        self._restore_finder_state_from_project()
+        if getattr(self.project, "finder_state", None) is None:
+            self._refresh_observed_pattern_plot()
+        else:
+            self._restore_finder_state_from_project()
 
     def _reset_phase_finder_state(
         self,
@@ -1117,6 +1288,7 @@ class PhaseFinderWindow(
         reset_plot_range: bool = False,
         refresh_observed: bool = False,
     ) -> None:
+        self.pattern_display_order_ids = [pattern.id for pattern in self.project.patterns]
         self._clear_probability_caches()
         self.match_candidates.clear()
         self.match_structures.clear()
@@ -1129,6 +1301,7 @@ class PhaseFinderWindow(
         self._active_gain_stage = ""
         self._gain_overlap_locked = False
         self.profile_states.clear()
+        self.analysis_preview_paths.clear()
         self.phase_colors.clear()
         self.observed_pattern_colors.clear()
         self.match_profile_result_cache.clear()
@@ -1201,32 +1374,31 @@ class PhaseFinderWindow(
         on_error=None,
         with_progress: bool = False,
         operation_name: str = "background.task",
+        on_partial=None,
     ) -> None:
-        dialog = QProgressDialog(label, "", 0, 0, self)
-        dialog.setWindowTitle(title)
-        dialog.setCancelButton(None)
-        dialog.setMinimumDuration(0)
-        dialog.setWindowModality(Qt.WindowModality.WindowModal)
-        dialog.show()
+        self._set_background_status(label)
 
         handle = BackgroundTaskHandle(
             task,
             self,
             accepts_progress=with_progress,
+            accepts_partial=on_partial is not None,
             operation_name=operation_name,
         )
         self._background_tasks.add(handle)
 
         def cleanup() -> None:
-            dialog.close()
             self._background_tasks.discard(handle)
+            if not self._background_tasks:
+                self._set_background_status("Ready")
 
         def finish(result) -> None:
             cleanup()
             on_success(result)
 
         def fail(message: str, details: str) -> None:
-            cleanup()
+            self._background_tasks.discard(handle)
+            self._set_background_status(f"{title}: failed — {message or 'no response'}")
             if on_error is not None:
                 on_error(message, details)
             else:
@@ -1234,19 +1406,24 @@ class PhaseFinderWindow(
 
         def progress(message: str, value: int, maximum: int) -> None:
             if message:
-                dialog.setLabelText(message)
-            maximum = int(maximum)
-            if maximum > 0:
-                value = max(0, min(int(value), maximum))
-                dialog.setMaximum(maximum)
-                dialog.setValue(value)
-            else:
-                dialog.setRange(0, 0)
+                suffix = ""
+                maximum = int(maximum)
+                if maximum > 0:
+                    value = max(0, min(int(value), maximum))
+                    suffix = f" ({value}/{maximum})"
+                self._set_background_status(f"{message}{suffix}")
+
+        def show_waiting_status() -> None:
+            if handle in self._background_tasks:
+                self._set_background_status(f"{title}: waiting for response...")
 
         handle.progress.connect(progress)
+        if on_partial is not None:
+            handle.partial.connect(on_partial)
         handle.finished.connect(finish)
         handle.failed.connect(fail)
         handle.start()
+        QTimer.singleShot(8000, show_waiting_status)
 
     def _composition_tab(self) -> QWidget:
         panel = CompositionPanel(self.match_table, self._layout_state)
@@ -1383,7 +1560,7 @@ class PhaseFinderWindow(
         if hasattr(self, "_update_compound_card_sample"):
             self._update_compound_card_sample()
         if recalculate:
-            self._recalculate_match_profile(auto_zoom=False)
+            self._recalculate_match_profile(auto_zoom=False, active_only=True)
         if show_messages and summary:
             QMessageBox.information(self, "Cell fit", "\n".join(summary[:8]))
         return any(result.success for result in results)
@@ -1618,38 +1795,70 @@ class PhaseFinderWindow(
         return {phase_id: phase_matches for phase_id, phase_matches in matches.items() if phase_matches}
 
     @traced_operation("match.profile")
-    def _recalculate_match_profile(self, auto_zoom: bool = False) -> None:
+    def _recalculate_match_profile(
+        self,
+        auto_zoom: bool = False,
+        active_only: bool = False,
+    ) -> None:
         self._activate_current_profile_state()
         self._save_active_profile_state()
-        patterns = self._patterns_to_display() if self.show_all_selected_patterns else [self._active_pattern()]
+        active_pattern = self._active_pattern()
+        incremental = bool(
+            active_only
+            and self.show_all_selected_patterns
+            and active_pattern is not None
+        )
+        patterns = (
+            [active_pattern]
+            if incremental
+            else self._patterns_to_display()
+            if self.show_all_selected_patterns
+            else [active_pattern]
+        )
         patterns = [pattern for pattern in patterns if pattern is not None]
         if not patterns:
             self._clear_calculated_overlay()
             self._update_match_table()
             return
 
-        active_pattern = self._active_pattern()
         active_pattern_id = active_pattern.id if active_pattern is not None else ""
         has_candidates = any(self._profile_candidates_for_pattern(pattern) for pattern in patterns)
         if not has_candidates:
-            self._clear_calculated_overlay()
+            self._clear_calculated_overlay(active_pattern_id if incremental else None)
             if hasattr(self, "_refresh_multi_pattern_legends"):
                 self._refresh_multi_pattern_legends()
             self._update_match_table()
             return
 
-        self._clear_calculated_overlay()
+        self._clear_calculated_overlay(active_pattern_id if incremental else None)
         if hasattr(self, "_redraw_estimated_background_components_for_current_view"):
-            self._redraw_estimated_background_components_for_current_view()
+            self._redraw_estimated_background_components_for_current_view(
+                active_pattern_id if incremental else None
+            )
         try:
+            preview_required_pattern_id: str | None = None
             for pattern in patterns:
                 candidates = self._profile_candidates_for_pattern(pattern)
                 if not candidates:
                     continue
-                result, candidate_by_key = self._finder_result_for_pattern(pattern, candidates)
+                is_active = pattern.id == active_pattern_id
+                # In multi-pattern mode only the active sample may trigger a
+                # scientific recalculation. Other samples are drawn from their
+                # already verified cache and will be calculated when activated.
+                result, candidate_by_key = self._finder_result_for_pattern(
+                    pattern,
+                    candidates,
+                    cache_only=bool(self.show_all_selected_patterns and not is_active),
+                )
                 if result is None:
                     continue
-                is_active = pattern.id == active_pattern_id
+                for candidate in candidate_by_key.values():
+                    if not isinstance(candidate, dict) or candidate.get("_CifPath"):
+                        continue
+                    try:
+                        candidate["_CifPath"] = str(self._candidate_cif_path(candidate))
+                    except Exception:
+                        pass
                 if is_active:
                     self._last_match_profile_fwhm = float(getattr(result, "fwhm", 0.0) or 0.0)
                     self._last_match_profile_eta = float(getattr(result, "profile_eta", 0.0) or 0.0)
@@ -1682,7 +1891,7 @@ class PhaseFinderWindow(
                 ) if self.show_all_selected_patterns else (
                     self._active_peak_labels_requested() if hasattr(self, "_active_peak_labels_requested") else False
                 )
-                draw_match_profile_result(
+                summary_snapshot = draw_match_profile_result(
                     result=result,
                     candidate_by_key=candidate_by_key,
                     match_plot=self.match_plot,
@@ -1710,6 +1919,27 @@ class PhaseFinderWindow(
                     show_peak_labels=show_peak_labels,
                     show_background_line=not self._pattern_has_saved_background_components(pattern),
                 )
+                profile_state = self.profile_states.setdefault(pattern.id, {})
+                if isinstance(profile_state, dict):
+                    previous_snapshot = profile_state.get("result_snapshot")
+                    previous_scientific = (
+                        {key: value for key, value in previous_snapshot.items() if key != "preview_path"}
+                        if isinstance(previous_snapshot, dict)
+                        else None
+                    )
+                    current_scientific = {
+                        key: value for key, value in summary_snapshot.items() if key != "preview_path"
+                    }
+                    scientific_changed = previous_scientific != current_scientific
+                    if is_active and scientific_changed and self.show_all_selected_patterns:
+                        self.analysis_preview_paths.pop(pattern.id, None)
+                    if (
+                        is_active
+                        and not self.show_all_selected_patterns
+                        and (scientific_changed or pattern.id not in self.analysis_preview_paths)
+                    ):
+                        preview_required_pattern_id = pattern.id
+                    profile_state["result_snapshot"] = summary_snapshot
             if hasattr(self, "_refresh_multi_pattern_legends"):
                 self._refresh_multi_pattern_legends()
         except Exception as exc:
@@ -1722,6 +1952,19 @@ class PhaseFinderWindow(
             self._apply_plot_layer_visibility_settings(self.plot_view_settings)
         if auto_zoom:
             self._reset_match_plot_view()
+        if active_pattern is not None and preview_required_pattern_id == active_pattern.id:
+            try:
+                preview_path = capture_analysis_preview(
+                    self._publication_plot_image(),
+                    project_id=self.project.id,
+                    pattern_id=active_pattern.id,
+                )
+                if preview_path:
+                    self.analysis_preview_paths[active_pattern.id] = preview_path
+                    self.profile_states[active_pattern.id]["result_snapshot"]["preview_path"] = preview_path
+            except Exception:
+                # A preview is supplementary; it must never interrupt analysis.
+                pass
 
     def _pattern_has_saved_background_components(self, pattern) -> bool:
         if pattern is None:
@@ -1942,6 +2185,7 @@ class PhaseFinderWindow(
         rows: list[list[str]],
         force: bool = False,
         progress=None,
+        gain_context=None,
     ) -> list[list[str]]:
         if not force and not self._rank_by_peak_probability_enabled():
             return rows
@@ -1952,7 +2196,8 @@ class PhaseFinderWindow(
         if not observed_records:
             return rows
         gain_records = observed_records
-        gain_context = self._candidate_gain_context() if self.match_candidates else None
+        if gain_context is None and self.match_candidates:
+            gain_context = self._candidate_gain_context()
         if gain_context is not None:
             residual_share = float(gain_context.get("residual_share", 0.0) or 0.0)
             before_fit = float(gain_context.get("before_fit", 0.0) or 0.0)
@@ -2206,6 +2451,16 @@ class PhaseFinderWindow(
         return keep_records
 
     def _gain_stage_records(self, context, stage: str, limit: int = 80) -> list[ObservedLineRecord]:
+        cache = context.setdefault("_gain_stage_records_cache", {})
+        cache_key = (str(stage), int(limit))
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+        records = self._compute_gain_stage_records(context, stage, limit=limit)
+        cache[cache_key] = records
+        return records
+
+    def _compute_gain_stage_records(self, context, stage: str, limit: int = 80) -> list[ObservedLineRecord]:
         if stage == "direct":
             return self._gain_observed_records(context, limit=limit)
 
@@ -2579,7 +2834,7 @@ class PhaseFinderWindow(
         target = np.asarray(context.get("target", []), dtype=float)
         if len(x) < 5 or len(target) != len(x):
             return peaks
-        records = self._observed_peak_records(x, target, limit=140)
+        records = self._gain_context_observed_peak_records(context, "target", limit=140)
         positions = self._record_positions(records)
         if len(positions) < 3:
             return peaks
@@ -2725,7 +2980,7 @@ class PhaseFinderWindow(
             return 0.0
         stage = str(context.get("gain_stage", "direct") or "direct")
         residual_records = self._gain_stage_records(context, stage, limit=90)
-        target_records = self._observed_peak_records(x, target, limit=140)
+        target_records = self._gain_context_observed_peak_records(context, "target", limit=140)
         if not residual_records or not target_records:
             return 0.0
         residual_records = sorted(
@@ -3926,11 +4181,44 @@ class PhaseFinderWindow(
         else:
             self._search_pdf2_text()
 
-    def _set_candidate_rows(self, rows: list[list[str]], force_rank: bool = False, rank_progress=None) -> None:
+    def _gain_context_observed_peak_records(
+        self,
+        context,
+        signal: str,
+        *,
+        limit: int,
+    ) -> list[ObservedLineRecord]:
+        cache = context.setdefault("_gain_observed_peak_records_cache", {})
+        cache_key = (str(signal), int(limit))
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+        x = np.asarray(context.get("x", []), dtype=float)
+        y = np.asarray(context.get(signal, []), dtype=float)
+        if len(x) == 0 or len(y) != len(x):
+            records: list[ObservedLineRecord] = []
+        else:
+            records = self._observed_peak_records(x, y, limit=limit)
+        cache[cache_key] = records
+        return records
+
+    def _set_candidate_rows(
+        self,
+        rows: list[list[str]],
+        force_rank: bool = False,
+        rank_progress=None,
+        gain_context=None,
+        skip_rank: bool = False,
+    ) -> None:
         self._candidate_rank_token += 1
         rows = [normalize_candidate_row(row) for row in rows]
-        if (force_rank or self._rank_by_peak_probability_enabled()) and rows:
-            rows = self._rank_candidate_rows_by_peak_probability(rows, force=force_rank, progress=rank_progress)
+        if not skip_rank and (force_rank or self._rank_by_peak_probability_enabled()) and rows:
+            rows = self._rank_candidate_rows_by_peak_probability(
+                rows,
+                force=force_rank,
+                progress=rank_progress,
+                gain_context=gain_context,
+            )
         self.candidate_table.set_rows(rows, lambda row: row)
         if hasattr(self, "_update_profile_view_context"):
             self._update_profile_view_context()

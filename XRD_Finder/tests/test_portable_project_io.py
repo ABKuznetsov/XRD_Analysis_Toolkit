@@ -13,10 +13,125 @@ from xrd_finder.core.project import Project
 from xrd_finder.core.series import SeriesAnalysis
 from xrd_finder.core.structure import Structure
 from xrd_finder.io import project_io
+from xrd_finder.io.analysis_summary import compute_result_sha256
 from xrd_finder.io.project_io import _extract_portable_member, load_project_manifest, save_project_manifest
 
 
 class PortableProjectIoTest(unittest.TestCase):
+    def test_xpff_embeds_and_restores_analysis_preview_without_changing_result_hash(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            preview = tmp_path / "preview.png"
+            preview.write_bytes(b"\x89PNG\r\n\x1a\npreview")
+            pattern = Pattern.create("Sample")
+            project = Project(name="Preview project", patterns=[pattern])
+            project.finder_state.analysis_preview_paths = {pattern.id: str(preview)}
+            project.analysis_summary = {
+                "schema_version": 1,
+                "phase_catalog": [],
+                "patterns": [
+                    {
+                        "pattern_id": pattern.id,
+                        "title": pattern.name,
+                        "sample_ref": None,
+                        "phases": [],
+                        "quantification": {"method": "profile_scale_cell_mass", "is_estimate": True},
+                        "fit": {"score_percent": 90.0, "explained_peaks": 0, "total_peaks": 0},
+                        "unknown_peaks": [],
+                        "preview_path": str(preview),
+                    }
+                ],
+            }
+            expected_hash = compute_result_sha256(project.analysis_summary)
+            target = tmp_path / "preview.xpff"
+
+            save_project_manifest(project, target)
+            preview.unlink()
+
+            with zipfile.ZipFile(target) as archive:
+                preview_members = [name for name in archive.namelist() if name.startswith("previews/")]
+                self.assertEqual(preview_members, [f"previews/{pattern.id}.png"])
+                manifest = json.loads(archive.read("project.json"))
+                self.assertEqual(
+                    manifest["analysis_summary"]["patterns"][0]["preview_path"],
+                    f"previews/{pattern.id}.png",
+                )
+                self.assertEqual(manifest["analysis_summary"]["result_sha256"], expected_hash)
+
+            restored = load_project_manifest(target)
+            restored_preview = Path(restored.finder_state.analysis_preview_paths[pattern.id])
+            self.assertTrue(restored_preview.is_file())
+            self.assertEqual(restored_preview.read_bytes(), b"\x89PNG\r\n\x1a\npreview")
+            self.assertEqual(compute_result_sha256(restored.analysis_summary), expected_hash)
+
+    def test_xpff_round_trips_verified_analysis_summary(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            project = Project(name="Summary project")
+            project.analysis_summary = {
+                "schema_version": 1,
+                "analysis_id": "ANL-1",
+                "revision_id": "REV-1",
+                "generated_at": "2026-08-12T10:30:00Z",
+                "producer": {"application": "XRD Phase Finder", "version": "1.4.0"},
+                "phase_catalog": [
+                    {
+                        "phase_id": "PHASE-1",
+                        "name": "BaSiO3",
+                        "formula": "BaSiO3",
+                        "source": "USER",
+                        "source_id": "BaSiO3",
+                    }
+                ],
+                "patterns": [
+                    {
+                        "pattern_id": "PAT-1",
+                        "title": "003-00125",
+                        "sample_ref": None,
+                        "phases": [{"phase_id": "PHASE-1", "fraction_percent": 100.0}],
+                        "quantification": {"method": "profile_scale_cell_mass", "is_estimate": True},
+                        "fit": {"score_percent": 96.0, "explained_peaks": 11, "total_peaks": 11},
+                        "unknown_peaks": [],
+                        "preview_path": None,
+                    }
+                ],
+            }
+            target = tmp_path / "summary.xpff"
+
+            save_project_manifest(project, target)
+
+            with zipfile.ZipFile(target) as archive:
+                manifest = json.loads(archive.read("project.json"))
+            stored_summary = manifest["analysis_summary"]
+            self.assertEqual(stored_summary["result_sha256"], compute_result_sha256(stored_summary))
+
+            restored = load_project_manifest(target)
+            self.assertEqual(restored.analysis_summary, stored_summary)
+
+    def test_xpff_rejects_tampered_analysis_summary(self) -> None:
+        with TemporaryDirectory() as directory:
+            target = Path(directory) / "tampered.xpff"
+            summary = {
+                "schema_version": 1,
+                "result_sha256": "0" * 64,
+                "phase_catalog": [],
+                "patterns": [],
+            }
+            data = {
+                "name": "Tampered project",
+                "patterns": [],
+                "phases": [],
+                "structures": [],
+                "series": [],
+                "finder_state": {},
+                "analysis_summary": summary,
+            }
+            with zipfile.ZipFile(target, mode="w") as archive:
+                archive.writestr("project.json", json.dumps(data))
+
+            with self.assertRaisesRegex(ValueError, "result_sha256"):
+                load_project_manifest(target)
+
     def test_xpff_rejects_unsafe_asset_member_paths_before_file_io(self) -> None:
         """Fails if native path parsing can reinterpret a crafted ZIP member."""
 

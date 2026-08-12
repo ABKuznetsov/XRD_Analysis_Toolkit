@@ -41,14 +41,27 @@ class PhaseFinderCandidateSearchActionsMixin:
             options.aflow_enabled = False
             options.oqmd_enabled = False
 
-        self._prepare_candidate_database_search()
+        search_token = self._prepare_candidate_database_search()
         auto_search_token = int(getattr(self, "_auto_search_token", 0)) + 1
         self._auto_search_token = auto_search_token
         self.finder_action_bar.set_auto_search_busy(True)
         label = " ".join(elements) if elements else "observed peak positions"
 
+        def partial(result) -> None:
+            if (
+                search_token != getattr(self, "_candidate_search_request_token", 0)
+                or auto_search_token != getattr(self, "_auto_search_token", 0)
+            ):
+                return
+            rows = result or []
+            if rows:
+                self._set_candidate_rows(rows, skip_rank=True)
+
         def success(result) -> None:
-            if auto_search_token != getattr(self, "_auto_search_token", 0):
+            if (
+                search_token != getattr(self, "_candidate_search_request_token", 0)
+                or auto_search_token != getattr(self, "_auto_search_token", 0)
+            ):
                 return
             rows = result or []
             if not rows:
@@ -82,7 +95,10 @@ class PhaseFinderCandidateSearchActionsMixin:
                 self.finder_action_bar.set_auto_search_busy(False)
 
         def failure(message: str, details: str) -> None:
-            if auto_search_token != getattr(self, "_auto_search_token", 0):
+            if (
+                search_token != getattr(self, "_candidate_search_request_token", 0)
+                or auto_search_token != getattr(self, "_auto_search_token", 0)
+            ):
                 return
             self.finder_action_bar.set_auto_search_busy(False)
             QMessageBox.warning(self, "Auto search failed", message or details)
@@ -90,20 +106,29 @@ class PhaseFinderCandidateSearchActionsMixin:
         self._run_background_task(
             "Auto search",
             f"Searching candidates from {label}...",
-            lambda progress: self.candidate_search_service.search_elements(elements, options, progress=progress),
+            lambda progress, partial_results: self.candidate_search_service.search_elements(
+                elements,
+                options,
+                progress=progress,
+                partial_results=partial_results,
+            ),
             success,
             failure,
             with_progress=True,
             operation_name="match.search",
+            on_partial=partial,
         )
 
-    def _prepare_candidate_database_search(self) -> None:
+    def _prepare_candidate_database_search(self) -> int:
+        search_token = int(getattr(self, "_candidate_search_request_token", 0)) + 1
+        self._candidate_search_request_token = search_token
         if hasattr(self, "_clear_transient_candidate_preview"):
             self._clear_transient_candidate_preview()
         if hasattr(self, "_clear_probability_caches"):
             self._clear_probability_caches()
         if hasattr(self, "candidate_search_service"):
             self.candidate_search_service.cancel_background_downloads()
+        return search_token
 
     def _search_pdf2_text(self) -> None:
         query = self.search_input.text().strip() if self.search_input is not None else ""
@@ -115,22 +140,43 @@ class PhaseFinderCandidateSearchActionsMixin:
             self._set_candidate_rows([["", "", "", "Enter a phase name, formula, DOI, or entry ID", "", ""]])
             return
         options = self._candidate_search_options()
-        self._prepare_candidate_database_search()
+        search_token = self._prepare_candidate_database_search()
+
+        def partial(result) -> None:
+            if search_token != getattr(self, "_candidate_search_request_token", 0):
+                return
+            rows = result or []
+            if rows:
+                self._set_candidate_rows(rows, skip_rank=True)
 
         def success(result) -> None:
+            if search_token != getattr(self, "_candidate_search_request_token", 0):
+                return
             rows = result or []
             if rows:
                 self._set_candidate_rows(rows)
             else:
                 self._set_candidate_rows([["", "", "", f"No entries found in the selected phase databases for: {query}", "", ""]])
 
+        def failure(message: str, details: str) -> None:
+            if search_token != getattr(self, "_candidate_search_request_token", 0):
+                return
+            QMessageBox.warning(self, "Find candidates", message or details)
+
         self._run_background_task(
             "Find candidates",
             f"Searching phase databases for {query}...",
-            lambda progress: self.candidate_search_service.search_text(query, options, progress=progress),
+            lambda progress, partial_results: self.candidate_search_service.search_text(
+                query,
+                options,
+                progress=progress,
+                partial_results=partial_results,
+            ),
             success,
+            failure,
             with_progress=True,
             operation_name="match.search",
+            on_partial=partial,
         )
 
     def _search_from_controls(self) -> None:
@@ -146,9 +192,18 @@ class PhaseFinderCandidateSearchActionsMixin:
         elements = list(self.selected_element_order)
         options = self._candidate_search_options()
         search_label = self.formula_sum_input.text().strip() if self.formula_sum_input is not None else " ".join(elements)
-        self._prepare_candidate_database_search()
+        search_token = self._prepare_candidate_database_search()
+
+        def partial(result) -> None:
+            if search_token != getattr(self, "_candidate_search_request_token", 0):
+                return
+            rows = result or []
+            if rows:
+                self._set_candidate_rows(rows, skip_rank=True)
 
         def success(result) -> None:
+            if search_token != getattr(self, "_candidate_search_request_token", 0):
+                return
             rows = result or []
             if self.search_input is not None and self.formula_sum_input is not None:
                 self.search_input.setText(self.formula_sum_input.text().strip())
@@ -157,13 +212,25 @@ class PhaseFinderCandidateSearchActionsMixin:
                 return
             self._set_candidate_rows(rows)
 
+        def failure(message: str, details: str) -> None:
+            if search_token != getattr(self, "_candidate_search_request_token", 0):
+                return
+            QMessageBox.warning(self, "Find candidates", message or details)
+
         self._run_background_task(
             "Find candidates",
             f"Searching phase databases for {search_label}...",
-            lambda progress: self.candidate_search_service.search_elements(elements, options, progress=progress),
+            lambda progress, partial_results: self.candidate_search_service.search_elements(
+                elements,
+                options,
+                progress=progress,
+                partial_results=partial_results,
+            ),
             success,
+            failure,
             with_progress=True,
             operation_name="match.search",
+            on_partial=partial,
         )
 
     def _candidate_search_options(self) -> CandidateSearchOptions:

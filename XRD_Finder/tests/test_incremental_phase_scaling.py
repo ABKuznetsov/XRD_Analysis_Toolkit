@@ -132,3 +132,22 @@ def test_overlap_stage_ignores_an_already_well_fitted_peak() -> None:
     records = PhaseFinderWindow._gain_stage_records(window, context, "overlap", limit=10)
 
     assert records == []
+
+
+def test_gain_stage_records_are_reused_within_one_context() -> None:
+    window = PhaseFinderWindow.__new__(PhaseFinderWindow)
+    calls = 0
+
+    def gain_records(_context, limit=80):
+        nonlocal calls
+        calls += 1
+        return [(30.0, float(limit))]
+
+    window._gain_observed_records = gain_records
+    context = {}
+
+    first = PhaseFinderWindow._gain_stage_records(window, context, "direct", limit=90)
+    second = PhaseFinderWindow._gain_stage_records(window, context, "direct", limit=90)
+
+    assert second is first
+    assert calls == 1

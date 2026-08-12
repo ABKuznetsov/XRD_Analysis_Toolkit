@@ -7,6 +7,7 @@ from typing import Any
 @dataclass(slots=True)
 class FinderProjectState:
     checked_pattern_ids: list[str] = field(default_factory=list)
+    pattern_display_order_ids: list[str] = field(default_factory=list)
     checked_phase_ids: list[str] = field(default_factory=list)
     current_object_type: str = ""
     current_object_id: str = ""
@@ -28,6 +29,8 @@ class FinderProjectState:
     match_alignment_scores: dict[str, str] = field(default_factory=dict)
     candidate_cif_paths: dict[str, str] = field(default_factory=dict)
     profile_states: dict[str, dict[str, Any]] = field(default_factory=dict)
+    pattern_sample_refs: dict[str, dict[str, str]] = field(default_factory=dict)
+    analysis_preview_paths: dict[str, str] = field(default_factory=dict)
     phase_colors: dict[str, str] = field(default_factory=dict)
     observed_pattern_colors: dict[str, str] = field(default_factory=dict)
     plot_view_settings: dict[str, Any] = field(default_factory=dict)

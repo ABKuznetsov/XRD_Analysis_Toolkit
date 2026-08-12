@@ -220,7 +220,7 @@ class PhaseFinderObservedPatternActionsMixin:
             if hasattr(self, "_clear_preview_overlay"):
                 self._clear_preview_overlay()
         self._refresh_observed_pattern_plot()
-        self._rerun_active_calculation()
+        self._rerun_active_calculation(active_only=False)
         if hasattr(self, "_update_profile_view_context"):
             self._update_profile_view_context()
 
@@ -228,17 +228,18 @@ class PhaseFinderObservedPatternActionsMixin:
         self.pattern_stack_offset_percent = max(0, int(percent))
         if self.show_all_selected_patterns:
             self._refresh_observed_pattern_plot()
-            self._rerun_active_calculation()
+            self._rerun_active_calculation(active_only=False)
 
     def _set_pattern_normalization(self, enabled: bool) -> None:
         self.normalize_observed_patterns = bool(enabled)
+        self.match_plot_view_initialized = False
         if hasattr(self, "_auto_scoring_cache"):
             self._auto_scoring_cache.clear()
         if hasattr(self, "_invalidate_match_profile_cache"):
             self._invalidate_match_profile_cache()
         self._clear_probability_caches()
         self._refresh_observed_pattern_plot()
-        self._rerun_active_calculation()
+        self._rerun_active_calculation(active_only=False)
 
     def _normalized_observed_data(self, data: np.ndarray | None) -> np.ndarray | None:
         if data is None or not self.normalize_observed_patterns:
@@ -364,7 +365,13 @@ class PhaseFinderObservedPatternActionsMixin:
     def _patterns_to_display(self):
         if self.show_all_selected_patterns:
             checked = set(self.tree.checked_pattern_ids())
-            patterns = [pattern for pattern in self.project.patterns if pattern.id in checked]
+            patterns_by_id = {pattern.id: pattern for pattern in self.project.patterns}
+            display_order = self._normalized_pattern_display_order()
+            patterns = [
+                patterns_by_id[pattern_id]
+                for pattern_id in display_order
+                if pattern_id in checked and pattern_id in patterns_by_id
+            ]
             if patterns:
                 return patterns
         pattern = self._active_pattern()
@@ -508,13 +515,20 @@ class PhaseFinderObservedPatternActionsMixin:
         if self.show_all_selected_patterns:
             QTimer.singleShot(0, self._fit_multi_pattern_legends_to_canvas)
 
-    def _redraw_estimated_background_components_for_current_view(self) -> None:
+    def _redraw_estimated_background_components_for_current_view(
+        self,
+        pattern_id: str | None = None,
+    ) -> None:
         patterns = self._patterns_to_display()
         loaded_patterns = apply_pattern_offsets(
             load_observed_patterns(patterns, None, normalize=self.normalize_observed_patterns),
             self.show_all_selected_patterns,
             self.pattern_stack_offset_percent,
         )
+        if pattern_id:
+            loaded_patterns = [
+                item for item in loaded_patterns if item.pattern.id == pattern_id
+            ]
         self._draw_estimated_background_components(loaded_patterns)
 
     def _draw_estimated_background_components(self, loaded_patterns) -> None:

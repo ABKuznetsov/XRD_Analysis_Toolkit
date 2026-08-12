@@ -18,6 +18,7 @@ from xrd_finder.core.project import Project
 from xrd_finder.core.result import AnalysisResult
 from xrd_finder.core.series import SeriesAnalysis, SeriesPoint
 from xrd_finder.core.structure import AtomSite, CellParameters, Structure
+from xrd_finder.io.analysis_summary import finalize_analysis_summary, verify_analysis_summary
 
 
 PORTABLE_PROJECT_SUFFIX = ".xpff"
@@ -41,7 +42,10 @@ def save_project_manifest(project: Project, path: str | Path) -> None:
     if target.suffix.lower() == PORTABLE_PROJECT_SUFFIX:
         _save_portable_project(project, target)
         return
-    target.write_text(json.dumps(_to_plain(project), indent=2), encoding="utf-8")
+    data = _to_plain(project)
+    if data.get("analysis_summary"):
+        data["analysis_summary"] = finalize_analysis_summary(data["analysis_summary"])
+    target.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def load_project_manifest(path: str | Path) -> Project:
@@ -51,6 +55,7 @@ def load_project_manifest(path: str | Path) -> Project:
     data = json.loads(source.read_text(encoding="utf-8-sig"))
     if not isinstance(data, dict):
         raise ValueError("Project manifest must contain a JSON object.")
+    verify_analysis_summary(data.get("analysis_summary", {}))
     project = _from_dataclass(Project, data)
     project.root_path = str(source)
     project.prune_series_memberships()
@@ -61,6 +66,8 @@ def _save_portable_project(project: Project, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     data = _to_plain(project)
     data["root_path"] = ""
+    if data.get("analysis_summary"):
+        data["analysis_summary"] = finalize_analysis_summary(data["analysis_summary"])
     file_members: dict[str, str] = {}
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{target.stem}.",
@@ -95,6 +102,10 @@ def _save_portable_project(project: Project, target: Path) -> None:
                     ".cif",
                     file_members,
                 )
+                preview_paths = finder_state.get("analysis_preview_paths")
+                if isinstance(preview_paths, dict):
+                    _embed_preview_mapping(archive, preview_paths, file_members)
+                    _rewrite_analysis_preview_paths(data.get("analysis_summary"), preview_paths)
             archive.writestr(
                 PORTABLE_MANIFEST_NAME,
                 json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8"),
@@ -218,6 +229,7 @@ def _load_portable_project(source: Path) -> Project:
             raise ValueError(f"{PORTABLE_PROJECT_TYPE_NAME} does not contain {PORTABLE_MANIFEST_NAME}.") from exc
         if not isinstance(data, dict):
             raise ValueError("Project manifest must contain a JSON object.")
+        verify_analysis_summary(data.get("analysis_summary", {}))
         project = _from_dataclass(Project, data)
         extraction_root = _portable_extraction_root(source)
         for item in [*project.patterns, *project.phases, *project.structures]:
@@ -230,6 +242,12 @@ def _load_portable_project(source: Path) -> Project:
             archive,
             project.finder_state.candidate_cif_paths,
             extraction_root,
+        )
+        project.finder_state.analysis_preview_paths = _extract_path_mapping(
+            archive,
+            project.finder_state.analysis_preview_paths,
+            extraction_root,
+            allowed_prefix="previews/",
         )
     project.root_path = str(source)
     project.prune_series_memberships()
@@ -249,6 +267,8 @@ def _extract_path_mapping(
     archive: zipfile.ZipFile,
     paths: dict[str, str],
     extraction_root: Path,
+    *,
+    allowed_prefix: str = "assets/",
 ) -> dict[str, str]:
     """Return candidate keys mapped to project-private extracted paths."""
     if not isinstance(paths, dict):
@@ -258,15 +278,23 @@ def _extract_path_mapping(
         member_path = str(member or "").strip()
         if not member_path:
             continue
-        extracted_paths[str(key)] = str(_extract_portable_member(archive, member_path, extraction_root))
+        extracted_paths[str(key)] = str(
+            _extract_portable_member(archive, member_path, extraction_root, allowed_prefix=allowed_prefix)
+        )
     return extracted_paths
 
 
-def _extract_portable_member(archive: zipfile.ZipFile, member: str, root: Path) -> Path:
+def _extract_portable_member(
+    archive: zipfile.ZipFile,
+    member: str,
+    root: Path,
+    *,
+    allowed_prefix: str = "assets/",
+) -> Path:
     raw_parts = member.split("/")
     member_path = PurePosixPath(member)
     if (
-        not member.startswith("assets/")
+        not member.startswith(allowed_prefix)
         or "\\" in member
         or ":" in member
         or any(part in {"", ".", ".."} for part in raw_parts)
@@ -286,6 +314,38 @@ def _extract_portable_member(archive: zipfile.ZipFile, member: str, root: Path) 
                 break
             target_stream.write(block)
     return target
+
+
+def _embed_preview_mapping(
+    archive: zipfile.ZipFile,
+    paths: dict[str, str],
+    file_members: dict[str, str],
+) -> None:
+    for pattern_id, raw_path in paths.items():
+        source = Path(str(raw_path or "").strip())
+        if not source.is_file():
+            raise ValueError(f"Analysis preview for {pattern_id!r} is absent or unreadable: {source}")
+        source_key = _source_path_key(source)
+        member = file_members.get(source_key)
+        if member is None or not member.startswith("previews/"):
+            member = f"previews/{_safe_member_stem(str(pattern_id))}.png"
+            archive.write(source, member)
+            file_members[source_key] = member
+        paths[pattern_id] = member
+
+
+def _rewrite_analysis_preview_paths(summary: Any, preview_paths: dict[str, str]) -> None:
+    if not isinstance(summary, dict):
+        return
+    patterns = summary.get("patterns")
+    if not isinstance(patterns, list):
+        return
+    for pattern in patterns:
+        if not isinstance(pattern, dict):
+            continue
+        pattern_id = str(pattern.get("pattern_id", "") or "")
+        if pattern_id in preview_paths:
+            pattern["preview_path"] = preview_paths[pattern_id]
 
 
 def _from_dataclass(cls: type, data: Any):

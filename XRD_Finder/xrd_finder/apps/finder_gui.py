@@ -68,7 +68,7 @@ def _run_gui() -> int:
             load_error = f"Could not open XRD Phase Finder File:\n{project_path}\n\n{exc}"
     else:
         project = build_local_project(args.pattern, args.cif)
-    window = PhaseFinderWindow(project)
+    window = PhaseFinderWindow(project, defer_initial_plot=project_loaded)
     if project_loaded:
         window._after_project_loaded()
     if icon_path.exists():

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from xrd_finder.core.finder_state import FinderProjectState
 from xrd_finder.io.cif_loader import create_phase_from_cif
+from xrd_finder.io.analysis_summary_builder import build_analysis_summary
 from xrd_finder.ui.element_filter import element_sort_key
 from xrd_finder.ui.plot_view_settings import PlotViewSettings
 
@@ -72,6 +73,7 @@ class PhaseFinderProjectStateActionsMixin:
             view_range = []
         self.project.finder_state = FinderProjectState(
             checked_pattern_ids=self.tree.checked_pattern_ids(),
+            pattern_display_order_ids=self._normalized_pattern_display_order(),
             checked_phase_ids=self.tree.checked_phase_ids(),
             current_object_type=current[0] if current else "",
             current_object_id=current[1] if current else "",
@@ -93,6 +95,12 @@ class PhaseFinderProjectStateActionsMixin:
             match_alignment_scores={str(key): str(value) for key, value in self.match_alignment_scores.items()},
             candidate_cif_paths=self._collect_project_candidate_cif_paths(),
             profile_states=deepcopy(self.profile_states),
+            pattern_sample_refs=deepcopy(
+                getattr(self.project.finder_state, "pattern_sample_refs", {}) or {}
+            ),
+            analysis_preview_paths=deepcopy(
+                getattr(self, "analysis_preview_paths", {}) or {}
+            ),
             phase_colors={str(key): str(value) for key, value in self.phase_colors.items()},
             observed_pattern_colors={str(key): str(value) for key, value in self.observed_pattern_colors.items()},
             plot_view_settings=asdict(self.plot_view_settings),
@@ -111,6 +119,9 @@ class PhaseFinderProjectStateActionsMixin:
             reference_patterns_checked=self.reference_patterns_checkbox.isChecked() if self.reference_patterns_checkbox is not None else False,
             rank_by_probability_checked=self.rank_by_probability_checkbox.isChecked() if self.rank_by_probability_checkbox is not None else True,
         )
+        from xrd_finder import __version__
+
+        self.project.analysis_summary = build_analysis_summary(self.project, __version__)
 
     def _restore_finder_state_from_project(self) -> None:
         state = getattr(self.project, "finder_state", None)
@@ -119,15 +130,26 @@ class PhaseFinderProjectStateActionsMixin:
         self._project_restore_warnings: list[str] = []
         self._install_embedded_candidate_cifs(state)
         self.profile_states = deepcopy(getattr(state, "profile_states", {}) or {})
+        self.analysis_preview_paths = dict(
+            getattr(state, "analysis_preview_paths", {}) or {}
+        )
         self.phase_colors = dict(getattr(state, "phase_colors", {}) or {})
         self.observed_pattern_colors = dict(getattr(state, "observed_pattern_colors", {}) or {})
         self.show_all_selected_patterns = False
         self._restore_project_plot_view_settings(getattr(state, "plot_view_settings", {}) or {})
-        self.tree.restore_expansion_state(getattr(state, "tree_expansion_state", {}) or {})
-        self.tree.set_checked_pattern_ids(state.checked_pattern_ids)
-        self.tree.set_checked_phase_ids(state.checked_phase_ids)
-        if state.current_object_type and state.current_object_id:
-            self.tree.select_object(state.current_object_type, state.current_object_id)
+        tree_signals_were_blocked = self.tree.blockSignals(True)
+        try:
+            self.tree.restore_expansion_state(getattr(state, "tree_expansion_state", {}) or {})
+            self.pattern_display_order_ids = list(
+                getattr(state, "pattern_display_order_ids", []) or []
+            )
+            self._normalized_pattern_display_order()
+            self.tree.set_checked_pattern_ids(state.checked_pattern_ids)
+            self.tree.set_checked_phase_ids(state.checked_phase_ids)
+            if state.current_object_type and state.current_object_id:
+                self.tree.select_object(state.current_object_type, state.current_object_id)
+        finally:
+            self.tree.blockSignals(tree_signals_were_blocked)
         self.show_all_selected_patterns = bool(state.show_all_selected_patterns)
         self.pattern_stack_offset_percent = int(state.pattern_stack_offset_percent)
         self.normalize_observed_patterns = bool(getattr(state, "normalize_observed_patterns", False))
@@ -135,9 +157,23 @@ class PhaseFinderProjectStateActionsMixin:
         self.show_hkl_labels = bool(state.show_hkl_labels)
         if self.finder_action_bar is not None:
             mode = "All selected" if self.show_all_selected_patterns else "One"
-            self.finder_action_bar.pattern_display_mode.setCurrentText(mode)
-            self.finder_action_bar.pattern_offset_slider.setValue(max(0, min(150, self.pattern_stack_offset_percent)))
-            self.finder_action_bar.normalize_patterns_checkbox.setChecked(self.normalize_observed_patterns)
+            controls = (
+                self.finder_action_bar.pattern_display_mode,
+                self.finder_action_bar.pattern_offset_slider,
+                self.finder_action_bar.normalize_patterns_checkbox,
+            )
+            previous_signal_states = [control.blockSignals(True) for control in controls]
+            try:
+                self.finder_action_bar.pattern_display_mode.setCurrentText(mode)
+                self.finder_action_bar.pattern_offset_slider.setValue(
+                    max(0, min(150, self.pattern_stack_offset_percent))
+                )
+                self.finder_action_bar.normalize_patterns_checkbox.setChecked(
+                    self.normalize_observed_patterns
+                )
+            finally:
+                for control, was_blocked in zip(controls, previous_signal_states):
+                    control.blockSignals(was_blocked)
         self._restore_filter_state(state)
         if state.candidate_rows:
             self._set_candidate_rows(self._candidate_state_rows(state.candidate_rows))
@@ -213,6 +249,13 @@ class PhaseFinderProjectStateActionsMixin:
         self.selected_elements = set(state.selected_elements)
         self.selected_element_order = list(state.selected_element_order)
         self.exclude_all_other_elements = bool(state.exclude_all_other_elements)
+        if self.element_table is not None:
+            default_state = "excluded" if self.exclude_all_other_elements else "neutral"
+            for element in self._element_symbols():
+                self.element_table.set_element_state(
+                    element,
+                    self.element_states.get(element, default_state),
+                )
         if self.search_input is not None:
             self.search_input.setText(state.search_text)
         if self.name_input is not None:

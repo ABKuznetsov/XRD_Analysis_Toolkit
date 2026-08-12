@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import itertools
 import queue
@@ -14,8 +15,10 @@ from xrd_finder.services.local_phase_cache import DERIVED_CACHE_VERSION, LocalPh
 from xrd_finder.services.match_pdf2_service import MatchPdf2Service
 from xrd_finder.services.materials_project_service import MaterialsProjectService
 from xrd_finder.services.rruff_service import RruffService
+from xrd_finder.services.runtime_diagnostics import trace_operation
 
 SearchProgressCallback = Callable[[str, int, int], None]
+SearchPartialResultsCallback = Callable[[list[list[str]]], None]
 
 
 @dataclass(slots=True)
@@ -52,6 +55,7 @@ class CandidateSearchService:
         materials_project: MaterialsProjectService,
         aflow: AflowService | None = None,
         oqmd: OqmdService | None = None,
+        status_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.local_phase_cache = local_phase_cache
         self.cod_online = cod_online
@@ -61,6 +65,7 @@ class CandidateSearchService:
         self.materials_project = materials_project
         self.aflow = aflow or AflowService()
         self.oqmd = oqmd or OqmdService()
+        self._status_callback = status_callback
         self._download_lock = threading.Lock()
         self._queued_downloads: set[tuple[str, str]] = set()
         self._refresh_lock = threading.Lock()
@@ -75,11 +80,21 @@ class CandidateSearchService:
         )
         self._download_thread.start()
 
+    def _emit_background_status(self, message: str) -> None:
+        callback = self._status_callback
+        if callback is None:
+            return
+        try:
+            callback(str(message))
+        except Exception:
+            pass
+
     def search_text(
         self,
         query: str,
         options: CandidateSearchOptions,
         progress: SearchProgressCallback | None = None,
+        partial_results: SearchPartialResultsCallback | None = None,
     ) -> list[list[str]]:
         query = query.strip()
         if not query:
@@ -96,32 +111,6 @@ class CandidateSearchService:
             except Exception as exc:
                 rows.append(["CCDC", doi, "", "CCDC CIF not available", "", str(exc)])
         self._emit_search_progress(progress, "Checking local cache...", len(rows), 0, 1)
-
-        ccdc_key = self.search_cache_key("text", query)
-        if options.structural_data_enabled and not self.local_phase_cache.search_is_fresh("CCDC", ccdc_key):
-            try:
-                self._emit_search_progress(progress, "Searching CCDC/CSD...", len(rows), 0, 2)
-                ccdc_entries = self.ccdc.search_text(
-                    query=query,
-                    target_dir=self.local_phase_cache.root / "ccdc_cif",
-                    limit=self.CCDC_RESULT_LIMIT,
-                )
-                self.index_ccdc_entries(ccdc_entries)
-                self.local_phase_cache.mark_search("CCDC", ccdc_key)
-                rows = self.dedupe_candidate_rows(
-                    rows
-                    + self.cache_rows(
-                        self.search_local_cache(
-                            options,
-                            text=formula_query or ("" if query_elements else query),
-                            elements=query_elements or None,
-                        )
-                    )
-                )
-                self._emit_search_progress(progress, f"CCDC/CSD: found {len(ccdc_entries)} entries", len(rows), 0, 3)
-            except Exception as exc:
-                if not rows and self.ccdc.status().installed:
-                    rows.append(["CCDC", "", "", "CSD search failed", "", str(exc)])
 
         if options.local_sources and options.structural_data_enabled:
             rows.extend(
@@ -160,10 +149,38 @@ class CandidateSearchService:
             rows = pdf2_rows + rows
             self._emit_search_progress(progress, f"PDF-2: found {len(rows)} candidates total", len(rows), 0, 6)
 
+        rows = self._emit_partial_candidate_rows(partial_results, rows, options)
+
+        ccdc_key = self.search_cache_key("text", query)
+        if options.structural_data_enabled and not self.local_phase_cache.search_is_fresh("CCDC", ccdc_key):
+            try:
+                self._emit_search_progress(progress, "Searching CCDC/CSD...", len(rows), 0, 2)
+                ccdc_entries = self.ccdc.search_text(
+                    query=query,
+                    target_dir=self.local_phase_cache.root / "ccdc_cif",
+                    limit=self.CCDC_RESULT_LIMIT,
+                )
+                self.index_ccdc_entries(ccdc_entries)
+                self.local_phase_cache.mark_search("CCDC", ccdc_key)
+                rows = self.dedupe_candidate_rows(
+                    rows
+                    + self.cache_rows(
+                        self.search_local_cache(
+                            options,
+                            text=formula_query or ("" if query_elements else query),
+                            elements=query_elements or None,
+                        )
+                    )
+                )
+                self._emit_search_progress(progress, f"CCDC/CSD: found {len(ccdc_entries)} entries", len(rows), 0, 3)
+            except Exception as exc:
+                if not rows and self.ccdc.status().installed:
+                    rows.append(["CCDC", "", "", "CSD search failed", "", str(exc)])
+
         if options.cod_online_enabled and options.structural_data_enabled:
             cod_key = self.search_cache_key("text", query, options.excluded_elements)
             if not self.local_phase_cache.search_is_fresh("COD", cod_key):
-                if rows:
+                if rows and partial_results is None:
                     self._queue_background_cod_text_refresh(
                         cod_key=cod_key,
                         query=query,
@@ -198,7 +215,7 @@ class CandidateSearchService:
         if options.materials_project_enabled and options.structural_data_enabled:
             mp_key = self.search_cache_key("text", query)
             if not self.local_phase_cache.search_is_fresh("MP", mp_key):
-                if rows:
+                if rows and partial_results is None:
                     self._queue_background_mp_text_refresh(mp_key, query)
                     self._emit_search_progress(
                         progress,
@@ -223,7 +240,7 @@ class CandidateSearchService:
         if options.aflow_enabled and options.structural_data_enabled:
             aflow_key = self.search_cache_key("text", query)
             if not self.local_phase_cache.search_is_fresh("AFLOW", aflow_key):
-                if rows:
+                if rows and partial_results is None:
                     self._queue_background_computational_text_refresh("AFLOW", aflow_key, query)
                     self._emit_search_progress(progress, "Local cache is ready; AFLOW refresh is running in the background", len(rows), 0, 10)
                 else:
@@ -242,7 +259,7 @@ class CandidateSearchService:
         if options.oqmd_enabled and options.structural_data_enabled:
             oqmd_key = self.search_cache_key("text", query)
             if not self.local_phase_cache.search_is_fresh("OQMD", oqmd_key):
-                if rows:
+                if rows and partial_results is None:
                     self._queue_background_computational_text_refresh("OQMD", oqmd_key, query)
                     self._emit_search_progress(progress, "Local cache is ready; OQMD refresh is running in the background", len(rows), 0, 11)
                 else:
@@ -267,11 +284,37 @@ class CandidateSearchService:
         elements: list[str],
         options: CandidateSearchOptions,
         progress: SearchProgressCallback | None = None,
+        partial_results: SearchPartialResultsCallback | None = None,
     ) -> list[list[str]]:
         rows = []
         self._emit_search_progress(progress, "Checking local cache...", 0, 0, 1)
-        if options.local_sources and options.structural_data_enabled:
-            rows.extend(self.cache_rows(self.search_local_cache(options, elements=elements)))
+        local_enabled = bool(options.local_sources and options.structural_data_enabled)
+        pdf2_enabled = bool(options.match_pdf2_enabled and options.reference_patterns_enabled)
+        local_entries = None
+        pdf2_entries = None
+        # Automatic peak searches usually query two independent local SQLite
+        # indexes. Run them together so a slow PDF-2 index cannot add its wait
+        # time on top of the structural cache query.
+        if options.observed_peak_positions and local_enabled and pdf2_enabled:
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="xrd-search") as executor:
+                local_future = executor.submit(
+                    self._timed_search_local_cache,
+                    options,
+                    "",
+                    elements,
+                )
+                pdf2_future = executor.submit(
+                    self._timed_search_match_pdf2,
+                    "",
+                    elements,
+                    options.excluded_elements,
+                )
+                local_entries = local_future.result()
+                pdf2_entries = pdf2_future.result()
+        if local_enabled:
+            if local_entries is None:
+                local_entries = self._timed_search_local_cache(options, "", elements)
+            rows.extend(self.cache_rows(local_entries))
             self._emit_search_progress(progress, f"Local cache: found {len(rows)} candidates", len(rows), 0, 2)
         if options.rruff_enabled and options.reference_patterns_enabled:
             rows.extend(
@@ -284,20 +327,21 @@ class CandidateSearchService:
                 )
             )
             self._emit_search_progress(progress, f"RRUFF: found {len(rows)} candidates total", len(rows), 0, 3)
-        if options.match_pdf2_enabled and options.reference_patterns_enabled:
-            pdf2_rows = self.match_pdf2_rows(
-                self.match_pdf2.search(
-                    elements=elements,
-                    excluded_elements=options.excluded_elements,
-                    limit=self.STRUCTURAL_RESULT_LIMIT,
+        if pdf2_enabled:
+            if pdf2_entries is None:
+                pdf2_entries = self._timed_search_match_pdf2(
+                    "",
+                    elements,
+                    options.excluded_elements,
                 )
-            )
+            pdf2_rows = self.match_pdf2_rows(pdf2_entries)
             rows = pdf2_rows + rows
             self._emit_search_progress(progress, f"PDF-2: found {len(rows)} candidates total", len(rows), 0, 4)
+        rows = self._emit_partial_candidate_rows(partial_results, rows, options)
         if options.cod_online_enabled and options.structural_data_enabled:
             cod_key = self.search_cache_key("elements", elements, options.excluded_elements)
             if not self.local_phase_cache.search_is_fresh("COD", cod_key):
-                if rows:
+                if rows and partial_results is None:
                     self._queue_background_cod_elements_refresh(cod_key, elements, options)
                     self._emit_search_progress(
                         progress,
@@ -326,7 +370,7 @@ class CandidateSearchService:
         if options.materials_project_enabled and options.structural_data_enabled:
             mp_key = self.search_cache_key("elements", elements)
             if not self.local_phase_cache.search_is_fresh("MP", mp_key):
-                if rows:
+                if rows and partial_results is None:
                     self._queue_background_mp_elements_refresh(mp_key, elements)
                     self._emit_search_progress(
                         progress,
@@ -349,7 +393,7 @@ class CandidateSearchService:
         if options.aflow_enabled and options.structural_data_enabled:
             aflow_key = self.search_cache_key("elements", elements)
             if not self.local_phase_cache.search_is_fresh("AFLOW", aflow_key):
-                if rows:
+                if rows and partial_results is None:
                     self._queue_background_computational_elements_refresh("AFLOW", aflow_key, elements)
                     self._emit_search_progress(progress, "Local cache is ready; AFLOW refresh is running in the background", len(rows), 0, 10)
                 else:
@@ -366,7 +410,7 @@ class CandidateSearchService:
         if options.oqmd_enabled and options.structural_data_enabled:
             oqmd_key = self.search_cache_key("elements", elements)
             if not self.local_phase_cache.search_is_fresh("OQMD", oqmd_key):
-                if rows:
+                if rows and partial_results is None:
                     self._queue_background_computational_elements_refresh("OQMD", oqmd_key, elements)
                     self._emit_search_progress(progress, "Local cache is ready; OQMD refresh is running in the background", len(rows), 0, 11)
                 else:
@@ -418,6 +462,29 @@ class CandidateSearchService:
             sources=options.local_sources,
             limit=self.LOCAL_INDEXED_RESULT_LIMIT,
         )
+
+    def _timed_search_local_cache(
+        self,
+        options: CandidateSearchOptions,
+        text: str,
+        elements: list[str] | None,
+    ):
+        with trace_operation("match.search.local_cache"):
+            return self.search_local_cache(options, text=text, elements=elements)
+
+    def _timed_search_match_pdf2(
+        self,
+        text: str,
+        elements: list[str] | None,
+        excluded_elements: list[str],
+    ):
+        with trace_operation("match.search.pdf2"):
+            return self.match_pdf2.search(
+                text=text,
+                elements=elements,
+                excluded_elements=excluded_elements,
+                limit=self.STRUCTURAL_RESULT_LIMIT,
+            )
 
     def _dedupe_cached_entries(self, entries):
         seen = set()
@@ -516,6 +583,7 @@ class CandidateSearchService:
             if key in self._queued_refreshes:
                 return
             self._queued_refreshes.add(key)
+        self._emit_background_status(f"Background: queued {key[0]} database update")
         thread = threading.Thread(
             target=self._run_background_refresh,
             args=(key, task),
@@ -526,9 +594,14 @@ class CandidateSearchService:
 
     def _run_background_refresh(self, key: tuple[str, str], task: Callable[[], object]) -> None:
         try:
+            self._emit_background_status(f"Background: updating {key[0]} database...")
             task()
-        except Exception:
-            pass
+        except Exception as exc:
+            self._emit_background_status(
+                f"Background: {key[0]} did not respond — {exc}"
+            )
+        else:
+            self._emit_background_status(f"Background: {key[0]} database updated")
         finally:
             with self._refresh_lock:
                 self._queued_refreshes.discard(key)
@@ -734,6 +807,9 @@ class CandidateSearchService:
             try:
                 if self._download_shutdown:
                     return
+                self._emit_background_status(
+                    f"Background: downloading CIF {key[0]}:{key[1]}..."
+                )
                 cached_path = self.local_phase_cache.cif_path(key[0], key[1])
                 if cached_path is not None:
                     result = cached_path
@@ -744,12 +820,22 @@ class CandidateSearchService:
             except Exception as exc:
                 if result_box is not None:
                     result_box["error"] = exc
+                self._emit_background_status(
+                    f"Background: CIF {key[0]}:{key[1]} failed — {exc}"
+                )
             finally:
                 with self._download_lock:
                     self._queued_downloads.discard(key)
                 if completion is not None:
                     completion.set()
                 self._download_queue.task_done()
+                remaining = self._download_queue.qsize()
+                if remaining:
+                    self._emit_background_status(
+                        f"Background: downloading CIF files — {remaining} remaining"
+                    )
+                elif not self._download_shutdown:
+                    self._emit_background_status("Ready")
 
     def shutdown_background_downloads(self) -> None:
         self._download_shutdown = True
@@ -938,6 +1024,19 @@ class CandidateSearchService:
     def _mark_search_if_complete(self, source: str, query_key: str, result_count: int, limit: int) -> None:
         if int(result_count) < int(limit):
             self.local_phase_cache.mark_search(source, query_key)
+
+    def _emit_partial_candidate_rows(
+        self,
+        callback: SearchPartialResultsCallback | None,
+        rows: list[list[str]],
+        options: CandidateSearchOptions,
+    ) -> list[list[str]]:
+        snapshot = self.dedupe_candidate_rows(
+            self.filter_candidate_rows_by_excluded_elements(rows, options)
+        )
+        if callback is not None and snapshot:
+            callback(snapshot)
+        return snapshot
 
     def _emit_search_progress(
         self,
