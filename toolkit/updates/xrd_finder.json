@@ -1,21 +1,21 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "channel": "stable",
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
-  "published_at": "2026-08-10",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.3.2",
-  "release_notes_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/XRD_Finder/RELEASE_NOTES_1.3.2.md",
+  "published_at": "2026-08-12",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.4.0",
+  "release_notes_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/XRD_Finder/RELEASE_NOTES_1.4.0.md",
   "assets": [
     {
-      "name": "XRD_Phase_Finder_Setup_1.3.2.exe",
+      "name": "XRD_Phase_Finder_Setup_1.4.0.exe",
       "type": "installer",
       "platform": "windows-x64",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.2/XRD_Phase_Finder_Setup_1.3.2.exe",
-      "sha256": "6202ab290a9f57bfa8485759d60054539c300723aa017e9c623746e50725a6bb",
-      "size_bytes": 6703441
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.4.0/XRD_Phase_Finder_Setup_1.4.0.exe",
+      "sha256": "1424c8b6ec0611979e8f0fbde11320baae2872664747cbd26b346ee3e7455fe3",
+      "size_bytes": 6714828
     },
     {
       "name": "XRD_Phase_Finder_macOS_1.3.1.pkg",
@@ -27,14 +27,14 @@
     }
   ],
   "summary": [
-    "Render Multi-XRD publication figures on an automatically taller export canvas.",
-    "Align or drag individual sample legend boxes without covering strong peaks and neighbouring patterns.",
-    "Optionally hide phase names from per-pattern legends while retaining phase markers.",
-    "Keep screen previews compact while exporting legends at full configured size.",
-    "Prevent a macOS graphics crash when an observed pattern is selected directly on the plot."
+    "Store versioned scientific results and per-pattern previews directly in portable XPFF projects.",
+    "Deduplicate phase records and provide deterministic result hashes for SCI Manager revisions.",
+    "Render multi-pattern profiles incrementally and avoid rebuilding unchanged plot layers.",
+    "Search candidate sources in stages and report background activity in the status bar.",
+    "Strengthen standalone runtime repair with complete package and import validation."
   ],
-  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.2/XRD_Phase_Finder_Setup_1.3.2.exe",
-  "installer_sha256": "6202ab290a9f57bfa8485759d60054539c300723aa017e9c623746e50725a6bb",
+  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.4.0/XRD_Phase_Finder_Setup_1.4.0.exe",
+  "installer_sha256": "1424c8b6ec0611979e8f0fbde11320baae2872664747cbd26b346ee3e7455fe3",
   "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.1/XRD_Phase_Finder_macOS_1.3.1.pkg",
   "macos_installer_sha256": "6073e12b6ece8e66ee1b47b8a125b7116d8874adf37d68327473ad00ac494e20"
 }
