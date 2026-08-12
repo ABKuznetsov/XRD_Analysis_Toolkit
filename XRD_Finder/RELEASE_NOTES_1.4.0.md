@@ -10,12 +10,12 @@ Version 1.4.0 turns `.xpff` into a portable scientific-result container while ke
 - Embeds a per-pattern PNG preview generated from the already rendered result without repeating Match or Gain.
 - Keeps old `.xpff` projects readable when they do not contain an analysis summary.
 
-## SCI Manager integration
+## Reproducible result history
 
 - Provides stable analysis, revision, pattern and phase identifiers.
 - Uses an RFC 8785/JCS `result_sha256` to distinguish scientific changes from presentation or metadata changes.
 - Keeps physical-sample links outside the scientific hash, so linking an XRD pattern to a laboratory sample does not create a false scientific revision.
-- Allows SCI Manager to display the Phase Finder result and revision history without recalculating it.
+- Allows external tools to read the stored result and revision history without repeating scientific calculations.
 
 ## Compatibility
 
