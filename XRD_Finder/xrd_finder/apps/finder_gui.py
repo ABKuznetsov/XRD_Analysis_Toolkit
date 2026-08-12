@@ -10,10 +10,17 @@ from PySide6.QtGui import QIcon
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from xrd_finder import __version__
 from xrd_finder.core.pattern import Pattern
 from xrd_finder.core.project import Project
 from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.io.project_io import load_project_manifest
+from xrd_finder.services.runtime_diagnostics import (
+    configure_diagnostics,
+    install_exception_hooks,
+    restore_exception_hooks,
+    trace_operation,
+)
 from xrd_finder.ui.analysis_windows import PhaseFinderWindow
 
 
@@ -32,7 +39,7 @@ def build_local_project(pattern_paths: list[str], cif_paths: list[str]) -> Proje
     return project
 
 
-def main() -> int:
+def _run_gui() -> int:
     parser = argparse.ArgumentParser(description="XRD Phase Finder GUI")
     parser.add_argument("--pattern", action="append", default=[], help="Observed XRD pattern file")
     parser.add_argument("--cif", action="append", default=[], help="Candidate CIF file")
@@ -53,14 +60,15 @@ def main() -> int:
     project_loaded = False
     if project_path:
         try:
-            project = load_project_manifest(project_path)
+            with trace_operation("project.load", project_path=project_path):
+                project = load_project_manifest(project_path)
             project_loaded = True
         except Exception as exc:
             project = build_local_project(args.pattern, args.cif)
             load_error = f"Could not open XRD Phase Finder File:\n{project_path}\n\n{exc}"
     else:
         project = build_local_project(args.pattern, args.cif)
-    window = PhaseFinderWindow(project)
+    window = PhaseFinderWindow(project, defer_initial_plot=project_loaded)
     if project_loaded:
         window._after_project_loaded()
     if icon_path.exists():
@@ -90,6 +98,17 @@ def main() -> int:
         except OSError:
             pass
     return int(app.exec())
+
+
+def main() -> int:
+    session = configure_diagnostics(__version__)
+    install_exception_hooks()
+    try:
+        with trace_operation("application.run"):
+            return _run_gui()
+    finally:
+        restore_exception_hooks()
+        session.stop(timeout=1.0)
 
 
 if __name__ == "__main__":

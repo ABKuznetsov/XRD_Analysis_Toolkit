@@ -5,23 +5,40 @@ import traceback
 
 from PySide6.QtCore import QObject, QThread, Signal
 
+from xrd_finder.services.runtime_diagnostics import trace_operation
+
 
 class BackgroundTaskWorker(QObject):
     finished = Signal(object)
     failed = Signal(str, str)
     progress = Signal(str, int, int)
+    partial = Signal(object)
 
-    def __init__(self, task: Callable, accepts_progress: bool = False) -> None:
+    def __init__(
+        self,
+        task: Callable,
+        accepts_progress: bool = False,
+        accepts_partial: bool = False,
+        operation_name: str = "background.task",
+    ) -> None:
         super().__init__()
         self._task = task
         self._accepts_progress = accepts_progress
+        self._accepts_partial = accepts_partial
+        self._operation_name = operation_name
 
     def run(self) -> None:
         try:
-            if self._accepts_progress:
-                self.finished.emit(self._task(self.progress.emit))
-            else:
-                self.finished.emit(self._task())
+            with trace_operation(self._operation_name):
+                if self._accepts_progress and self._accepts_partial:
+                    result = self._task(self.progress.emit, self.partial.emit)
+                elif self._accepts_progress:
+                    result = self._task(self.progress.emit)
+                elif self._accepts_partial:
+                    result = self._task(self.partial.emit)
+                else:
+                    result = self._task()
+            self.finished.emit(result)
         except Exception as exc:
             self.failed.emit(str(exc), traceback.format_exc())
 
@@ -30,16 +47,30 @@ class BackgroundTaskHandle(QObject):
     finished = Signal(object)
     failed = Signal(str, str)
     progress = Signal(str, int, int)
+    partial = Signal(object)
 
-    def __init__(self, task: Callable, parent: QObject | None = None, accepts_progress: bool = False) -> None:
+    def __init__(
+        self,
+        task: Callable,
+        parent: QObject | None = None,
+        accepts_progress: bool = False,
+        accepts_partial: bool = False,
+        operation_name: str = "background.task",
+    ) -> None:
         super().__init__(parent)
         self._thread = QThread(self)
-        self._worker = BackgroundTaskWorker(task, accepts_progress=accepts_progress)
+        self._worker = BackgroundTaskWorker(
+            task,
+            accepts_progress=accepts_progress,
+            accepts_partial=accepts_partial,
+            operation_name=operation_name,
+        )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
         self._worker.progress.connect(self.progress.emit)
+        self._worker.partial.connect(self.partial.emit)
         self._worker.finished.connect(self._thread.quit)
         self._worker.failed.connect(self._thread.quit)
         self._thread.finished.connect(self._worker.deleteLater)

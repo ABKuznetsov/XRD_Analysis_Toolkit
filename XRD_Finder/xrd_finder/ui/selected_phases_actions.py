@@ -14,14 +14,17 @@ class PhaseFinderSelectedPhasesActionsMixin:
         candidate = self.match_candidates[row]
         self._enrich_candidate_with_structure_info(candidate)
         self._update_compound_card(candidate)
-        self._recalculate_match_profile()
+        self._recalculate_match_profile(active_only=True)
 
     def _show_match_context_menu(self, global_point) -> None:
         row = self.match_table.currentRow()
         candidate = self.match_candidates[row] if 0 <= row < len(self.match_candidates) else None
         has_structure = self._candidate_has_structure(candidate)
         menu = QMenu(self)
-        recalculate_action = menu.addAction("Recalculate selected profile", self._recalculate_match_profile)
+        recalculate_action = menu.addAction(
+            "Recalculate selected profile",
+            lambda: self._recalculate_match_profile(active_only=True),
+        )
         rename_action = menu.addAction("Rename phase...", self._edit_selected_match_phase_name)
         menu.addAction("Change color...", self._change_selected_match_color)
         export_action = menu.addAction("Export phase CIF...", self._export_match_table_cif)
@@ -199,7 +202,10 @@ class PhaseFinderSelectedPhasesActionsMixin:
                 self._save_active_profile_state()
             if hasattr(self, "_invalidate_match_profile_cache"):
                 self._invalidate_match_profile_cache(getattr(self, "active_profile_pattern_id", None))
-            self._recalculate_match_profile(auto_zoom=self._should_autozoom_match_profile())
+            self._recalculate_match_profile(
+                auto_zoom=self._should_autozoom_match_profile(),
+                active_only=True,
+            )
         finally:
             self.unsetCursor()
         if errors:
@@ -264,7 +270,7 @@ class PhaseFinderSelectedPhasesActionsMixin:
             self._save_active_profile_state()
         if hasattr(self, "_invalidate_match_profile_cache"):
             self._invalidate_match_profile_cache(getattr(self, "active_profile_pattern_id", None))
-        self._recalculate_match_profile()
+        self._recalculate_match_profile(active_only=True)
         self._schedule_candidate_gain_ranking()
 
     def _change_selected_match_color(self) -> None:
@@ -301,7 +307,11 @@ class PhaseFinderSelectedPhasesActionsMixin:
             self._save_active_profile_state()
         if hasattr(self, "_invalidate_match_profile_cache"):
             self._invalidate_match_profile_cache(getattr(self, "active_profile_pattern_id", None))
-        self._clear_calculated_overlay()
+        active_pattern = self._active_pattern()
+        active_pattern_id = active_pattern.id if active_pattern is not None else None
+        self._clear_calculated_overlay(
+            active_pattern_id if self.show_all_selected_patterns else None
+        )
         self._update_match_table()
 
     def _update_match_table(self) -> None:
@@ -340,6 +350,7 @@ class PhaseFinderSelectedPhasesActionsMixin:
             return
         existing_rows = self._candidate_state_rows(self.candidate_table.all_row_values())
         rows: list[list[str]] = []
+        gain_context = None
         if hasattr(self, "_gain_sql_candidate_rows"):
             gain_context = self._candidate_gain_context()
             if gain_context is not None:
@@ -377,7 +388,12 @@ class PhaseFinderSelectedPhasesActionsMixin:
             QApplication.processEvents()
 
         try:
-            self._set_candidate_rows(rows, force_rank=True, rank_progress=rank_progress)
+            self._set_candidate_rows(
+                rows,
+                force_rank=True,
+                rank_progress=rank_progress,
+                gain_context=gain_context,
+            )
             if self.candidate_table.rowCount() > 0:
                 self.candidate_table.selectRow(0)
                 self.candidate_table.scrollToTop()

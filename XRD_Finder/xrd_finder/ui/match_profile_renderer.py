@@ -8,6 +8,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
 from xrd_finder.finder import FinderCandidateInput
+from xrd_finder.io.analysis_summary_builder import result_snapshot
 from xrd_finder.ui.pattern_plot_helpers import add_hkl_labels, plot_peak_intensity_sticks, plot_phase_marker_lane, plot_profile
 from xrd_finder.ui.plot_style import PlotStyle
 
@@ -121,7 +122,7 @@ def draw_match_profile_result(
     show_hkl_labels: bool = False,
     show_peak_labels: bool = False,
     show_background_line: bool = True,
-) -> None:
+) -> dict[str, object]:
     style = style or PlotStyle()
     x = np.asarray(result.pattern_x, dtype=float)
     result_observed_y = np.asarray(result.pattern_y, dtype=float)
@@ -364,3 +365,10 @@ def draw_match_profile_result(
     )
     _tag_plot_item(sum_item, pattern_id)
     plot_layers["total_profile"].append(sum_item)
+    return result_snapshot(
+        result,
+        candidate_by_key,
+        fit_score_percent=fit_quality,
+        explained_peaks=explained,
+        total_peaks=total_observed,
+    )

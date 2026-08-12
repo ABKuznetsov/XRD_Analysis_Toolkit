@@ -7,7 +7,7 @@
 
 # Download XRD Phase Finder
 
-**Windows 10/11:** [Download `XRD_Phase_Finder_Setup_1.3.2.exe`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.2/XRD_Phase_Finder_Setup_1.3.2.exe) and run the installer.
+**Windows 10/11:** [Download `XRD_Phase_Finder_Setup_1.4.0.exe`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.4.0/XRD_Phase_Finder_Setup_1.4.0.exe) and run the installer.
 
 **Windows portable:** [Download `XRD_Phase_Finder_Portable_1.2.0.zip`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_Portable_1.2.0.zip), extract it and run the included launcher.
 
@@ -15,9 +15,9 @@
 
 More detailed installation notes are below in [Installation](#installation).
 
-# XRD Phase Finder 1.3.2
+# XRD Phase Finder 1.4.0
 
-Multi-pattern publication update with collision-aware per-pattern legends, manual positioning and improved high-resolution export.
+Portable scientific-result projects, faster staged candidate search and incremental multi-pattern rendering.
 
 # Overview
 
@@ -90,7 +90,7 @@ Identify unexplained peaks
   - Checkboxes control what is visible in the plot.
   - Order arrows change plot and legend order.
 - **Projects**
-  - Save project writes one portable `.xpff` (XRD Phase Finder File) containing source XRD data, user CIF files, series, processed curves, selected phase assignments and Finder UI state.
+  - Save project writes one portable `.xpff` (XRD Phase Finder File) containing source XRD data, user CIF files, series, processed curves, selected phase assignments, Finder UI state, per-pattern previews and a versioned scientific result summary.
   - Windows installation associates `.xpff` with XRD Phase Finder, so a project can be opened by double-clicking the file.
 - **Plot**
   - Use mouse zoom/pan normally.
@@ -106,7 +106,7 @@ The `?` button in the application opens a compact in-app helper with the same co
 
 Latest release assets:
 
-- Windows 10/11: [XRD_Phase_Finder_Setup_1.3.2.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.2/XRD_Phase_Finder_Setup_1.3.2.exe)
+- Windows 10/11: [XRD_Phase_Finder_Setup_1.4.0.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.4.0/XRD_Phase_Finder_Setup_1.4.0.exe)
 - Windows portable: [XRD_Phase_Finder_Portable_1.2.0.zip](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_Portable_1.2.0.zip)
 - macOS 13+: [XRD_Phase_Finder_macOS_1.2.0.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_macOS_1.2.0.pkg)
 - All releases: [GitHub Releases](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases)
@@ -135,7 +135,7 @@ XRD Phase Finder uses a shared per-user environment named `Sci`. Future XRD appl
 Download and run:
 
 ```text
-XRD_Phase_Finder_Setup_1.3.2.exe
+XRD_Phase_Finder_Setup_1.4.0.exe
 ```
 
 The installer:

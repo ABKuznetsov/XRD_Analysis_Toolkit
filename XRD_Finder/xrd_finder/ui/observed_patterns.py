@@ -1,11 +1,72 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
+from pathlib import Path
+from threading import RLock
 
 import numpy as np
 
 from xrd_finder.core.pattern import Pattern
 from xrd_finder.io.xy_loader import load_xy
+
+
+_OBSERVED_FILE_CACHE: OrderedDict[str, tuple[tuple[int, int], np.ndarray]] = OrderedDict()
+_OBSERVED_FILE_CACHE_LOCK = RLock()
+_OBSERVED_FILE_CACHE_LIMIT = 128
+_OBSERVED_FILE_CACHE_MAX_BYTES = 256 * 1024 * 1024
+
+
+def _observed_file_cache_key(source_path: str | Path) -> str:
+    path = Path(source_path).expanduser()
+    try:
+        return str(path.resolve(strict=False))
+    except OSError:
+        return str(path.absolute())
+
+
+def clear_observed_file_cache(source_path: str | Path | None = None) -> None:
+    with _OBSERVED_FILE_CACHE_LOCK:
+        if source_path is None:
+            _OBSERVED_FILE_CACHE.clear()
+        else:
+            _OBSERVED_FILE_CACHE.pop(_observed_file_cache_key(source_path), None)
+
+
+def _trim_observed_file_cache() -> None:
+    total_bytes = sum(int(data.nbytes) for _signature, data in _OBSERVED_FILE_CACHE.values())
+    while len(_OBSERVED_FILE_CACHE) > _OBSERVED_FILE_CACHE_LIMIT:
+        _key, (_signature, data) = _OBSERVED_FILE_CACHE.popitem(last=False)
+        total_bytes -= int(data.nbytes)
+    while total_bytes > _OBSERVED_FILE_CACHE_MAX_BYTES and len(_OBSERVED_FILE_CACHE) > 1:
+        _key, (_signature, data) = _OBSERVED_FILE_CACHE.popitem(last=False)
+        total_bytes -= int(data.nbytes)
+
+
+def load_observed_file_data(source_path: str | Path) -> np.ndarray:
+    """Load one observed pattern once and retain it if its source disconnects."""
+    key = _observed_file_cache_key(source_path)
+    with _OBSERVED_FILE_CACHE_LOCK:
+        cached = _OBSERVED_FILE_CACHE.get(key)
+    try:
+        stat = Path(source_path).stat()
+        signature = (int(stat.st_mtime_ns), int(stat.st_size))
+    except OSError:
+        if cached is not None:
+            with _OBSERVED_FILE_CACHE_LOCK:
+                _OBSERVED_FILE_CACHE.move_to_end(key)
+            return cached[1]
+        raise
+    if cached is not None and cached[0] == signature:
+        with _OBSERVED_FILE_CACHE_LOCK:
+            _OBSERVED_FILE_CACHE.move_to_end(key)
+        return cached[1]
+    data = np.asarray(load_xy(source_path), dtype=float)
+    with _OBSERVED_FILE_CACHE_LOCK:
+        _OBSERVED_FILE_CACHE[key] = (signature, data)
+        _OBSERVED_FILE_CACHE.move_to_end(key)
+        _trim_observed_file_cache()
+    return data
 
 
 @dataclass(frozen=True)
@@ -70,7 +131,7 @@ def observed_pattern_data(pattern: Pattern | None) -> np.ndarray | None:
     if processed is not None:
         return processed
     try:
-        return load_xy(pattern.source_path)
+        return load_observed_file_data(pattern.source_path)
     except Exception:
         return None
 
@@ -92,7 +153,7 @@ def load_observed_patterns(
                     data = processed
                     name = pattern.processed_label or f"Observed processed: {pattern.name}"
                 else:
-                    data = load_xy(pattern.source_path)
+                    data = load_observed_file_data(pattern.source_path)
                     name = f"Observed: {pattern.name}"
         except Exception:
             continue

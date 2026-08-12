@@ -133,6 +133,8 @@ class ProjectTree(QTreeWidget):
         if project.series:
             assigned_patterns = set()
             assigned_phases = set()
+            patterns_by_id = {pattern.id: pattern for pattern in project.patterns}
+            phases_by_id = {phase.id: phase for phase in project.phases}
             for series in project.series:
                 series_item = QTreeWidgetItem([series.name])
                 series_item.setData(0, 256, ("series", series.id))
@@ -145,14 +147,14 @@ class ProjectTree(QTreeWidget):
                 )
                 self._series_items[series.id] = series_item
                 root.addChild(series_item)
-                pattern_ids = set(series.pattern_ids)
-                phase_ids = set(series.phase_ids)
-                for pattern in project.patterns:
-                    if pattern.id in pattern_ids:
+                for pattern_id in series.pattern_ids:
+                    pattern = patterns_by_id.get(pattern_id)
+                    if pattern is not None:
                         self._add_project_object_item(series_item, "pattern", pattern)
                         assigned_patterns.add(pattern.id)
-                for phase in project.phases:
-                    if phase.id in phase_ids:
+                for phase_id in series.phase_ids:
+                    phase = phases_by_id.get(phase_id)
+                    if phase is not None:
                         self._add_project_object_item(series_item, "phase", phase)
                         assigned_phases.add(phase.id)
             unassigned_patterns = [pattern for pattern in project.patterns if pattern.id not in assigned_patterns]

@@ -27,6 +27,7 @@ class Project:
     analyses: list[AnalysisResult] = field(default_factory=list)
     series: list[SeriesAnalysis] = field(default_factory=list)
     finder_state: FinderProjectState = field(default_factory=FinderProjectState)
+    analysis_summary: dict[str, Any] = field(default_factory=dict)
 
     def touch(self) -> None:
         self.updated_at = utc_now()

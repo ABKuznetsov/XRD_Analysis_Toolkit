@@ -354,7 +354,7 @@ class PhaseFinderPreprocessingActionsMixin:
             self.project_changed.emit()
             self.match_plot_view_initialized = False
             self._refresh_observed_pattern_plot()
-            self._rerun_active_calculation()
+            self._rerun_active_calculation(active_only=False)
 
         def cancel_ranges() -> None:
             for pattern in self.project.patterns:
@@ -363,7 +363,7 @@ class PhaseFinderPreprocessingActionsMixin:
             self.project_changed.emit()
             self.match_plot_view_initialized = False
             self._refresh_observed_pattern_plot()
-            self._rerun_active_calculation()
+            self._rerun_active_calculation(active_only=False)
 
         self._show_preprocessing_panel(
             "xrd_crop",
@@ -420,7 +420,7 @@ class PhaseFinderPreprocessingActionsMixin:
         self._replace_observed_curve(x, y, name)
         self._rerun_active_calculation()
 
-    def _rerun_active_calculation(self) -> None:
+    def _rerun_active_calculation(self, *, active_only: bool = True) -> None:
         has_profile_candidates = bool(self.match_candidates)
         if self.show_all_selected_patterns and hasattr(self, "_profile_candidates_for_pattern"):
             has_profile_candidates = has_profile_candidates or any(
@@ -428,7 +428,7 @@ class PhaseFinderPreprocessingActionsMixin:
                 for pattern in self._patterns_to_display()
             )
         if has_profile_candidates:
-            self._recalculate_match_profile()
+            self._recalculate_match_profile(active_only=active_only)
         elif self.active_overlay_entry_id:
             candidate = self._selected_candidate_row()
             if candidate is not None:

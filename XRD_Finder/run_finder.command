@@ -5,6 +5,7 @@ TOOLKIT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_ROOT="$TOOLKIT_ROOT/XRD_Finder"
 cd "$TOOLKIT_ROOT"
 export PYTHONPATH="$APP_ROOT${PYTHONPATH+:$PYTHONPATH}"
+export XRD_FINDER_LOG_DIR="${HOME}/Library/Logs/XRD Phase Finder"
 
 find_python() {
     for candidate in \
