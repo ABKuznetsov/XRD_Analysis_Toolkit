@@ -115,10 +115,10 @@ class CandidateSearchService:
         if options.local_sources and options.structural_data_enabled:
             rows.extend(
                 self.cache_rows(
-                    self.search_local_cache(
+                    self._timed_search_local_cache(
                         options,
-                        text=formula_query or ("" if query_elements else query),
-                        elements=query_elements or None,
+                        formula_query or ("" if query_elements else query),
+                        query_elements or None,
                     )
                 )
             )
@@ -127,11 +127,14 @@ class CandidateSearchService:
         if options.rruff_enabled and options.reference_patterns_enabled:
             rows.extend(
                 self.rruff_rows(
-                    self.rruff.search(
-                        text=formula_query or ("" if query_elements else query),
-                        elements=query_elements or None,
-                        excluded_elements=options.excluded_elements,
-                        limit=self.STRUCTURAL_RESULT_LIMIT,
+                    self._timed_source_call(
+                        "rruff",
+                        lambda: self.rruff.search(
+                            text=formula_query or ("" if query_elements else query),
+                            elements=query_elements or None,
+                            excluded_elements=options.excluded_elements,
+                            limit=self.STRUCTURAL_RESULT_LIMIT,
+                        ),
                     )
                 )
             )
@@ -139,11 +142,10 @@ class CandidateSearchService:
 
         if options.match_pdf2_enabled and options.reference_patterns_enabled:
             pdf2_rows = self.match_pdf2_rows(
-                self.match_pdf2.search(
-                    text="" if query_elements else query,
-                    elements=query_elements or None,
-                    excluded_elements=options.excluded_elements,
-                    limit=self.STRUCTURAL_RESULT_LIMIT,
+                self._timed_search_match_pdf2(
+                    "" if query_elements else query,
+                    query_elements or None,
+                    options.excluded_elements,
                 )
             )
             rows = pdf2_rows + rows
@@ -155,10 +157,13 @@ class CandidateSearchService:
         if options.structural_data_enabled and not self.local_phase_cache.search_is_fresh("CCDC", ccdc_key):
             try:
                 self._emit_search_progress(progress, "Searching CCDC/CSD...", len(rows), 0, 2)
-                ccdc_entries = self.ccdc.search_text(
-                    query=query,
-                    target_dir=self.local_phase_cache.root / "ccdc_cif",
-                    limit=self.CCDC_RESULT_LIMIT,
+                ccdc_entries = self._timed_source_call(
+                    "ccdc",
+                    lambda: self.ccdc.search_text(
+                        query=query,
+                        target_dir=self.local_phase_cache.root / "ccdc_cif",
+                        limit=self.CCDC_RESULT_LIMIT,
+                    ),
                 )
                 self.index_ccdc_entries(ccdc_entries)
                 self.local_phase_cache.mark_search("CCDC", ccdc_key)
@@ -198,11 +203,14 @@ class CandidateSearchService:
                 else:
                     try:
                         self._emit_search_progress(progress, "Searching COD online...", len(rows), 0, 7)
-                        cod_entries, cod_result_count = self._search_cod_text_entries(
-                            query=query,
-                            formula_query=formula_query,
-                            query_elements=query_elements,
-                            options=options,
+                        cod_entries, cod_result_count = self._timed_source_call(
+                            "cod",
+                            lambda: self._search_cod_text_entries(
+                                query=query,
+                                formula_query=formula_query,
+                                query_elements=query_elements,
+                                options=options,
+                            ),
                         )
                         self.local_phase_cache.upsert_cod_entries(cod_entries)
                         self._mark_search_if_complete("COD", cod_key, cod_result_count, self.ONLINE_RESULT_LIMIT)
@@ -227,7 +235,10 @@ class CandidateSearchService:
                 else:
                     try:
                         self._emit_search_progress(progress, "Searching Materials Project...", len(rows), 0, 9)
-                        mp_entries = self.materials_project.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+                        mp_entries = self._timed_source_call(
+                            "mp",
+                            lambda: self.materials_project.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT),
+                        )
                         self.local_phase_cache.upsert_materials_project_entries(mp_entries)
                         self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
                         queued = self.queue_background_mp_downloads(mp_entries)
@@ -246,7 +257,10 @@ class CandidateSearchService:
                 else:
                     try:
                         self._emit_search_progress(progress, "Searching AFLOW...", len(rows), 0, 10)
-                        aflow_entries = self.aflow.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+                        aflow_entries = self._timed_source_call(
+                            "aflow",
+                            lambda: self.aflow.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT),
+                        )
                         self.local_phase_cache.upsert_computational_entries(aflow_entries)
                         self._mark_search_if_complete("AFLOW", aflow_key, len(aflow_entries), self.COMPUTATIONAL_RESULT_LIMIT)
                         queued = self.queue_background_aflow_downloads(aflow_entries)
@@ -265,7 +279,10 @@ class CandidateSearchService:
                 else:
                     try:
                         self._emit_search_progress(progress, "Searching OQMD...", len(rows), 0, 11)
-                        oqmd_entries = self.oqmd.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+                        oqmd_entries = self._timed_source_call(
+                            "oqmd",
+                            lambda: self.oqmd.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT),
+                        )
                         self.local_phase_cache.upsert_computational_entries(oqmd_entries)
                         self._mark_search_if_complete("OQMD", oqmd_key, len(oqmd_entries), self.COMPUTATIONAL_RESULT_LIMIT)
                         queued = self.queue_background_oqmd_downloads(oqmd_entries)
@@ -319,10 +336,13 @@ class CandidateSearchService:
         if options.rruff_enabled and options.reference_patterns_enabled:
             rows.extend(
                 self.rruff_rows(
-                    self.rruff.search(
-                        elements=elements,
-                        excluded_elements=options.excluded_elements,
-                        limit=self.STRUCTURAL_RESULT_LIMIT,
+                    self._timed_source_call(
+                        "rruff",
+                        lambda: self.rruff.search(
+                            elements=elements,
+                            excluded_elements=options.excluded_elements,
+                            limit=self.STRUCTURAL_RESULT_LIMIT,
+                        ),
                     )
                 )
             )
@@ -353,10 +373,13 @@ class CandidateSearchService:
                 else:
                     try:
                         self._emit_search_progress(progress, "Searching COD online...", len(rows), 0, 5)
-                        cod_entries = self.cod_online.search_elements(
-                            elements,
-                            excluded_elements=options.excluded_elements,
-                            limit=self.ONLINE_RESULT_LIMIT,
+                        cod_entries = self._timed_source_call(
+                            "cod",
+                            lambda: self.cod_online.search_elements(
+                                elements,
+                                excluded_elements=options.excluded_elements,
+                                limit=self.ONLINE_RESULT_LIMIT,
+                            ),
                         )
                         cod_result_count = len(cod_entries)
                         cod_entries = self.filter_cod_entries(cod_entries, options)
@@ -382,7 +405,10 @@ class CandidateSearchService:
                 else:
                     try:
                         self._emit_search_progress(progress, "Searching Materials Project...", len(rows), 0, 7)
-                        mp_entries = self.materials_project.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+                        mp_entries = self._timed_source_call(
+                            "mp",
+                            lambda: self.materials_project.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT),
+                        )
                         self.local_phase_cache.upsert_materials_project_entries(mp_entries)
                         self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
                         queued = self.queue_background_mp_downloads(mp_entries)
@@ -399,7 +425,10 @@ class CandidateSearchService:
                 else:
                     try:
                         self._emit_search_progress(progress, "Searching AFLOW...", len(rows), 0, 9)
-                        aflow_entries = self.aflow.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+                        aflow_entries = self._timed_source_call(
+                            "aflow",
+                            lambda: self.aflow.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT),
+                        )
                         self.local_phase_cache.upsert_computational_entries(aflow_entries)
                         self._mark_search_if_complete("AFLOW", aflow_key, len(aflow_entries), self.COMPUTATIONAL_RESULT_LIMIT)
                         queued = self.queue_background_aflow_downloads(aflow_entries)
@@ -416,7 +445,10 @@ class CandidateSearchService:
                 else:
                     try:
                         self._emit_search_progress(progress, "Searching OQMD...", len(rows), 0, 11)
-                        oqmd_entries = self.oqmd.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+                        oqmd_entries = self._timed_source_call(
+                            "oqmd",
+                            lambda: self.oqmd.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT),
+                        )
                         self.local_phase_cache.upsert_computational_entries(oqmd_entries)
                         self._mark_search_if_complete("OQMD", oqmd_key, len(oqmd_entries), self.COMPUTATIONAL_RESULT_LIMIT)
                         queued = self.queue_background_oqmd_downloads(oqmd_entries)
@@ -469,7 +501,7 @@ class CandidateSearchService:
         text: str,
         elements: list[str] | None,
     ):
-        with trace_operation("match.search.local_cache"):
+        with trace_operation("match.search.local_cache", slow_ms=0):
             return self.search_local_cache(options, text=text, elements=elements)
 
     def _timed_search_match_pdf2(
@@ -478,13 +510,18 @@ class CandidateSearchService:
         elements: list[str] | None,
         excluded_elements: list[str],
     ):
-        with trace_operation("match.search.pdf2"):
+        with trace_operation("match.search.pdf2", slow_ms=0):
             return self.match_pdf2.search(
                 text=text,
                 elements=elements,
                 excluded_elements=excluded_elements,
                 limit=self.STRUCTURAL_RESULT_LIMIT,
             )
+
+    @staticmethod
+    def _timed_source_call(source: str, task: Callable[[], object]):
+        with trace_operation(f"match.search.{source}", slow_ms=0):
+            return task()
 
     def _dedupe_cached_entries(self, entries):
         seen = set()
@@ -595,7 +632,7 @@ class CandidateSearchService:
     def _run_background_refresh(self, key: tuple[str, str], task: Callable[[], object]) -> None:
         try:
             self._emit_background_status(f"Background: updating {key[0]} database...")
-            task()
+            self._timed_source_call(key[0].lower(), task)
         except Exception as exc:
             self._emit_background_status(
                 f"Background: {key[0]} did not respond — {exc}"

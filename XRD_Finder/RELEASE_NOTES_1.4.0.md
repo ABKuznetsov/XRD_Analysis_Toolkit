@@ -23,4 +23,13 @@ Version 1.4.0 turns `.xpff` into a portable scientific-result container while ke
 - User CIF assets remain embedded and are restored into the local phase library when absent.
 - Windows `.xpff` file association and double-click opening remain supported.
 
+## Guided setup and responsive searches
+
+- Introduces a visual seven-step tour of selection, processing, phase search, verification, comparison, figure setup and export.
+- Shows the tour once after updating to 1.4.0; it can be browsed with arrows or skipped.
+- Keeps the same visual tour on screen while a new scientific Python environment is being installed, without exposing a command window.
+- Lists missing or damaged runtime components before installation and asks for confirmation before changing the environment.
+- Reports package download and installation progress, and provides Retry, Open log and Close actions if setup cannot be completed.
+- Shows a dedicated progress dialog during long candidate searches, including the current source and accumulated result count.
+
 The public schema is documented in `docs/xpff-analysis-summary-v1.md`.

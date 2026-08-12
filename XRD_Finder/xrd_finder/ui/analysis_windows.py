@@ -1375,8 +1375,22 @@ class PhaseFinderWindow(
         with_progress: bool = False,
         operation_name: str = "background.task",
         on_partial=None,
+        show_progress_dialog: bool = False,
     ) -> None:
         self._set_background_status(label)
+
+        progress_dialog = None
+        if show_progress_dialog:
+            progress_dialog = QProgressDialog(label, "", 0, 0, self)
+            progress_dialog.setWindowTitle(title)
+            progress_dialog.setCancelButton(None)
+            progress_dialog.setMinimumDuration(0)
+            progress_dialog.setAutoClose(False)
+            progress_dialog.setAutoReset(False)
+            progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+            progress_dialog.setMinimumWidth(440)
+            progress_dialog.show()
+            QApplication.processEvents()
 
         handle = BackgroundTaskHandle(
             task,
@@ -1388,6 +1402,8 @@ class PhaseFinderWindow(
         self._background_tasks.add(handle)
 
         def cleanup() -> None:
+            if progress_dialog is not None:
+                progress_dialog.close()
             self._background_tasks.discard(handle)
             if not self._background_tasks:
                 self._set_background_status("Ready")
@@ -1397,6 +1413,8 @@ class PhaseFinderWindow(
             on_success(result)
 
         def fail(message: str, details: str) -> None:
+            if progress_dialog is not None:
+                progress_dialog.close()
             self._background_tasks.discard(handle)
             self._set_background_status(f"{title}: failed — {message or 'no response'}")
             if on_error is not None:
@@ -1412,6 +1430,13 @@ class PhaseFinderWindow(
                     value = max(0, min(int(value), maximum))
                     suffix = f" ({value}/{maximum})"
                 self._set_background_status(f"{message}{suffix}")
+                if progress_dialog is not None:
+                    progress_dialog.setLabelText(message)
+                    if maximum > 0:
+                        progress_dialog.setRange(0, maximum)
+                        progress_dialog.setValue(value)
+                    else:
+                        progress_dialog.setRange(0, 0)
 
         def show_waiting_status() -> None:
             if handle in self._background_tasks:

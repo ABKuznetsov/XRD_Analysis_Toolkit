@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$AppId = "xrd_finder",
     [string]$ProjectPath = ""
 )
@@ -154,7 +154,7 @@ function Set-StateIcon {
 }
 
 function Pause-PreviewStep {
-    Start-Sleep -Milliseconds 2000
+    Start-Sleep -Milliseconds 500
 }
 
 function Get-SetupProgressMessage {
@@ -233,6 +233,97 @@ function Wait-SetupProcessWithProgress {
         Set-Step 1 "Checking..." $message "Blue"
         Set-ProgressText 28 $message
         [System.Windows.Forms.Application]::DoEvents()
+    }
+}
+
+function Show-RuntimeRepairDialog {
+    param(
+        [string]$Detail,
+        [string]$LogPath
+    )
+
+    $dialog = New-Object System.Windows.Forms.Form
+    $dialog.Text = "XRD Phase Finder: требуется научное окружение"
+    $dialog.StartPosition = "CenterScreen"
+    $dialog.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $dialog.MaximizeBox = $false
+    $dialog.MinimizeBox = $false
+    $dialog.ShowInTaskbar = $true
+    $dialog.TopMost = $true
+    $dialog.ClientSize = New-Object System.Drawing.Size(650, 430)
+    $dialog.BackColor = [System.Drawing.Color]::White
+
+    $title = New-Object System.Windows.Forms.Label
+    $title.Location = New-Object System.Drawing.Point(24, 20)
+    $title.Size = New-Object System.Drawing.Size(600, 32)
+    $title.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
+    $title.Text = "Научное окружение установлено не полностью"
+    $dialog.Controls.Add($title)
+
+    $intro = New-Object System.Windows.Forms.Label
+    $intro.Location = New-Object System.Drawing.Point(25, 62)
+    $intro.Size = New-Object System.Drawing.Size(600, 44)
+    $intro.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
+    $intro.Text = "Программа проверила Python и необходимые пакеты реальным запуском. Не найдено или не работает:"
+    $dialog.Controls.Add($intro)
+
+    $details = New-Object System.Windows.Forms.TextBox
+    $details.Location = New-Object System.Drawing.Point(27, 108)
+    $details.Size = New-Object System.Drawing.Size(596, 190)
+    $details.Multiline = $true
+    $details.ReadOnly = $true
+    $details.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+    $details.Font = New-Object System.Drawing.Font("Consolas", 9)
+    $details.BackColor = [System.Drawing.Color]::FromArgb(248, 248, 248)
+    $details.Text = $Detail
+    $dialog.Controls.Add($details)
+
+    $location = New-Object System.Windows.Forms.Label
+    $location.Location = New-Object System.Drawing.Point(27, 309)
+    $location.Size = New-Object System.Drawing.Size(596, 52)
+    $location.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $location.Text = "Окружение будет обновлено в $env:LOCALAPPDATA\Sci.`r`nЖурнал установки: $LogPath"
+    $dialog.Controls.Add($location)
+
+    $installButton = New-Object System.Windows.Forms.Button
+    $installButton.Location = New-Object System.Drawing.Point(301, 374)
+    $installButton.Size = New-Object System.Drawing.Size(205, 34)
+    $installButton.Text = "Обновить или доустановить"
+    $installButton.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $installButton.DialogResult = [System.Windows.Forms.DialogResult]::Retry
+    $dialog.AcceptButton = $installButton
+    $dialog.Controls.Add($installButton)
+
+    $closeButton = New-Object System.Windows.Forms.Button
+    $closeButton.Location = New-Object System.Drawing.Point(516, 374)
+    $closeButton.Size = New-Object System.Drawing.Size(107, 34)
+    $closeButton.Text = "Закрыть"
+    $closeButton.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $closeButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $dialog.CancelButton = $closeButton
+    $dialog.Controls.Add($closeButton)
+
+    $result = $dialog.ShowDialog()
+    $dialog.Dispose()
+    return ($result -eq [System.Windows.Forms.DialogResult]::Retry)
+}
+
+function Invoke-SciRuntimeRepair {
+    param(
+        [string]$SetupScript,
+        [string]$LogPath
+    )
+    if (-not (Test-Path -LiteralPath $SetupScript)) {
+        throw "Не найден сценарий установки: $SetupScript"
+    }
+    Set-ProgressText 28 "Установка Python и научных пакетов"
+    Set-Step 1 "Installing..." "Обновление или доустановка научного окружения" "Blue"
+    $setupProcess = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", "`"$SetupScript`"") -PassThru -WindowStyle Hidden
+    Wait-SetupProcessWithProgress $setupProcess $LogPath
+    if ($setupProcess.ExitCode -ne 0) {
+        $lastSetupMessage = Get-SetupProgressMessage $LogPath
+        $setupDetails = Get-StartupLogTail $LogPath
+        throw "Установка завершилась с ошибкой: $lastSetupMessage`r`n`r`n$setupDetails"
     }
 }
 
@@ -482,23 +573,15 @@ if (Test-Path -LiteralPath $appManifestPath) {
     } catch {
     }
 }
-$startupNoticePath = Join-Path $finderRoot ("startup_notice_" + $localVersion + ".done")
-$showStartupNotice = -not (Test-Path -LiteralPath $startupNoticePath)
-if (-not $showStartupNotice -and (Test-Path -LiteralPath $appManifestPath)) {
-    try {
-        $noticeMarker = Get-Item -LiteralPath $startupNoticePath
-        $appManifestFile = Get-Item -LiteralPath $appManifestPath
-        if ($appManifestFile.LastWriteTimeUtc -gt $noticeMarker.LastWriteTimeUtc) {
-            $showStartupNotice = $true
-        }
-    } catch {
-        $showStartupNotice = $true
-    }
-}
-
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
+$showcaseModule = Join-Path $appRoot "toolkit\first_run_showcase.ps1"
+$runtimeSetupModule = Join-Path $appRoot "toolkit\sci_runtime_setup_ui.ps1"
+if (-not (Test-Path -LiteralPath $showcaseModule)) { throw "Showcase module is missing: $showcaseModule" }
+if (-not (Test-Path -LiteralPath $runtimeSetupModule)) { throw "Runtime setup UI module is missing: $runtimeSetupModule" }
+. $showcaseModule
+. $runtimeSetupModule
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -587,9 +670,6 @@ Add-StepRow 3 "" "Checking for updates" ("Current version: " + $localVersion) 34
 Add-StepRow 4 "" "Opening application" "Loading settings and main window" 420
 $script:Form.Show()
 [System.Windows.Forms.Application]::DoEvents()
-if ($showStartupNotice) {
-    Show-StartupNoticeDialog $script:Form
-}
 
 
 try {
@@ -609,29 +689,63 @@ try {
     $script:ActiveStep = 1
     Set-ProgressText 28 "Preparing runtime"
     Set-Step 1 "Checking..." "Testing Python and required scientific packages" "Blue"
+    $setupLog = Join-Path $logsRoot "setup.log"
     $runtimeProbe = Test-SciRuntime $pythonExe $runtimeCheck $requirementsPath
-    if (-not $runtimeProbe.Ready -or -not (Test-Path -LiteralPath $pythonw)) {
-        Set-ProgressText 28 "First launch can take several minutes"
-        Set-Step 1 "Repairing..." "The runtime is incomplete; repairing Python packages." "Blue"
-        if (-not (Test-Path -LiteralPath $setupBat)) {
-            throw "Setup script was not found: $setupBat"
-        }
-        $setupLog = Join-Path $logsRoot "setup.log"
-        $setupProcess = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", "`"$setupBat`"") -PassThru -WindowStyle Hidden
-        Wait-SetupProcessWithProgress $setupProcess $setupLog
-        if ($setupProcess.ExitCode -ne 0) {
-            $lastSetupMessage = Get-SetupProgressMessage $setupLog
-            $setupDetails = Get-StartupLogTail $setupLog
-            throw "Environment setup failed: $lastSetupMessage`r`n`r`n$setupDetails`r`n`r`nFull log: $setupLog"
-        }
-    }
-    $runtimeProbe = Test-SciRuntime $pythonExe $runtimeCheck $requirementsPath
-    if (-not $runtimeProbe.Ready) {
-        $setupLog = Join-Path $logsRoot "setup.log"
-        throw "Sci runtime self-test failed after repair:`r`n`r`n$($runtimeProbe.Detail)`r`n`r`nSetup log: $setupLog"
-    }
+    $runtimeReady = ($runtimeProbe.Ready -and (Test-Path -LiteralPath $pythonw))
+    $runtimeDetail = [string]$runtimeProbe.Detail
     if (-not (Test-Path -LiteralPath $pythonw)) {
-        throw "Python GUI launcher is missing after repair: $pythonw"
+        $runtimeDetail = ($runtimeDetail + "`r`n- Не найден Python GUI launcher: $pythonw").Trim()
+    }
+    while (-not $runtimeReady) {
+        Set-ProgressText 28 "Требуется установка окружения"
+        Set-Step 1 "Action required" "Python или научные пакеты отсутствуют либо повреждены" "Red"
+        if (-not (Show-RuntimeConsent $runtimeDetail $toolkitRoot $setupLog)) {
+            throw "Научное окружение не готово. Установка отменена пользователем.`r`n`r`n$runtimeDetail"
+        }
+        try {
+            $showcase = Initialize-FirstRunShowcase -Owner $script:Form -AssetRoot (Join-Path $appRoot "toolkit\showcase") -Version "1.4.0" -Mode "Installing"
+            $showcase.Dialog.Show()
+            $script:Form.Hide()
+            Invoke-VisibleSciRuntimeRepair $setupBat $setupLog {
+                param($progress)
+                Set-ShowcaseProgress -Text ([string]$progress.Text) -Current ([int]$progress.Current) -Total ([int]$progress.Total)
+            }
+            $runtimeProbe = Test-SciRuntime $pythonExe $runtimeCheck $requirementsPath
+            $runtimeReady = ($runtimeProbe.Ready -and (Test-Path -LiteralPath $pythonw))
+            $runtimeDetail = [string]$runtimeProbe.Detail
+            if (-not (Test-Path -LiteralPath $pythonw)) {
+                $runtimeDetail = ($runtimeDetail + "`r`n- Не найден Python GUI launcher: $pythonw").Trim()
+            }
+            if ($runtimeReady) {
+                Set-ShowcaseProgress -Text "Окружение готово" -Current 1 -Total 1
+                Set-ShowcaseInstallationComplete
+                while (-not $showcase.ContinueRequested -and $showcase.Dialog.Visible) {
+                    [System.Windows.Forms.Application]::DoEvents()
+                    Start-Sleep -Milliseconds 80
+                }
+            }
+        } catch {
+            $runtimeReady = $false
+            $runtimeDetail = $_.Exception.Message
+            if ($showcase -and $showcase.Dialog) {
+                $showcase.InstallationComplete = $true
+                $showcase.Dialog.Close()
+            }
+            $failureChoice = Show-RuntimeSetupFailure $runtimeDetail $setupLog
+            if ($failureChoice -ne [System.Windows.Forms.DialogResult]::Retry) {
+                throw "Научное окружение не готово.`r`n`r`n$runtimeDetail"
+            }
+        } finally {
+            Dispose-FirstRunShowcase
+            $script:Form.Show()
+        }
+    }
+    if (-not (Test-ShowcaseSeen "1.4.0")) {
+        $showcase = Initialize-FirstRunShowcase -Owner $script:Form -AssetRoot (Join-Path $appRoot "toolkit\showcase") -Version "1.4.0" -Mode "Ready"
+        $script:Form.Hide()
+        Show-FirstRunShowcaseDialog | Out-Null
+        Dispose-FirstRunShowcase
+        $script:Form.Show()
     }
     Ensure-Folder (Join-Path $dataRoot "cod_cache")
     Ensure-Folder (Join-Path $dataRoot "cod_cache\rruff")
@@ -795,9 +909,6 @@ try {
     Set-Step 4 "Opening..." "Showing the main application window" "Blue"
     "show" | Set-Content -LiteralPath $showSignalFile -Encoding UTF8
     Wait-ApplicationMainWindow $appProcess 120 $startupLog $readyFile | Out-Null
-    if ($showStartupNotice) {
-        try { "seen" | Set-Content -LiteralPath $startupNoticePath -Encoding UTF8 } catch {}
-    }
     Set-Step 4 "OK" "XRD Phase Finder window is ready" "Green"
     Set-ProgressText 100 "Ready"
     [System.Windows.Forms.Application]::DoEvents()

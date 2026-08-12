@@ -115,8 +115,9 @@ class PhaseFinderCandidateSearchActionsMixin:
             success,
             failure,
             with_progress=True,
-            operation_name="match.search",
+            operation_name="match.search.auto",
             on_partial=partial,
+            show_progress_dialog=True,
         )
 
     def _prepare_candidate_database_search(self) -> int:
@@ -175,8 +176,9 @@ class PhaseFinderCandidateSearchActionsMixin:
             success,
             failure,
             with_progress=True,
-            operation_name="match.search",
+            operation_name="match.search.text",
             on_partial=partial,
+            show_progress_dialog=True,
         )
 
     def _search_from_controls(self) -> None:
@@ -229,8 +231,9 @@ class PhaseFinderCandidateSearchActionsMixin:
             success,
             failure,
             with_progress=True,
-            operation_name="match.search",
+            operation_name="match.search.elements",
             on_partial=partial,
+            show_progress_dialog=True,
         )
 
     def _candidate_search_options(self) -> CandidateSearchOptions:

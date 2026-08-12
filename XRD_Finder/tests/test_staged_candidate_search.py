@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from xrd_finder.services.candidate_search_service import (
     CandidateSearchOptions,
@@ -59,11 +60,27 @@ class StagedCandidateSearchTests(unittest.TestCase):
         )
         partial = []
 
-        rows = service.search_elements(
-            ["Ba", "O"],
-            options,
-            partial_results=partial.append,
-        )
+        traced_operations = []
+
+        class _Trace:
+            def __init__(self, name, **_fields) -> None:
+                traced_operations.append(name)
+
+            def __enter__(self):
+                return None
+
+            def __exit__(self, *_args):
+                return False
+
+        with patch(
+            "xrd_finder.services.candidate_search_service.trace_operation",
+            side_effect=_Trace,
+        ):
+            rows = service.search_elements(
+                ["Ba", "O"],
+                options,
+                partial_results=partial.append,
+            )
 
         self.assertEqual(partial, [[["USER", "100", "Ba O", "local", "", "", "", ""]]])
         self.assertEqual(
@@ -73,6 +90,7 @@ class StagedCandidateSearchTests(unittest.TestCase):
                 ["COD", "200", "Ba O", "online", "", "", "", ""],
             ],
         )
+        self.assertIn("match.search.cod", traced_operations)
 
 
 if __name__ == "__main__":
