@@ -1,45 +1,45 @@
 [
   {
     "id": "select",
-    "title": "Выбрать",
-    "description": "Укажите элементы образца и выберите локальные или сетевые источники структурных данных.",
+    "title": "Select",
+    "description": "Specify the sample elements and choose local or online sources of structural data.",
     "image": "01-select.png",
-    "notice": "Поиск по большим базам и обработка крупных серий могут занять время на слабом компьютере. Не закрывайте программу: текущая операция отображается в окне и строке состояния."
+    "notice": "Searching large databases and processing extensive series may take time on a slower computer. Do not close the application: the current operation is shown in the progress window and status bar."
   },
   {
     "id": "process",
-    "title": "Обработать",
-    "description": "Настройте сглаживание и отделите физический или аморфный фон, сохраняя форму дифракционных пиков.",
+    "title": "Process",
+    "description": "Adjust smoothing and separate the physical or amorphous background while preserving diffraction peak shapes.",
     "image": "02-process.png"
   },
   {
     "id": "find",
-    "title": "Найти",
-    "description": "Match определяет основную фазу, а Gain последовательно объясняет оставшиеся и перекрывающиеся пики.",
+    "title": "Find",
+    "description": "Match identifies the primary phase, while Gain progressively explains the remaining and overlapping peaks.",
     "image": "03-find.png"
   },
   {
     "id": "check",
-    "title": "Проверить",
-    "description": "Просмотрите классификацию, параметры ячейки, атомные позиции и ссылку на исходную запись каждой фазы.",
+    "title": "Inspect",
+    "description": "Review the classification, unit-cell parameters, atomic positions, and source record for each phase.",
     "image": "04-check.png"
   },
   {
     "id": "compare",
-    "title": "Сравнить",
-    "description": "Соберите серии РФА в мультирежиме и проследите фазовые изменения между составами или температурами.",
+    "title": "Compare",
+    "description": "Combine XRD series in multi-pattern mode and track phase changes across compositions or temperatures.",
     "image": "05-compare.jpg"
   },
   {
     "id": "configure",
-    "title": "Настроить",
-    "description": "Управляйте осями, масштабом, сеткой, подписями, маркерами, легендой и пропорциями рисунка.",
+    "title": "Configure",
+    "description": "Control axes, scaling, grid, labels, markers, legends, and figure proportions.",
     "image": "06-configure.png"
   },
   {
     "id": "export",
-    "title": "Экспортировать и передать",
-    "description": "Экспортируйте рисунок для статьи и сохраните РФА, пользовательские CIF и результаты в переносимом проекте .xpff.",
+    "title": "Export and share",
+    "description": "Export publication-ready figures and store XRD data, user CIF files, and results in a portable .xpff project.",
     "image": "07-export.jpg"
   }
 ]

@@ -75,12 +75,12 @@ function Set-ShowcaseMode {
     if ($Mode -eq "Installing") {
         $script:Showcase.ProgressTitle.Visible = $true
         $script:Showcase.Progress.Visible = $true
-        $script:Showcase.Primary.Text = "Установка выполняется..."
+        $script:Showcase.Primary.Text = "Installation in progress..."
         $script:Showcase.Primary.Enabled = $false
     } else {
         $script:Showcase.ProgressTitle.Visible = $false
         $script:Showcase.Progress.Visible = $false
-        $script:Showcase.Primary.Text = "Продолжить"
+        $script:Showcase.Primary.Text = "Continue"
         $script:Showcase.Primary.Enabled = $true
     }
 }
@@ -88,7 +88,7 @@ function Set-ShowcaseMode {
 function Set-ShowcaseInstallationComplete {
     if (-not $script:Showcase) { return }
     $script:Showcase.InstallationComplete = $true
-    $script:Showcase.Primary.Text = "Запустить XRD Phase Finder"
+    $script:Showcase.Primary.Text = "Launch XRD Phase Finder"
     $script:Showcase.Primary.Enabled = $true
 }
 
@@ -102,7 +102,7 @@ function Initialize-FirstRunShowcase {
     Dispose-FirstRunShowcase
     $cards = Load-ShowcaseCards $AssetRoot
     $dialog = New-Object System.Windows.Forms.Form
-    $dialog.Text = "Добро пожаловать в XRD Phase Finder $Version"
+    $dialog.Text = "Welcome to XRD Phase Finder $Version"
     $dialog.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
     $dialog.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
     $dialog.MaximizeBox = $false
@@ -123,7 +123,7 @@ function Initialize-FirstRunShowcase {
     $eyebrow = New-Object System.Windows.Forms.Label
     $eyebrow.Location = New-Object System.Drawing.Point(704, 36)
     $eyebrow.Size = New-Object System.Drawing.Size(300, 24)
-    $eyebrow.Text = "ВОЗМОЖНОСТИ XRD PHASE FINDER"
+    $eyebrow.Text = "XRD PHASE FINDER FEATURES"
     $eyebrow.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
     $eyebrow.ForeColor = [System.Drawing.Color]::FromArgb(37, 99, 235)
     $dialog.Controls.Add($eyebrow)
@@ -175,7 +175,7 @@ function Initialize-FirstRunShowcase {
     $progressTitle = New-Object System.Windows.Forms.Label
     $progressTitle.Location = New-Object System.Drawing.Point(28, 585)
     $progressTitle.Size = New-Object System.Drawing.Size(640, 23)
-    $progressTitle.Text = "Подготовка научного окружения"
+    $progressTitle.Text = "Preparing the scientific environment"
     $progressTitle.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
     $dialog.Controls.Add($progressTitle)
 
@@ -202,7 +202,7 @@ function Initialize-FirstRunShowcase {
     $dialog.Controls.Add($primary)
 
     $skip = New-Object System.Windows.Forms.Button
-    $skip.Text = "Пропустить знакомство"
+    $skip.Text = "Skip introduction"
     $skip.Location = New-Object System.Drawing.Point(704, 588)
     $skip.Size = New-Object System.Drawing.Size(300, 34)
     $skip.Add_Click({ Save-ShowcaseSeenMarker $script:Showcase.Version; $script:Showcase.ContinueRequested = $true; $script:Showcase.Dialog.Close() })

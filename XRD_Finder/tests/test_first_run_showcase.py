@@ -19,21 +19,21 @@ class FirstRunShowcaseTests(unittest.TestCase):
         self.assertEqual(
             [card["title"] for card in cards],
             [
-                "Выбрать",
-                "Обработать",
-                "Найти",
-                "Проверить",
-                "Сравнить",
-                "Настроить",
-                "Экспортировать и передать",
+                "Select",
+                "Process",
+                "Find",
+                "Inspect",
+                "Compare",
+                "Configure",
+                "Export and share",
             ],
         )
         for card in cards:
             self.assertTrue((self.showcase_dir / card["image"]).is_file())
             self.assertTrue(card["description"].strip())
         notice = " ".join(str(card.get("notice", "")) for card in cards).lower()
-        self.assertIn("окне", notice)
-        self.assertIn("строке состояния", notice)
+        self.assertIn("window", notice)
+        self.assertIn("status bar", notice)
 
     def test_showcase_module_contract(self) -> None:
         script = self.module_path.read_text(encoding="utf-8")
