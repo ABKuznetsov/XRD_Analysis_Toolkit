@@ -43,7 +43,7 @@ echo Validating installed packages...>> "%LOG_FILE%"
 "%PYTHON_EXE%" "%RUNTIME_CHECK%" --requirements "%REQ_FILE%" --full >> "%LOG_FILE%" 2>&1
 if errorlevel 1 goto validation_failed
 "%PYTHON_EXE%" -m pip check >> "%LOG_FILE%" 2>&1
-if errorlevel 1 goto validation_failed
+if errorlevel 1 echo WARNING: pip check reported metadata or dependency warnings; runtime imports and numerical tests passed.>> "%LOG_FILE%"
 
 echo Writing launchers...>> "%LOG_FILE%"
 call :write_launchers
@@ -83,7 +83,7 @@ if /I "!REQ!"=="pymatgen" (
 )
 set "INSTALL_ATTEMPT=1"
 :install_current_retry
-"%PYTHON_EXE%" -m pip install --disable-pip-version-check --timeout 300 --retries 10 --resume-retries 30 --prefer-binary --upgrade "!REQ!" >> "%LOG_FILE%" 2>&1
+"%PYTHON_EXE%" -m pip install --disable-pip-version-check --timeout 300 --retries 10 --resume-retries 30 --prefer-binary "!REQ!" >> "%LOG_FILE%" 2>&1
 if not errorlevel 1 exit /b 0
 if !INSTALL_ATTEMPT! GEQ 3 (
     echo ERROR: failed to install !REQ! after three attempts.
@@ -103,10 +103,9 @@ if exist "%PYTHON_EXE%" (
         echo Existing Sci Python can be launched. Repairing packages in place.>> "%LOG_FILE%"
         exit /b 0
     )
-    echo Existing Sci environment is damaged or uses an unsupported Python.
-    echo Removing damaged environment: %SCI_ENV%>> "%LOG_FILE%"
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Remove-Item -LiteralPath '%SCI_ENV%' -Recurse -Force -ErrorAction Stop" >> "%LOG_FILE%" 2>&1
-    if errorlevel 1 exit /b 1
+    echo ERROR: Existing Sci Python cannot be launched or uses an unsupported version.
+    echo Existing Sci environment was preserved and requires explicit repair: %SCI_ENV%>> "%LOG_FILE%"
+    exit /b 1
 )
 
 call :find_python

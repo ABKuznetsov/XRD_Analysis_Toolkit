@@ -14,8 +14,8 @@
       "type": "installer",
       "platform": "windows-x64",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.4.0/XRD_Phase_Finder_Setup_1.4.0.exe",
-      "sha256": "9567bbe29060a8fbee8c240546f321396d0621cda1bf02e0263e7b0a26d5c0e7",
-      "size_bytes": 7640929
+      "sha256": "1e4623a023deb8e1e672e8acf2a5132fa4b717bafe5e4121c304453154aec779",
+      "size_bytes": 7641079
     },
     {
       "name": "XRD_Phase_Finder_macOS_1.3.1.pkg",
@@ -34,7 +34,7 @@
     "Strengthen standalone runtime repair with complete package and import validation."
   ],
   "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.4.0/XRD_Phase_Finder_Setup_1.4.0.exe",
-  "installer_sha256": "9567bbe29060a8fbee8c240546f321396d0621cda1bf02e0263e7b0a26d5c0e7",
+  "installer_sha256": "1e4623a023deb8e1e672e8acf2a5132fa4b717bafe5e4121c304453154aec779",
   "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.3.1/XRD_Phase_Finder_macOS_1.3.1.pkg",
   "macos_installer_sha256": "6073e12b6ece8e66ee1b47b8a125b7116d8874adf37d68327473ad00ac494e20"
 }
