@@ -703,7 +703,7 @@ try {
             throw "The scientific environment is not ready. Installation was cancelled by the user.`r`n`r`n$runtimeDetail"
         }
         try {
-            $showcase = Initialize-FirstRunShowcase -Owner $script:Form -AssetRoot (Join-Path $appRoot "toolkit\showcase") -Version "1.4.0" -Mode "Installing"
+            $showcase = Initialize-FirstRunShowcase -Owner $script:Form -AssetRoot (Join-Path $appRoot "toolkit\showcase") -Version "1.4.1" -Mode "Installing"
             $showcase.Dialog.Show()
             $script:Form.Hide()
             Invoke-VisibleSciRuntimeRepair $setupBat $setupLog {
@@ -740,8 +740,8 @@ try {
             $script:Form.Show()
         }
     }
-    if (-not (Test-ShowcaseSeen "1.4.0")) {
-        $showcase = Initialize-FirstRunShowcase -Owner $script:Form -AssetRoot (Join-Path $appRoot "toolkit\showcase") -Version "1.4.0" -Mode "Ready"
+    if (-not (Test-ShowcaseSeen "1.4.1")) {
+        $showcase = Initialize-FirstRunShowcase -Owner $script:Form -AssetRoot (Join-Path $appRoot "toolkit\showcase") -Version "1.4.1" -Mode "Ready"
         $script:Form.Hide()
         Show-FirstRunShowcaseDialog | Out-Null
         Dispose-FirstRunShowcase

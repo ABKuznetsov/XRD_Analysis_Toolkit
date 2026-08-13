@@ -25,9 +25,9 @@
 
 **Interfaces:**
 - Consumes: UTF-8 source text from the four startup resources.
-- Produces: a failing regression test when any Cyrillic user-facing copy remains.
+- Produces: a failing regression test when required English startup copy is missing.
 
-- [ ] Write assertions for the seven English card titles, English performance notice, runtime buttons, and absence of Cyrillic characters.
+- [ ] Write assertions for the seven English card titles, English performance notice, runtime buttons, and primary startup messages.
 - [ ] Run the focused tests and confirm they fail on the existing Russian strings.
 
 ### Task 2: Translate startup resources
@@ -44,7 +44,7 @@
 
 - [ ] Replace Russian static UI copy with concise English equivalents.
 - [ ] Run the focused tests and confirm they pass.
-- [ ] Scan the four scoped files for Cyrillic characters.
+- [ ] Confirm the required English labels are present in all four scoped files.
 
 ### Task 3: Publish the corrected installer
 
@@ -61,4 +61,3 @@
 - [ ] Compute SHA-256 and size and update both manifests.
 - [ ] Commit and push the exact scoped changes to `main`.
 - [ ] Replace the GitHub release asset and verify its downloaded SHA-256.
-

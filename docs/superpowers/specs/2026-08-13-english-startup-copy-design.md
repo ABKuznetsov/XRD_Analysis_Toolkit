@@ -22,7 +22,6 @@ The main application interface, scientific phase names, paths, logs produced by 
 
 ## Verification
 
-- A focused test rejects Cyrillic characters in the four scoped resources.
+- Focused tests assert the required English titles, buttons, notices, and status messages without preventing future localization.
 - Existing showcase and Windows launcher tests assert the new English labels.
 - The Windows installer is rebuilt, its manifest checksum is refreshed, and the GitHub 1.4.0 asset is replaced.
-

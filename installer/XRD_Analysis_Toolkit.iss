@@ -1,5 +1,5 @@
 ﻿#define MyAppName "XRD Phase Finder"
-#define MyAppVersion "1.4.0"
+#define MyAppVersion "1.4.1"
 #define MyAppPublisher "ABKuznetsov"
 #define MyAppURL "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit"
 #define MyAppExeName "launch_xrd_finder_silent.vbs"
