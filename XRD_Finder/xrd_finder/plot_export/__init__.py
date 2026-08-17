@@ -15,6 +15,12 @@ from .snapshot import (
     UnmarkedCanvasItemError,
     freeze_canvas,
 )
+from .paint_exporter import (
+    export_frozen_canvas,
+    render_preview,
+    render_raster,
+    write_vector_pdf,
+)
 
 __all__ = [
     "CANVAS_LAYER_ORDER",
@@ -30,4 +36,8 @@ __all__ = [
     "stable_svg_id",
     "tag_canvas_item",
     "freeze_canvas",
+    "export_frozen_canvas",
+    "render_preview",
+    "render_raster",
+    "write_vector_pdf",
 ]

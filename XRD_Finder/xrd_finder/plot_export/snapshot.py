@@ -154,7 +154,9 @@ class FrozenCanvas:
                 try:
                     state.item.setTransform(QTransform(state.transform))
                     state.item.setTransformOriginPoint(QPointF(state.transform_origin))
-                    state.item.setPos(QPointF(state.position))
+                    # pyqtgraph's PlotDataItem narrows the Qt overload to
+                    # ``setPos(x, y)``; passing QPointF fails for those items.
+                    state.item.setPos(state.position.x(), state.position.y())
                     state.item.setRotation(state.rotation)
                     state.item.setScale(state.scale)
                     state.item.setVisible(state.visible)
