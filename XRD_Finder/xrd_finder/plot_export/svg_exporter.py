@@ -13,6 +13,7 @@ from .svg_items import (
     render_item_svg,
     split_axis_fragment,
 )
+from .text_outlines import apply_svg_text_mode
 
 
 SVG_NS = "http://www.w3.org/2000/svg"
@@ -62,7 +63,6 @@ class LayeredSvgExporter:
         root.setAttribute("height", f"{_number(options.height_mm)}mm")
         root.setAttribute("viewBox", f"0 0 {width} {height}")
         root.setAttribute("version", "1.1")
-        root.setAttribute("data-text-mode", options.svg_text_mode.value)
         document.appendChild(root)
         definitions = document.createElement("defs")
         root.appendChild(definitions)
@@ -148,6 +148,7 @@ class LayeredSvgExporter:
                     node,
                 )
             root.appendChild(group)
+        apply_svg_text_mode(root, options.svg_text_mode)
         return document.toxml(encoding="utf-8")
 
     @staticmethod
