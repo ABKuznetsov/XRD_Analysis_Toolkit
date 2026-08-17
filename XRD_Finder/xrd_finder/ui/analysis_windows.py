@@ -3926,6 +3926,8 @@ class PhaseFinderWindow(
                 add_peak_residual_links=self._add_peak_residual_links,
                 observed=observed,
                 style=self.plot_style,
+                pattern_id=getattr(self._active_pattern(), "id", None),
+                candidate_id=self._candidate_key(candidate),
             )
             self._tag_transient_candidate_preview_items(before_counts)
             if observed is None:
@@ -3966,6 +3968,8 @@ class PhaseFinderWindow(
                 observed=observed,
                 label=label,
                 style=self.plot_style,
+                pattern_id=getattr(self._active_pattern(), "id", None),
+                candidate_id=self._candidate_key(candidate),
             )
             if transient_preview:
                 self._tag_transient_candidate_preview_items(before_counts)
@@ -4007,6 +4011,8 @@ class PhaseFinderWindow(
                 label=label,
                 show_hkl_labels=self.show_hkl_labels,
                 style=self.plot_style,
+                pattern_id=getattr(self._active_pattern(), "id", None),
+                candidate_id=self._candidate_key(candidate),
             )
             if transient_preview:
                 self._tag_transient_candidate_preview_items(before_counts)
@@ -4048,6 +4054,11 @@ class PhaseFinderWindow(
             add_peak_residual_links=self._add_peak_residual_links,
             observed=observed,
             style=self.plot_style,
+            pattern_id=getattr(self._active_pattern(), "id", None),
+            candidate_id=(
+                str(getattr(structure, "id", "") or getattr(structure, "name", ""))
+                or None
+            ),
         )
         if hasattr(self, "_apply_plot_layer_visibility_settings"):
             self._apply_plot_layer_visibility_settings(self.plot_view_settings)

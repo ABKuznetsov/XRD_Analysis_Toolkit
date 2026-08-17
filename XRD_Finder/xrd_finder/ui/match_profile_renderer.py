@@ -14,18 +14,44 @@ from xrd_finder.ui.plot_style import PlotStyle
 
 
 
-def _tag_plot_item(item, pattern_id: str | None):
-    if pattern_id is not None:
-        try:
-            item._xrd_pattern_id = pattern_id
-        except Exception:
-            pass
+def _tag_plot_item(
+    item,
+    pattern_id: str | None,
+    *,
+    phase_id: str | None = None,
+    candidate_id: str | None = None,
+    object_id: str | None = None,
+):
+    try:
+        if pattern_id is not None:
+            item._xrd_pattern_id = str(pattern_id)
+        if phase_id is not None:
+            item._xrd_phase_id = str(phase_id)
+        if candidate_id is not None:
+            item._xrd_candidate_id = str(candidate_id)
+        if object_id is not None:
+            item._xrd_export_object_id = str(object_id)
+    except Exception:
+        pass
     return item
 
 
-def _tag_plot_items(items, pattern_id: str | None):
-    for item in items:
-        _tag_plot_item(item, pattern_id)
+def _tag_plot_items(
+    items,
+    pattern_id: str | None,
+    *,
+    phase_id: str | None = None,
+    candidate_id: str | None = None,
+    object_id: str | None = None,
+):
+    for index, item in enumerate(items):
+        _tag_plot_item(
+            item,
+            pattern_id,
+            phase_id=phase_id,
+            candidate_id=candidate_id,
+            object_id=f"{object_id}-{index}" if object_id is not None else None,
+        )
     return items
 
 
@@ -197,7 +223,12 @@ def draw_match_profile_result(
             f"phase {phase_label}",
             width=style.phase.width,
         )
-        _tag_plot_item(contribution_item, pattern_id)
+        _tag_plot_item(
+            contribution_item,
+            pattern_id,
+            phase_id=key,
+            object_id="phase-profile",
+        )
         plot_layers["phase_profiles"].append(contribution_item)
         phase_peak_sets.append(
             (
@@ -270,7 +301,12 @@ def draw_match_profile_result(
                 None,
                 float(np.nanmin(x) + (np.nanmax(x) - np.nanmin(x)) * 0.005),
             )
-            _tag_plot_items(shift_items, pattern_id)
+            _tag_plot_items(
+                shift_items,
+                pattern_id,
+                phase_id=key,
+                object_id="phase-shift-lane",
+            )
             plot_layers["phase_ticks"].extend(shift_items)
             label_y = preview_baseline
         stick_item = plot_peak_intensity_sticks(
@@ -284,7 +320,12 @@ def draw_match_profile_result(
             width=style.stick.width,
             ceiling=calculated_total_plot,
         )
-        _tag_plot_item(stick_item, pattern_id)
+        _tag_plot_item(
+            stick_item,
+            pattern_id,
+            phase_id=key,
+            object_id="phase-intensity-sticks",
+        )
         # These sticks belong to an accepted phase. Keep them separate from
         # the temporary candidate preview, which must remain visible in multi
         # mode even when saved phase overlays are hidden.
@@ -300,7 +341,12 @@ def draw_match_profile_result(
                 above_peaks=True,
                 x_grid=x,
             )
-            _tag_plot_items(hkl_items, pattern_id)
+            _tag_plot_items(
+                hkl_items,
+                pattern_id,
+                phase_id=key,
+                object_id="phase-hkl-label",
+            )
             plot_layers["hkl"].extend(hkl_items)
 
     if show_background_line:
@@ -312,7 +358,7 @@ def draw_match_profile_result(
             "background",
             width=style.background.width,
         )
-        _tag_plot_item(background_item, pattern_id)
+        _tag_plot_item(background_item, pattern_id, object_id="physical-background")
         plot_layers["background"].append(background_item)
     residual_peak = float(np.nanmax(np.abs(residual))) if len(residual) else 0.0
     if residual_peak > 0.0:
@@ -328,7 +374,7 @@ def draw_match_profile_result(
             "difference",
             width=max(style.background.width + 0.4, 1.4),
         )
-        _tag_plot_item(difference_item, pattern_id)
+        _tag_plot_item(difference_item, pattern_id, object_id="difference-profile")
         plot_layers["difference"].append(difference_item)
     marker_observed_y_plot = observed_y_plot
     try:
@@ -363,7 +409,7 @@ def draw_match_profile_result(
         f"calculated total | fit {fit_quality:.0f}% | peaks {explained}/{total_observed}",
         width=style.calculated.width,
     )
-    _tag_plot_item(sum_item, pattern_id)
+    _tag_plot_item(sum_item, pattern_id, object_id="calculated-total")
     plot_layers["total_profile"].append(sum_item)
     return result_snapshot(
         result,

@@ -17,6 +17,8 @@ from xrd_finder.ui.pattern_plot_helpers import (
     plot_profile,
     scale_profile_to_reference,
 )
+from xrd_finder.plot_export.metadata import CanvasLayer
+from xrd_finder.ui.plot_layer_items import tag_xrd_plot_item
 
 
 class DraggableLegendTextItem(pg.TextItem):
@@ -427,10 +429,12 @@ class PhaseFinderObservedPatternActionsMixin:
                 symbolBrush=pg.mkBrush(color) if show_scatter else None,
                 symbolPen=pg.mkPen(color, width=1.0) if show_scatter else None,
             )
-            try:
-                curve_item._xrd_pattern_id = item.pattern.id
-            except Exception:
-                pass
+            tag_xrd_plot_item(
+                curve_item,
+                layer=CanvasLayer.OBSERVED,
+                pattern_id=item.pattern.id,
+                object_id="observed-profile",
+            )
             self._make_observed_curve_selectable(curve_item, item.pattern.id)
             legend_proxy = self.match_plot.plot(
                 [],
@@ -442,10 +446,12 @@ class PhaseFinderObservedPatternActionsMixin:
                 symbolPen=pg.mkPen(color, width=1.0) if show_scatter else pg.mkPen("#111111", width=1.2) if active else None,
                 name=None if self.show_all_selected_patterns else (f"* {item.name}" if active else item.name),
             )
-            try:
-                legend_proxy._xrd_pattern_id = item.pattern.id
-            except Exception:
-                pass
+            tag_xrd_plot_item(
+                legend_proxy,
+                layer=CanvasLayer.OBSERVED,
+                pattern_id=item.pattern.id,
+                object_id="observed-legend-proxy",
+            )
             self.plot_layers["observed"].extend([curve_item, legend_proxy])
             if self.show_all_selected_patterns:
                 finite_x = np.asarray(x_plot, dtype=float)
@@ -490,10 +496,12 @@ class PhaseFinderObservedPatternActionsMixin:
                     else:
                         label.setPos(label_x, label_y)
                     label.setVisible(legend_visible)
-                    try:
-                        label._xrd_pattern_id = item.pattern.id
-                    except Exception:
-                        pass
+                    tag_xrd_plot_item(
+                        label,
+                        layer=CanvasLayer.LEGENDS,
+                        pattern_id=item.pattern.id,
+                        object_id="pattern-legend",
+                    )
                     self.match_plot.addItem(label)
                     self.plot_layers.setdefault("pattern_legends", []).append(label)
             plot_context = item.context
@@ -554,10 +562,12 @@ class PhaseFinderObservedPatternActionsMixin:
                     continue
                 x_plot, y_plot = component
                 curve = self.match_plot.plot(x_plot, y_plot, pen=pg.mkPen(color, width=width), name=label)
-                try:
-                    curve._xrd_pattern_id = pattern.id
-                except Exception:
-                    pass
+                tag_xrd_plot_item(
+                    curve,
+                    layer=CanvasLayer.PHYSICAL_BACKGROUND,
+                    pattern_id=pattern.id,
+                    object_id=f"background-{label.replace(' ', '-')}",
+                )
                 self.plot_layers["background"].append(curve)
 
     def _background_component_plot_values(self, item, points) -> tuple[np.ndarray, np.ndarray] | None:
@@ -590,11 +600,13 @@ class PhaseFinderObservedPatternActionsMixin:
         lower_curve = pg.PlotDataItem(physical_x, lower, pen=pg.mkPen((0, 0, 0, 0)))
         upper_curve = pg.PlotDataItem(total_x, upper, pen=pg.mkPen((0, 0, 0, 0)))
         fill = pg.FillBetweenItem(lower_curve, upper_curve, brush=pg.mkBrush(26, 115, 232, 36))
-        for item in (lower_curve, upper_curve, fill):
-            try:
-                item._xrd_pattern_id = pattern_id
-            except Exception:
-                pass
+        for index, item in enumerate((lower_curve, upper_curve, fill)):
+            tag_xrd_plot_item(
+                item,
+                layer=CanvasLayer.PHYSICAL_BACKGROUND,
+                pattern_id=pattern_id,
+                object_id=f"amorphous-background-{index}",
+            )
             self.match_plot.addItem(item)
             self.plot_layers["background"].append(item)
 
@@ -704,13 +716,18 @@ class PhaseFinderObservedPatternActionsMixin:
             color = colors[index % len(colors)]
             width = float(getattr(getattr(plot_style, "phase", None), "width", 1.35)) if plot_style is not None else 1.35
             item = plot_profile(self.match_plot, x, y, color, f"calc: {phase.name}", width=width)
+            tag_xrd_plot_item(
+                item,
+                layer=CanvasLayer.CANDIDATE_PREVIEW,
+                candidate_id=phase.id,
+                object_id="checked-phase-profile",
+            )
             self.plot_layers["calculated_profile"].append(item)
             if self.show_hkl_labels:
                 baseline = float(np.nanmin(y))
                 tick_height = max(reference_max * 0.18, 1.0)
                 tick_width = float(getattr(getattr(plot_style, "stick", None), "width", 1.6)) if plot_style is not None else 1.6
-                self.plot_layers["hkl"].extend(
-                    plot_hkl_sticks(
+                hkl_items = plot_hkl_sticks(
                         self.match_plot,
                         peaks,
                         color,
@@ -719,7 +736,14 @@ class PhaseFinderObservedPatternActionsMixin:
                         label=f"hkl: {phase.name}",
                         width=tick_width,
                     )
-                )
+                for hkl_index, hkl_item in enumerate(hkl_items):
+                    tag_xrd_plot_item(
+                        hkl_item,
+                        layer=CanvasLayer.LABELS,
+                        candidate_id=phase.id,
+                        object_id=f"checked-phase-hkl-{hkl_index}",
+                    )
+                self.plot_layers["hkl"].extend(hkl_items)
 
     def _plot_view_range(self) -> tuple[tuple[float, float], tuple[float, float]]:
         view_range = self.match_plot.plotItem.vb.viewRange()

@@ -3,6 +3,8 @@ from __future__ import annotations
 import numpy as np
 
 from xrd_finder.ui.pattern_plot_helpers import add_hkl_labels, plot_peak_intensity_sticks, plot_profile, scale_profile_to_reference
+from xrd_finder.plot_export.metadata import CanvasLayer
+from xrd_finder.ui.plot_layer_items import tag_xrd_plot_item
 from xrd_finder.ui.plot_style import PlotStyle
 
 
@@ -14,6 +16,8 @@ def draw_rruff_reference(
     observed,
     label: str,
     style: PlotStyle | None = None,
+    pattern_id: str | None = None,
+    candidate_id: str | None = None,
 ) -> None:
     style = style or PlotStyle()
     reference_color = style.reference.color or "#1a73e8"
@@ -29,6 +33,13 @@ def draw_rruff_reference(
         f"RRUFF reference {label}",
         width=style.reference.width,
     )
+    tag_xrd_plot_item(
+        item,
+        layer=CanvasLayer.CANDIDATE_PREVIEW,
+        pattern_id=pattern_id,
+        candidate_id=candidate_id,
+        object_id="rruff-reference-profile",
+    )
     plot_layers["calculated_profile"].append(item)
 
 
@@ -42,6 +53,8 @@ def draw_pdf2_reference(
     label: str,
     show_hkl_labels: bool,
     style: PlotStyle | None = None,
+    pattern_id: str | None = None,
+    candidate_id: str | None = None,
 ) -> None:
     style = style or PlotStyle()
     reference_color = style.reference.color or "#1a73e8"
@@ -67,6 +80,13 @@ def draw_pdf2_reference(
         f"PDF-2 reference {label}",
         width=style.stick.width,
     )
+    tag_xrd_plot_item(
+        stick_item,
+        layer=CanvasLayer.CANDIDATE_PREVIEW,
+        pattern_id=pattern_id,
+        candidate_id=candidate_id,
+        object_id="pdf2-reference-sticks",
+    )
     plot_layers["preview_peak_positions"].append(stick_item)
     hkl_peaks = [peak for peak in peaks if getattr(peak, "h", "") or getattr(peak, "k", "") or getattr(peak, "l", "")]
     if show_hkl_labels and hkl_peaks:
@@ -79,4 +99,12 @@ def draw_pdf2_reference(
             limit=18,
             above_peaks=True,
         )
+        for index, item in enumerate(hkl_items):
+            tag_xrd_plot_item(
+                item,
+                layer=CanvasLayer.CANDIDATE_PREVIEW,
+                pattern_id=pattern_id,
+                candidate_id=candidate_id,
+                object_id=f"pdf2-reference-hkl-{index}",
+            )
         plot_layers["preview_hkl"].extend(hkl_items)

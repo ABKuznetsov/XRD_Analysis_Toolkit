@@ -15,6 +15,8 @@ from xrd_finder.ui.pattern_plot_helpers import (
     scale_profile_to_reference,
 )
 from xrd_finder.ui.peak_matching import PhaseAlignmentEstimate
+from xrd_finder.plot_export.metadata import CanvasLayer
+from xrd_finder.ui.plot_layer_items import tag_xrd_plot_item
 from xrd_finder.ui.plot_style import PlotStyle
 
 
@@ -115,6 +117,8 @@ def draw_structure_overlay(
     add_peak_residual_links,
     observed,
     style: PlotStyle | None = None,
+    pattern_id: str | None = None,
+    candidate_id: str | None = None,
 ) -> None:
     style = style or PlotStyle()
     color = "#1a73e8" if preview else "#d93025"
@@ -140,6 +144,13 @@ def draw_structure_overlay(
             "background",
             width=max(style.background.width - 0.4, 0.5),
         )
+        tag_xrd_plot_item(
+            background_item,
+            layer=CanvasLayer.CANDIDATE_PREVIEW,
+            pattern_id=pattern_id,
+            candidate_id=candidate_id,
+            object_id="candidate-background",
+        )
         plot_layers["calculated_profile"].append(background_item)
 
     if preview:
@@ -155,6 +166,13 @@ def draw_structure_overlay(
             f"preview peaks {structure.name}",
             width=style.stick.width,
         )
+        tag_xrd_plot_item(
+            stick_item,
+            layer=CanvasLayer.CANDIDATE_PREVIEW,
+            pattern_id=pattern_id,
+            candidate_id=candidate_id,
+            object_id="candidate-preview-sticks",
+        )
         plot_layers["preview_peak_positions"].append(stick_item)
         if show_hkl_labels:
             hkl_items = add_hkl_labels(
@@ -166,6 +184,14 @@ def draw_structure_overlay(
                 limit=18,
                 above_peaks=True,
             )
+            for index, item in enumerate(hkl_items):
+                tag_xrd_plot_item(
+                    item,
+                    layer=CanvasLayer.CANDIDATE_PREVIEW,
+                    pattern_id=pattern_id,
+                    candidate_id=candidate_id,
+                    object_id=f"candidate-preview-hkl-{index}",
+                )
             plot_layers["preview_hkl"].extend(hkl_items)
         return
 
@@ -176,6 +202,13 @@ def draw_structure_overlay(
         color,
         f"calculated total {structure.name}",
         width=style.calculated.width,
+    )
+    tag_xrd_plot_item(
+        calc_item,
+        layer=CanvasLayer.CANDIDATE_PREVIEW,
+        pattern_id=pattern_id,
+        candidate_id=candidate_id,
+        object_id="candidate-calculated-profile",
     )
     plot_layers["calculated_profile"].append(calc_item)
     lane_height = y_span * (0.045 if observed is not None else 0.032)
@@ -190,6 +223,14 @@ def draw_structure_overlay(
             None,
             float(np.nanmin(overlay.x) + (np.nanmax(overlay.x) - np.nanmin(overlay.x)) * 0.005),
         )
+        for index, item in enumerate(lane_items):
+            tag_xrd_plot_item(
+                item,
+                layer=CanvasLayer.CANDIDATE_PREVIEW,
+                pattern_id=pattern_id,
+                candidate_id=candidate_id,
+                object_id=f"candidate-marker-lane-{index}",
+            )
         plot_layers["peak_positions"].extend(lane_items)
     if observed is not None and len(overlay.observed_peak_positions):
         add_peak_residual_links(
@@ -210,4 +251,12 @@ def draw_structure_overlay(
             lane_height,
             limit=18,
         )
+        for index, item in enumerate(hkl_items):
+            tag_xrd_plot_item(
+                item,
+                layer=CanvasLayer.LABELS,
+                pattern_id=pattern_id,
+                candidate_id=candidate_id,
+                object_id=f"candidate-hkl-{index}",
+            )
         plot_layers["hkl"].extend(hkl_items)

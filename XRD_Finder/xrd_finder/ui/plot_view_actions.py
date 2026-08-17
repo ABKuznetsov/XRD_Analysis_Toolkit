@@ -8,6 +8,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from xrd_finder.ui.plot_view_settings import PlotViewSettings, PlotViewSettingsWidget, plot_style_from_view_settings
+from xrd_finder.ui.plot_layer_items import sync_plot_export_tags
 from xrd_finder.ui.styled_grid_item import StyledGridItem
 
 
@@ -177,6 +178,7 @@ class PhaseFinderPlotViewActionsMixin:
                     self.legend_item.setLabelTextSize(f"{settings.legend_font_size}pt")
                 except Exception:
                     pass
+            self._sync_current_plot_export_tags()
             return
         self.grid_visible = settings.grid_visible
         self.show_hkl_labels = self._active_hkl_labels_requested() if hasattr(self, "_active_hkl_labels_requested") else bool(settings.hkl_labels_visible)
@@ -261,6 +263,18 @@ class PhaseFinderPlotViewActionsMixin:
             self._refresh_observed_pattern_plot()
             if getattr(self, "match_candidates", None):
                 self._recalculate_match_profile()
+        self._sync_current_plot_export_tags()
+
+    def _sync_current_plot_export_tags(self) -> None:
+        if not hasattr(self, "match_plot") or not hasattr(self, "plot_layers"):
+            return
+        sync_plot_export_tags(
+            self.match_plot,
+            self.plot_layers,
+            grid_item=getattr(self, "_plot_grid_item", None),
+            cursor_item=getattr(self, "cursor_position_line", None),
+            legend_item=getattr(self, "legend_item", None),
+        )
 
     def _apply_plot_layer_visibility_settings(self, settings: PlotViewSettings) -> None:
         layer_fields = {
