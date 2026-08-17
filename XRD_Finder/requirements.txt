@@ -1,7 +1,7 @@
 gemmi
 numpy
 pybaselines
-pyqtgraph
+pyqtgraph==0.14.0
 PySide6==6.7.3
 rfc8785==0.1.4
 scipy
