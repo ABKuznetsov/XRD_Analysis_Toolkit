@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QPointF, QRectF, QSize
 from PySide6.QtGui import QBrush, QTransform
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QGraphicsItem
 
 from .metadata import CanvasItemTag, canvas_item_tag
 
@@ -123,9 +123,11 @@ class FrozenCanvas:
                     visible=visible,
                     transform=QTransform(item.transform()),
                     position=QPointF(item.pos()),
-                    rotation=float(item.rotation()),
-                    scale=float(item.scale()),
-                    transform_origin=QPointF(item.transformOriginPoint()),
+                    rotation=float(QGraphicsItem.rotation(item)),
+                    # AxisItem uses ``scale`` as a numeric data attribute,
+                    # shadowing QGraphicsItem.scale(). Call the Qt base API.
+                    scale=float(QGraphicsItem.scale(item)),
+                    transform_origin=QPointF(QGraphicsItem.transformOriginPoint(item)),
                 )
             )
             snapshots.append(
@@ -152,14 +154,21 @@ class FrozenCanvas:
         try:
             for state in self._original_item_states:
                 try:
-                    state.item.setTransform(QTransform(state.transform))
-                    state.item.setTransformOriginPoint(QPointF(state.transform_origin))
+                    QGraphicsItem.setTransform(state.item, QTransform(state.transform))
+                    QGraphicsItem.setTransformOriginPoint(
+                        state.item,
+                        QPointF(state.transform_origin),
+                    )
                     # pyqtgraph's PlotDataItem narrows the Qt overload to
                     # ``setPos(x, y)``; passing QPointF fails for those items.
-                    state.item.setPos(state.position.x(), state.position.y())
-                    state.item.setRotation(state.rotation)
-                    state.item.setScale(state.scale)
-                    state.item.setVisible(state.visible)
+                    QGraphicsItem.setPos(
+                        state.item,
+                        state.position.x(),
+                        state.position.y(),
+                    )
+                    QGraphicsItem.setRotation(state.item, state.rotation)
+                    QGraphicsItem.setScale(state.item, state.scale)
+                    QGraphicsItem.setVisible(state.item, state.visible)
                 except RuntimeError:
                     continue
             if self._original_view_range:
