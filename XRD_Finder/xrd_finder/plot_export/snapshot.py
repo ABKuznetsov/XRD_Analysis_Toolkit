@@ -171,14 +171,6 @@ class FrozenCanvas:
                     QGraphicsItem.setVisible(state.item, state.visible)
                 except RuntimeError:
                     continue
-            if self._original_view_range:
-                self.view_box.setRange(
-                    xRange=self._original_view_range[0],
-                    yRange=self._original_view_range[1],
-                    padding=0.0,
-                    update=False,
-                    disableAutoRange=False,
-                )
             for axis, state in enumerate(self._original_auto_range):
                 if state is False:
                     self.view_box.disableAutoRange(axis)
@@ -189,6 +181,17 @@ class FrozenCanvas:
             application = QApplication.instance()
             if application is not None:
                 application.processEvents()
+            # Enabling auto-range and processing the resize can slightly move
+            # the range. Restore the captured numbers last while retaining the
+            # original auto-range flags for future data changes.
+            if self._original_view_range:
+                self.view_box.setRange(
+                    xRange=self._original_view_range[0],
+                    yRange=self._original_view_range[1],
+                    padding=0.0,
+                    update=False,
+                    disableAutoRange=False,
+                )
         finally:
             self._entered = False
 

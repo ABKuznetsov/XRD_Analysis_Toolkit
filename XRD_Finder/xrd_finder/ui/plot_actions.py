@@ -1,136 +1,26 @@
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import pyqtgraph as pg
 
+from xrd_finder.plot_export.paint_exporter import (
+    export_frozen_canvas,
+    render_preview,
+)
+from xrd_finder.plot_export.snapshot import freeze_canvas
 from xrd_finder.services.runtime_diagnostics import traced_operation
 from xrd_finder.ui.pattern_plot_helpers import ensure_right_legend
+from xrd_finder.ui.plot_export_dialog import PlotExportDialog
 from xrd_finder.ui.plot_layer_items import remove_pattern_layer_items
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QImage, QPixmap
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QAction, QImage
 from PySide6.QtWidgets import (
-    QApplication,
-    QComboBox,
     QDialog,
-    QDialogButtonBox,
     QFileDialog,
-    QFormLayout,
-    QLabel,
     QMenu,
     QMessageBox,
-    QSpinBox,
-    QVBoxLayout,
 )
-
-
-def recommended_multi_pattern_export_height(
-    current_height: int,
-    legend_heights: list[float],
-) -> int:
-    """Return a canvas height that gives every per-pattern legend its own band."""
-    if not legend_heights:
-        return max(1, int(current_height))
-    # Axis labels/title need a fixed margin. Each XRD band then gets the actual
-    # legend height plus clear space above and below the neighbouring profiles.
-    required = 150 + sum(max(78, int(math.ceil(height)) + 34) for height in legend_heights)
-    return max(int(current_height), min(required, 5000))
-
-
-class PlotExportDialog(QDialog):
-    def __init__(self, source_image: QImage, parent=None) -> None:
-        super().__init__(parent)
-        self._source_image = source_image
-        self.setWindowTitle("Export publication figure")
-        self.resize(900, 680)
-
-        self.preview = QLabel()
-        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview.setMinimumSize(700, 430)
-        self.preview.setStyleSheet("QLabel { background: white; border: 1px solid #9ca3af; }")
-
-        self.format_combo = QComboBox()
-        self.format_combo.addItem("PNG — lossless (recommended)", "png")
-        self.format_combo.addItem("TIFF — lossless", "tiff")
-        self.format_combo.addItem("JPEG — compressed", "jpg")
-
-        self.scale_combo = QComboBox()
-        self.scale_combo.addItem("1× — exact screen pixels", 1)
-        self.scale_combo.addItem("2× — large figure", 2)
-        self.scale_combo.addItem("3× — high resolution", 3)
-        self.scale_combo.addItem("4× — maximum resolution", 4)
-        self.scale_combo.setCurrentIndex(1)
-
-        self.dpi_spin = QSpinBox()
-        self.dpi_spin.setRange(72, 1200)
-        self.dpi_spin.setSingleStep(50)
-        self.dpi_spin.setValue(300)
-        self.dpi_spin.setSuffix(" dpi")
-
-        self.size_label = QLabel()
-        self.size_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-
-        form = QFormLayout()
-        form.addRow("Format", self.format_combo)
-        form.addRow("Canvas scale", self.scale_combo)
-        form.addRow("Print resolution", self.dpi_spin)
-        form.addRow("Output", self.size_label)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.preview, 1)
-        layout.addLayout(form)
-        layout.addWidget(buttons)
-
-        self.scale_combo.currentIndexChanged.connect(self._refresh)
-        self.dpi_spin.valueChanged.connect(self._refresh)
-        self._refresh()
-
-    def _refresh(self) -> None:
-        width, height = self.output_size()
-        dpi = self.dpi_spin.value()
-        self.size_label.setText(
-            f"{width} × {height} px; {width / dpi * 25.4:.1f} × {height / dpi * 25.4:.1f} mm"
-        )
-        pixmap = QPixmap.fromImage(self._source_image)
-        self.preview.setPixmap(
-            pixmap.scaled(
-                max(1, self.preview.width() - 12),
-                max(1, self.preview.height() - 12),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        )
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._refresh()
-
-    def output_size(self) -> tuple[int, int]:
-        scale = int(self.scale_combo.currentData())
-        return self._source_image.width() * scale, self._source_image.height() * scale
-
-    def image_format(self) -> str:
-        return str(self.format_combo.currentData())
-
-    def output_image(self) -> QImage:
-        width, height = self.output_size()
-        image = self._source_image.scaled(
-            width,
-            height,
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        dots_per_meter = max(1, int(round(self.dpi_spin.value() / 0.0254)))
-        image.setDotsPerMeterX(dots_per_meter)
-        image.setDotsPerMeterY(dots_per_meter)
-        return image
 
 
 class PhaseFinderPlotActionsMixin:
@@ -192,79 +82,60 @@ class PhaseFinderPlotActionsMixin:
 
     @traced_operation("export.figure")
     def _export_plot_image(self) -> None:
-        source_image = self._publication_plot_image()
-        if source_image.isNull():
-            QMessageBox.warning(self, "Export figure", "Could not capture the current plot.")
-            return
-        dialog = PlotExportDialog(source_image, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        image_format = dialog.image_format()
-        path, _selected_filter = QFileDialog.getSaveFileName(
-            self,
-            "Save publication figure",
-            str(Path(self._last_directory()) / f"xrd_finder_plot.{image_format}"),
-            f"{image_format.upper()} image (*.{image_format})",
-        )
-        if not path:
-            return
-        if not path.lower().endswith(f".{image_format}"):
-            path += f".{image_format}"
         try:
-            image = dialog.output_image()
-            if not image.save(path):
-                raise RuntimeError(f"Qt could not save the {image_format.upper()} image.")
+            if hasattr(self, "_sync_current_plot_export_tags"):
+                self._sync_current_plot_export_tags()
+            with freeze_canvas(self.match_plot) as snapshot:
+                dialog = PlotExportDialog(snapshot, None, self)
+                if dialog.exec() != QDialog.DialogCode.Accepted:
+                    return
+                options = dialog.options()
+                extension = options.format.value
+                label = options.format.value.upper()
+                filters = {
+                    "svg": "SVG layered vector (*.svg)",
+                    "pdf": "PDF vector (*.pdf)",
+                    "png": "PNG image (*.png)",
+                    "tiff": "TIFF image (*.tiff *.tif)",
+                    "jpg": "JPEG image (*.jpg *.jpeg)",
+                }
+                path, _selected_filter = QFileDialog.getSaveFileName(
+                    self,
+                    "Save publication figure",
+                    str(
+                        Path(self._last_directory())
+                        / f"xrd_finder_plot.{extension}"
+                    ),
+                    filters[options.format.value],
+                )
+                if not path:
+                    return
+                allowed_suffixes = {
+                    "svg": {".svg"},
+                    "pdf": {".pdf"},
+                    "png": {".png"},
+                    "tiff": {".tif", ".tiff"},
+                    "jpg": {".jpg", ".jpeg"},
+                }[options.format.value]
+                destination = Path(path)
+                if destination.suffix.lower() not in allowed_suffixes:
+                    destination = destination.with_suffix(f".{extension}")
+                export_frozen_canvas(snapshot, options, destination)
+                path = str(destination)
             self._remember_directory(path)
         except Exception as exc:
-            QMessageBox.warning(self, "Export figure", f"Could not save the publication figure:\n{exc}")
+            QMessageBox.warning(
+                self,
+                "Export figure",
+                f"Could not save the {label if 'label' in locals() else 'figure'}:\n{exc}",
+            )
 
     def _publication_plot_image(self) -> QImage:
-        """Render multi-pattern figures tall enough for their individual legends."""
-        plot = self.match_plot
-        current_width = max(1, int(plot.width()))
-        current_height = max(1, int(plot.height()))
-        if not getattr(self, "show_all_selected_patterns", False):
-            return plot.grab().toImage()
-        if not bool(getattr(getattr(self, "plot_view_settings", None), "legend_visible", True)):
-            return plot.grab().toImage()
-
-        labels = [
-            item
-            for item in self.plot_layers.get("pattern_legends", [])
-            if item is not None and item.isVisible()
-        ]
-        old_label_scales = [float(item.scale()) for item in labels]
-        old_minimum = plot.minimumSize()
-        old_maximum = plot.maximumSize()
-        old_policy = plot.sizePolicy()
-        resized = False
-        try:
-            for item in labels:
-                item.setScale(1.0)
-            target_height = recommended_multi_pattern_export_height(
-                current_height,
-                [float(item.boundingRect().height()) for item in labels],
-            )
-            if target_height > current_height:
-                plot.setFixedSize(current_width, target_height)
-                resized = True
-            QApplication.processEvents()
-            if hasattr(self, "_fit_multi_pattern_legends_to_canvas"):
-                self._fit_multi_pattern_legends_to_canvas()
-                QApplication.processEvents()
-            return plot.grab().toImage()
-        finally:
-            for item, scale in zip(labels, old_label_scales):
-                item.setScale(scale)
-            if resized:
-                plot.setMinimumSize(old_minimum)
-                plot.setMaximumSize(old_maximum)
-                plot.setSizePolicy(old_policy)
-            QApplication.processEvents()
-            if hasattr(self, "_apply_plot_view_aspect"):
-                self._apply_plot_view_aspect()
-            if hasattr(self, "_fit_multi_pattern_legends_to_canvas"):
-                self._fit_multi_pattern_legends_to_canvas()
+        """Paint the current canvas directly without resize, relayout, or grab()."""
+        if hasattr(self, "_sync_current_plot_export_tags"):
+            self._sync_current_plot_export_tags()
+        with freeze_canvas(self.match_plot) as snapshot:
+            return render_preview(snapshot, QSize(snapshot.canvas_size_px))
 
     def _layer_action(self, label: str, layer: str, checked: bool | None = None, enabled: bool = True):
         action = self._make_action(label)
