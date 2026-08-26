@@ -90,6 +90,7 @@ def build_phase_finder_menu_bar(owner: QWidget) -> QMenuBar:
 
     help_menu = menu_bar.addMenu("Help")
     help_menu.addAction("Phase Finder help")
+    help_menu.addAction("More XRD tools…", owner._open_toolkit_catalog)
     help_menu.addAction(
         "Open diagnostic logs folder",
         lambda _checked=False: _open_diagnostic_logs(owner),

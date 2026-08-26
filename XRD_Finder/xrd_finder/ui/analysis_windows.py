@@ -69,6 +69,7 @@ from xrd_finder.ui.pattern_plot_helpers import (
     ensure_right_legend,
     estimate_profile_fwhm,
 )
+from xrd_finder.ui.phase_finder_menu import build_phase_finder_menu_bar
 from xrd_finder.ui.background_task import BackgroundTaskHandle
 from xrd_finder.ui.candidate_info_actions import PhaseFinderCandidateInfoActionsMixin
 from xrd_finder.ui.candidate_search_actions import PhaseFinderCandidateSearchActionsMixin
@@ -114,6 +115,7 @@ from xrd_finder.ui.project_tree import ProjectTree
 from xrd_finder.ui.reference_preview_renderer import draw_pdf2_reference, draw_rruff_reference
 from xrd_finder.ui.selected_phases_actions import PhaseFinderSelectedPhasesActionsMixin
 from xrd_finder.ui.structure_overlay import draw_structure_overlay, prepare_structure_overlay
+from xrd_finder.ui.toolkit_catalog_actions import PhaseFinderToolkitCatalogActionsMixin
 from xrd_finder.ui.theme import is_dark_theme, window_style
 from xrd_finder.ui.xrd_plot import create_xrd_plot_widget
 from xrd_finder.ui.analysis_preview import capture_analysis_preview
@@ -730,11 +732,13 @@ class PhaseFinderWindow(
     PhaseFinderPlotActionsMixin,
     PhaseFinderCandidateSearchActionsMixin,
     PhaseFinderDatabaseActionsMixin,
+    PhaseFinderToolkitCatalogActionsMixin,
     AnalysisWindow,
 ):
     def __init__(self, project: Project, *, defer_initial_plot: bool = False) -> None:
         self._defer_initial_plot = bool(defer_initial_plot)
         super().__init__(project, "Phase Finder")
+        self.layout().setMenuBar(build_phase_finder_menu_bar(self))
         self.resize(1500, 850)
         self.right_tabs.setMinimumWidth(360)
         self._init_filter_state()
@@ -752,6 +756,7 @@ class PhaseFinderWindow(
             refresh_gain=self._schedule_candidate_gain_ranking,
             should_autozoom=self._should_autozoom_match_profile,
         )
+        self._schedule_toolkit_announcement()
 
     def _init_filter_state(self) -> None:
         self.element_table: PeriodicTableWidget | None = None

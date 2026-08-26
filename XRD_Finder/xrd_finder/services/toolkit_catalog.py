@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import hashlib
+import json
 import os
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -10,6 +11,10 @@ import urllib.request
 
 
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+TOOLKIT_CATALOG_URL = (
+    "https://raw.githubusercontent.com/ABKuznetsov/"
+    "XRD_Analysis_Toolkit/main/toolkit/catalog.json"
+)
 
 
 class CatalogUnavailableError(RuntimeError):
@@ -42,6 +47,59 @@ def default_toolkit_download_cache() -> Path:
     if local_app_data:
         return Path(local_app_data) / "Sci" / "downloads" / "toolkit"
     return Path.home() / "AppData" / "Local" / "Sci" / "downloads" / "toolkit"
+
+
+def default_catalog_cache_path() -> Path:
+    return default_toolkit_download_cache() / "catalog.json"
+
+
+def _decode_catalog(data: bytes, *, source: str) -> Mapping[str, Any]:
+    try:
+        payload = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise CatalogUnavailableError(f"Toolkit catalogue is invalid: {source}") from error
+    if not isinstance(payload, Mapping) or payload.get("schema_version") != 1:
+        raise CatalogUnavailableError(f"Toolkit catalogue is unsupported: {source}")
+    return payload
+
+
+def load_catalog_payload(
+    *,
+    catalog_url: str = TOOLKIT_CATALOG_URL,
+    cache_path: Path | None = None,
+    bundled_path: Path | None = None,
+    urlopen: Callable[..., BinaryIO] = urllib.request.urlopen,
+) -> Mapping[str, Any]:
+    """Load the remote catalogue, falling back to cached or bundled JSON."""
+    cache = default_catalog_cache_path() if cache_path is None else Path(cache_path)
+    request = urllib.request.Request(
+        catalog_url,
+        headers={"User-Agent": "XRD-Analysis-Toolkit/1"},
+    )
+    remote_error: Exception | None = None
+    try:
+        with urlopen(request, timeout=15) as response:
+            data = response.read()
+        payload = _decode_catalog(data, source=catalog_url)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        partial = cache.with_name(cache.name + ".part")
+        partial.write_bytes(data)
+        partial.replace(cache)
+        return payload
+    except Exception as error:
+        remote_error = error
+
+    for fallback in (cache, Path(bundled_path) if bundled_path is not None else None):
+        if fallback is None or not fallback.is_file():
+            continue
+        try:
+            return _decode_catalog(fallback.read_bytes(), source=str(fallback))
+        except (OSError, CatalogUnavailableError):
+            continue
+
+    raise CatalogUnavailableError(
+        "Could not load the XRD tools catalogue. Check the internet connection and try again."
+    ) from remote_error
 
 
 def _required_string(container: Mapping[str, Any], field: str, *, prefix: str) -> str:
