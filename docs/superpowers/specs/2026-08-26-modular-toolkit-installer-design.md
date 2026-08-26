@@ -94,6 +94,8 @@ A working environment is never deleted or rebuilt merely because a new installer
 
 Finder keeps its current automatic-update workflow and its `toolkit/updates/xrd_finder.json` manifest. Finder `1.4.1` sees Finder `1.5.0`, downloads the standalone Finder installer, exits, and updates in its existing installation directory. CRAFT uses a separate `toolkit/updates/xrd_craft.json` manifest and does not depend on Finder.
 
+CRAFT checks its own update manifest in the background after startup and provides a permanent `Check for updates…` command in Help. When a newer version is available, CRAFT shows the version and release notes, downloads its standalone installer only after user confirmation, validates its exact size and SHA-256, asks for final installation confirmation, and then launches that installer. A failed or unavailable update check never prevents CRAFT from starting.
+
 Updating one module:
 
 - does not launch or update other installed modules;
