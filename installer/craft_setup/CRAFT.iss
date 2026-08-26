@@ -11,11 +11,13 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}/releases
-DefaultDirName={localappdata}\Sci\apps\craft
+DefaultDirName={autopf}\XRD CRAFT
 DefaultGroupName=CRAFT
 ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
+UsePreviousAppDir=no
 OutputDir=..\..\dist\releases
 OutputBaseFilename=CRAFT_Setup_{#MyAppVersion}
 Compression=lzma2
@@ -43,9 +45,10 @@ Name: "{group}\Uninstall CRAFT"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\CRAFT"; Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\run_viewer_silent.vbs"""; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\toolkit\setup_sci_env.bat"; Description: "Prepare the shared scientific environment"; Flags: waituntilterminated
-Filename: "{win}\System32\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\toolkit\install_companion_app.ps1"" -TargetAppId ""xrd_finder"""; Description: "Download and install XRD Phase Finder 1.5.0"; Flags: runhidden waituntilterminated skipifsilent; Tasks: installfinder; Check: not FinderIsInstalled
-Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\run_viewer_silent.vbs"""; Description: "Launch CRAFT"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\toolkit\setup_sci_env.bat"; Description: "Prepare the shared scientific environment"; Flags: waituntilterminated runasoriginaluser
+Filename: "{win}\System32\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\toolkit\register_craft_install.ps1"" -InstallDir ""{app}"" -Version ""{#MyAppVersion}"""; Flags: runhidden waituntilterminated runasoriginaluser
+Filename: "{win}\System32\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\toolkit\install_companion_app.ps1"" -TargetAppId ""xrd_finder"""; Description: "Download and install XRD Phase Finder 1.5.0"; Flags: runhidden waituntilterminated skipifsilent runasoriginaluser; Tasks: installfinder; Check: not FinderIsInstalled
+Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\run_viewer_silent.vbs"""; Description: "Launch CRAFT"; Flags: postinstall nowait skipifsilent runasoriginaluser
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"

@@ -60,7 +60,7 @@ Root: HKLM; Subkey: "Software\XRDPhaseFinder\Capabilities\FileAssociations"; Val
 
 [Run]
 Filename: "{win}\System32\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\toolkit\register_xpff_file_type.ps1"" -AppRoot ""{app}"" -Quiet"; Flags: runhidden waituntilterminated runascurrentuser
-Filename: "{win}\System32\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\toolkit\install_companion_app.ps1"" -TargetAppId ""xrd_craft"""; Description: "Download and install XRD CRAFT 1.0.1"; Flags: runhidden waituntilterminated skipifsilent; Tasks: installcraft; Check: not CraftIsInstalled
+Filename: "{win}\System32\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\toolkit\install_companion_app.ps1"" -TargetAppId ""xrd_craft"""; Description: "Download and install XRD CRAFT 1.0.1"; Flags: runhidden waituntilterminated skipifsilent runasoriginaluser; Tasks: installcraft; Check: not CraftIsInstalled
 Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\XRD_Finder\launch_xrd_finder_silent.vbs"""; Description: "Launch XRD Phase Finder"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
@@ -73,5 +73,5 @@ Type: filesandordirs; Name: "{app}"
 function CraftIsInstalled: Boolean;
 begin
   Result := FileExists(
-    ExpandConstant('{localappdata}\Sci\apps\craft\run_viewer_silent.vbs'));
+    ExpandConstant('{commonpf64}\XRD CRAFT\run_viewer_silent.vbs'));
 end;

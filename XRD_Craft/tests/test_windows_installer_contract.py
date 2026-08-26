@@ -12,6 +12,7 @@ def test_windows_installer_contract_exists() -> None:
         MODULE_ROOT / "run_viewer.bat",
         MODULE_ROOT / "run_viewer_silent.vbs",
         MODULE_ROOT / "toolkit" / "setup_sci_env.bat",
+        MODULE_ROOT / "toolkit" / "register_craft_install.ps1",
         MODULE_ROOT / "toolkit" / "requirements-windows.txt",
         INSTALLER,
         BUILD_SCRIPT,
@@ -22,18 +23,37 @@ def test_windows_installer_contract_exists() -> None:
     ]
 
 
-def test_installer_reuses_shared_sci_runtime() -> None:
+def test_installer_keeps_program_files_separate_from_shared_sci_metadata() -> None:
     installer = INSTALLER.read_text(encoding="utf-8-sig")
     launcher = (MODULE_ROOT / "run_viewer.bat").read_text(encoding="utf-8-sig")
 
     assert "CRAFT_Setup_{#MyAppVersion}" in installer
-    assert "{localappdata}\\Sci\\apps\\craft" in installer
-    assert "PrivilegesRequired=lowest" in installer
+    assert "DefaultDirName={autopf}\\XRD CRAFT" in installer
+    assert "ArchitecturesInstallIn64BitMode=x64compatible" in installer
+    assert "PrivilegesRequired=admin" in installer
+    assert "UsePreviousAppDir=no" in installer
+    assert "register_craft_install.ps1" in installer
+    assert '-InstallDir ""{app}"" -Version ""{#MyAppVersion}""' in installer
+    assert "{localappdata}" not in installer
     assert "setup_sci_env.bat" in installer
+    assert "runasoriginaluser" in installer
     assert ".xpff" not in installer
     assert 'Source: "..\\..\\XRD_Finder\\*"' not in installer
     assert "%LOCALAPPDATA%\\Sci\\env\\Scripts\\pythonw.exe" in launcher
     assert "-m crystal_viewer.app" in launcher
+
+
+def test_install_registration_keeps_only_metadata_under_sci_apps() -> None:
+    registration = (
+        MODULE_ROOT / "toolkit" / "register_craft_install.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert 'Join-Path $env:LOCALAPPDATA "Sci\\apps\\craft"' in registration
+    assert '"installed.ini"' in registration
+    assert '"InstallDir=$resolvedInstallDir"' in registration
+    assert '"Version=$Version"' in registration
+    assert '"run_viewer_silent.vbs"' in registration
+    assert "Remove-Item" in registration
 
 
 def test_environment_setup_reports_long_running_install_progress() -> None:

@@ -45,7 +45,7 @@ def test_finder_installer_skips_craft_offer_when_craft_is_already_installed() ->
     source = INSTALLER.read_text(encoding="utf-8-sig")
 
     assert "CraftIsInstalled" in source
-    assert "{localappdata}\\Sci\\apps\\craft" in source
+    assert "{commonpf64}\\XRD CRAFT" in source
     assert "not CraftIsInstalled" in source
 
 
@@ -58,3 +58,13 @@ def test_companion_loader_verifies_catalogue_size_and_sha256() -> None:
     assert "Get-FileHash" in source
     assert "sha256" in source
     assert "Start-Process" in source
+
+
+def test_companion_offer_is_owned_by_a_topmost_window() -> None:
+    loader = ROOT / "toolkit" / "install_companion_app.ps1"
+    source = loader.read_text(encoding="utf-8-sig")
+
+    assert "Show-TopMostMessageBox" in source
+    assert "$owner.TopMost = $true" in source
+    assert "MessageBox]::Show(" in source
+    assert "$owner," in source

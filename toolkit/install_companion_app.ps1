@@ -12,18 +12,47 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Net.Http
 
+function Show-TopMostMessageBox {
+    param(
+        [string]$Text,
+        [System.Windows.Forms.MessageBoxButtons]$Buttons,
+        [System.Windows.Forms.MessageBoxIcon]$Icon
+    )
+
+    $owner = [System.Windows.Forms.Form]::new()
+    $owner.Text = "XRD Analysis Toolkit"
+    $owner.StartPosition = "CenterScreen"
+    $owner.ShowInTaskbar = $false
+    $owner.FormBorderStyle = "FixedToolWindow"
+    $owner.ClientSize = [System.Drawing.Size]::new(1, 1)
+    $owner.Opacity = 0
+    $owner.TopMost = $true
+    try {
+        [void]$owner.Show()
+        $owner.BringToFront()
+        [void]$owner.Activate()
+        [System.Windows.Forms.Application]::DoEvents()
+        return [System.Windows.Forms.MessageBox]::Show(
+            $owner,
+            $Text,
+            "XRD Analysis Toolkit",
+            $Buttons,
+            $Icon
+        )
+    }
+    finally {
+        $owner.Close()
+        $owner.Dispose()
+    }
+}
+
 function Show-OptionalInstallerMessage {
     param(
         [string]$Text,
         [System.Windows.Forms.MessageBoxIcon]$Icon = [System.Windows.Forms.MessageBoxIcon]::Information
     )
 
-    [void][System.Windows.Forms.MessageBox]::Show(
-        $Text,
-        "XRD Analysis Toolkit",
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        $Icon
-    )
+    [void](Show-TopMostMessageBox -Text $Text -Buttons OK -Icon $Icon)
 }
 
 function Get-VerifiedFileHash {
@@ -203,12 +232,10 @@ try {
         $downloadWindow = $null
     }
 
-    $answer = [System.Windows.Forms.MessageBox]::Show(
-        "The verified $($application.name) $($application.version) installer is ready.`r`nInstall it now?",
-        "XRD Analysis Toolkit",
-        [System.Windows.Forms.MessageBoxButtons]::YesNo,
-        [System.Windows.Forms.MessageBoxIcon]::Question
-    )
+    $answer = Show-TopMostMessageBox `
+        -Text "The verified $($application.name) $($application.version) installer is ready.`r`nInstall it now?" `
+        -Buttons YesNo `
+        -Icon Question
     if ($answer -eq [System.Windows.Forms.DialogResult]::Yes) {
         $process = Start-Process -FilePath $installerPath -Wait -PassThru
         if ($process.ExitCode -ne 0) {
