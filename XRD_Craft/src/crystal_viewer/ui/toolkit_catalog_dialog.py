@@ -121,7 +121,7 @@ class ToolkitCatalogWorker(QObject):
             self.failed.emit(str(error))
 
 
-class _TaskHandle(QObject):
+class BackgroundTaskHandle(QObject):
     finished = Signal(object)
     failed = Signal(str)
     progress = Signal(int, int)
@@ -153,7 +153,7 @@ class ToolkitCatalogController(QObject):
         super().__init__(window)
         self.window = window
         self.settings = settings
-        self._tasks: set[_TaskHandle] = set()
+        self._tasks: set[BackgroundTaskHandle] = set()
 
     def schedule_announcement(self) -> None:
         QTimer.singleShot(1200, lambda: self._load(announcement=True, interactive=False))
@@ -162,7 +162,7 @@ class ToolkitCatalogController(QObject):
         self._load(announcement=False, interactive=True)
 
     def _run(self, task: Callable, success: Callable, failure: Callable, *, with_progress=False):
-        handle = _TaskHandle(task, self, with_progress=with_progress)
+        handle = BackgroundTaskHandle(task, self, with_progress=with_progress)
         self._tasks.add(handle)
 
         def finish(result):

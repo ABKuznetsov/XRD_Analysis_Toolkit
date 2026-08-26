@@ -105,6 +105,7 @@ from crystal_viewer.core.site_orbits import (
 )
 from crystal_viewer.core.xpff import load_xpff_structures
 from crystal_viewer.ui.analysis_workspace import AnalysisWorkspace
+from crystal_viewer.ui.application_update_dialog import ApplicationUpdateController
 from crystal_viewer.ui.compare_workspace import CompareWorkspace
 from crystal_viewer.ui.comparison_requests import (
     ComparisonRequestManager,
@@ -188,10 +189,12 @@ class MainWindow(QMainWindow):
             self,
             QSettings("XRD Analysis Toolkit", "CRAFT"),
         )
+        self._application_updates = ApplicationUpdateController(self)
         self._initialize_comparison_requests(QtComparisonExecutor(self))
         self._initialize_structure_load_requests(QtStructureLoadExecutor(self))
         self.statusBar().showMessage("Ready · drop a CIF or open a structure")
         self._schedule_toolkit_announcement()
+        self._schedule_application_update_check()
 
     def _build_ui(self) -> None:
         self.compare_workspace = CompareWorkspace()
@@ -659,6 +662,15 @@ class MainWindow(QMainWindow):
     def _schedule_toolkit_announcement(self) -> None:
         self._toolkit_catalog.schedule_announcement()
 
+    def _schedule_application_update_check(self) -> None:
+        QTimer.singleShot(
+            2500,
+            lambda: self._application_updates.check_in_background(interactive=False),
+        )
+
+    def _check_for_application_updates(self) -> None:
+        self._application_updates.check_in_background(interactive=True)
+
     def _build_actions(self) -> None:
         menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu("File")
@@ -861,6 +873,7 @@ class MainWindow(QMainWindow):
             self._menu_action(help_menu, label, enabled=False)
         self._menu_action(help_menu, "Open Gehlenite Example", self.open_demo)
         self._menu_action(help_menu, "More XRD tools…", self._open_toolkit_catalog)
+        self._menu_action(help_menu, "Check for updates…", self._check_for_application_updates)
         self._menu_action(help_menu, "About CRAFT", self._about)
 
         toolbar = QToolBar("Main")
