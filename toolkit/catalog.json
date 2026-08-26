@@ -19,8 +19,8 @@
       "installer": {
         "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.5.0/XRD_Phase_Finder_Setup_1.5.0.exe",
         "filename": "XRD_Phase_Finder_Setup_1.5.0.exe",
-        "size_bytes": 1,
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        "size_bytes": 7636328,
+        "sha256": "d7cc3ef2fdf30d9f8f29f7bcc372314c2e367f7b758b42a6e499caff09bf9c5d"
       }
     },
     {
@@ -40,8 +40,8 @@
       "installer": {
         "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.5.0/CRAFT_Setup_1.0.1.exe",
         "filename": "CRAFT_Setup_1.0.1.exe",
-        "size_bytes": 1,
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        "size_bytes": 3480076,
+        "sha256": "4f2bff57f83775eeb79627054d64f2ec305bee1dfaf1f314017faf4c6411dc31"
       }
     }
   ]
