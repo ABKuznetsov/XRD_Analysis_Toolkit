@@ -19,7 +19,10 @@ from urllib.request import Request, urlopen
 APP_ID = "xrd_finder"
 APP_NAME = "XRD Phase Finder"
 MIN_VISIBLE_STEP_SECONDS = 1.0
-RUNTIME_PROBE = "from PySide6 import QtCore; import gemmi, numpy, pyqtgraph, scipy"
+RUNTIME_PROBE = (
+    "from PySide6 import QtCore; "
+    "import certifi, gemmi, mp_api, numpy, pybaselines, pyqtgraph, pymatgen, rfc8785, scipy"
+)
 
 
 def app_root() -> Path:

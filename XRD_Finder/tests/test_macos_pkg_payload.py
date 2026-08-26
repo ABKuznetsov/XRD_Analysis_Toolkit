@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 BUILD_SCRIPT = REPOSITORY_ROOT / "scripts" / "build_macos_pkg.command"
+PREVIEW_SCRIPT = REPOSITORY_ROOT / "toolkit" / "launch_xrd_finder_preview_macos.py"
 
 
 def test_macos_pkg_keeps_and_validates_required_finder_modules() -> None:
@@ -36,3 +38,16 @@ def test_macos_pkg_excludes_local_development_artifacts() -> None:
     )
     for path in excluded_paths:
         assert f'--exclude "{path}"' in script
+
+
+def test_macos_runtime_probe_covers_required_imports() -> None:
+    tree = ast.parse(PREVIEW_SCRIPT.read_text(encoding="utf-8"))
+    probe = next(
+        ast.literal_eval(node.value)
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "RUNTIME_PROBE" for target in node.targets)
+    )
+
+    for module in ("certifi", "mp_api", "pybaselines", "pymatgen", "rfc8785"):
+        assert module in probe
