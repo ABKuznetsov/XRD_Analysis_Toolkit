@@ -1,0 +1,33 @@
+data_3000122
+_chemical_formula_sum            'B3 Li O5'
+_space_group_IT_number           33
+_symmetry_space_group_name_H-M   'P n a 21'
+_cell_angle_alpha                90
+_cell_angle_beta                 90
+_cell_angle_gamma                90
+_cell_length_a                   8.5109
+_cell_length_b                   7.4112
+_cell_length_c                   5.173
+loop_
+_space_group_symop_id
+_space_group_symop_operation_xyz
+1 x,y,z
+2 -x,-y,z+1/2
+3 x+1/2,-y+1/2,z
+4 -x+1/2,y+1/2,z+1/2
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+Li1 Li 0.4114 0.5668 -0.0046 1
+B1 B 0.5099 0.8363 0.3532 1
+B2 B 0.6935 0.0565 0.5502 1
+B3 B 0.6574 0.7507 0.7346 1
+O1 O 0.58655 0.9956 0.3447 1
+O2 O 0.38380 0.7951 0.1966 1
+O3 O 0.55813 0.7021 0.5284 1
+O4 O 0.7387 0.9096 0.7337 1
+O5 O 0.6611 0.6252 0.9266 1

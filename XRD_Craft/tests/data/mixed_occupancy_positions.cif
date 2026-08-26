@@ -1,0 +1,37 @@
+data_mixed_occupancy_positions
+_cell_length_a 10
+_cell_length_b 10
+_cell_length_c 10
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+_space_group_name_H-M_alt 'P 1'
+
+loop_
+_space_group_symop_operation_xyz
+'x,y,z'
+
+loop_
+_atom_site_label
+_atom_site_occupancy
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_U_iso_or_equiv
+_atom_site_type_symbol
+_atom_site_disorder_assembly
+Mo01 1.000 0.500 0.500 0.500 0.010 Mo .
+Na06 0.669 0.600 0.500 0.500 0.017 Na .
+Li06 0.331 0.600 0.500 0.500 0.017 Li .
+Na07 0.669 0.500 0.600 0.500 0.020 Na .
+Li07 0.331 0.500 0.600 0.500 0.020 Li .
+Na00 0.669 0.500 0.500 0.600 0.024 Na .
+Li00 0.331 0.500 0.500 0.600 0.024 Li .
+Li2 0.960 0.600 0.600 0.500 0.024 Li .
+Na2 0.040 0.600 0.600 0.500 0.024 Na .
+NaA 0.250 0.700 0.500 0.500 0.030 Na .
+LiB 0.750 0.700 0.500 0.500 0.030 Li .
+Na 0.500 0.800 0.500 0.500 0.030 Na .
+Li 0.500 0.800 0.500 0.500 0.030 Li .
+NaD 0.500 0.900 0.500 0.500 0.030 Na A
+LiD 0.500 0.900 0.500 0.500 0.030 Li B

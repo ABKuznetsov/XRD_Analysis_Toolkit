@@ -1,0 +1,47 @@
+data_gehlenite_ordered_demo
+_chemical_name_mineral 'Gehlenite (ordered visual demo)'
+_chemical_formula_sum 'Ca4 Al4 Si2 O14'
+_space_group_name_H-M_alt 'P 1'
+loop_
+_space_group_symop_operation_xyz
+'x,y,z'
+_cell_length_a 7.736
+_cell_length_b 7.736
+_cell_length_c 5.123
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+
+# Ordered P1 representation derived from the reported average
+# P -4 21 m structure (Kimata, Saito & Shimizu, 1991).
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+Ca1 Ca 0.338000 0.162000 0.509000 1
+Ca2 Ca 0.162000 0.662000 0.491000 1
+Ca3 Ca 0.662000 0.838000 0.509000 1
+Ca4 Ca 0.838000 0.338000 0.491000 1
+Al1 Al 0.000000 0.000000 0.000000 1
+Al2 Al 0.500000 0.500000 0.000000 1
+Al3 Al 0.144000 0.356000 0.956000 1
+Al4 Al 0.356000 0.856000 0.044000 1
+Si1 Si 0.856000 0.644000 0.956000 1
+Si2 Si 0.644000 0.144000 0.044000 1
+O1  O  0.143000 0.357000 0.285000 1
+O2  O  0.357000 0.857000 0.715000 1
+O3  O  0.857000 0.643000 0.285000 1
+O4  O  0.643000 0.143000 0.715000 1
+O5  O  0.500000 0.000000 0.172000 1
+O6  O  0.000000 0.500000 0.828000 1
+O7  O  0.087000 0.168000 0.810000 1
+O8  O  0.168000 0.913000 0.190000 1
+O9  O  0.913000 0.832000 0.810000 1
+O10 O  0.832000 0.087000 0.190000 1
+O11 O  0.587000 0.332000 0.190000 1
+O12 O  0.413000 0.668000 0.190000 1
+O13 O  0.332000 0.413000 0.810000 1
+O14 O  0.668000 0.587000 0.810000 1

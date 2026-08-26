@@ -28,5 +28,10 @@ build/
 .worktrees/
 installer/output/
 *.exe
+# XRD CRAFT generated files stay outside the curated module payload.
+XRD_Craft/.pytest_cache/
+XRD_Craft/**/__pycache__/
+XRD_Craft/build/
+XRD_Craft/dist/
 installer/*
 !installer/XRD_Analysis_Toolkit.iss
