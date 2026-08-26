@@ -6,7 +6,7 @@ if TYPE_CHECKING:
     from crystal_viewer.core.model import AtomSite, CrystalStructure, UnitCell
 
 __all__ = ["AtomSite", "CrystalStructure", "UnitCell"]
-__version__ = "0.1.0"
+__version__ = "1.0.1"
 
 
 def __getattr__(name: str):

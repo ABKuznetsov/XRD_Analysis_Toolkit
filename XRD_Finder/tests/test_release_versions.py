@@ -31,7 +31,7 @@ def test_finder_release_version_is_consistent() -> None:
 
 
 def test_craft_release_version_is_consistent() -> None:
-    version = "0.1.0"
+    version = "1.0.1"
     project = tomllib.loads((ROOT / "XRD_Craft" / "pyproject.toml").read_text(encoding="utf-8"))
     update = json.loads((ROOT / "toolkit" / "updates" / "xrd_craft.json").read_text(encoding="utf-8"))
     package_source = (ROOT / "XRD_Craft" / "src" / "crystal_viewer" / "__init__.py").read_text(encoding="utf-8")
@@ -50,7 +50,7 @@ def test_release_notes_cover_user_facing_release_themes() -> None:
         (ROOT / relative).read_text(encoding="utf-8").lower()
         for relative in (
             "XRD_Finder/RELEASE_NOTES_1.5.0.md",
-            "XRD_Craft/RELEASE_NOTES_0.1.0.md",
+            "XRD_Craft/RELEASE_NOTES_1.0.1.md",
         )
     )
 

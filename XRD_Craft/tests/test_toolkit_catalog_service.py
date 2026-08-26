@@ -30,7 +30,7 @@ def _catalog() -> dict:
                 "app_id": "xrd_craft",
                 "name": "XRD CRAFT",
                 "description": "Current application",
-                "version": "0.1.0",
+                "version": "1.0.1",
                 "announcement_revision": 1,
                 "platforms": ["windows"],
                 "architectures": ["x86_64"],

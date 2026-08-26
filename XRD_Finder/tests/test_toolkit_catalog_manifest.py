@@ -25,7 +25,7 @@ def test_repository_catalog_contains_independent_finder_and_craft_releases() -> 
     applications = {entry["app_id"]: entry for entry in catalog["applications"]}
     assert set(applications) == {"xrd_finder", "xrd_craft"}
     assert applications["xrd_finder"]["version"] == "1.5.0"
-    assert applications["xrd_craft"]["version"] == "0.1.0"
+    assert applications["xrd_craft"]["version"] == "1.0.1"
     assert applications["xrd_craft"]["announcement_revision"] == 1
     assert applications["xrd_finder"]["update_manifest_url"].endswith(
         "/toolkit/updates/xrd_finder.json"

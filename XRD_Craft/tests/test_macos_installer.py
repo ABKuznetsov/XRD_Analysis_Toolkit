@@ -28,7 +28,7 @@ def test_macos_pkg_uses_raman_style_bundle_and_shared_sci_environment() -> None:
 
     assert build["app_name"] == "CRAFT"
     assert build["bundle_id"] == "com.scitools.craft"
-    assert build["pkg_name"] == "CRAFT_macOS_0.1.0.pkg"
+    assert build["pkg_name"] == "CRAFT_macOS_1.0.1.pkg"
     assert build["install_path"] == "/Applications/CRAFT.app"
     assert build["relocatable"] is False
     assert build["icon"] == "icon.icns"

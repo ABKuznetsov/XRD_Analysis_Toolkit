@@ -54,7 +54,7 @@ Uninstalling or updating one application must not remove or modify another appli
 Versions remain independent:
 
 - XRD Phase Finder: `1.5.0` for the first modular-toolkit release.
-- XRD CRAFT: `0.1.0`.
+- XRD CRAFT: `1.0.1`.
 
 GitHub release assets include the two module installers. Per-application update manifests remain the source of truth for application updates. The toolkit catalogue is the source of truth for discovery of other modules.
 

@@ -1,6 +1,6 @@
-# XRD CRAFT 0.1.0
+# XRD CRAFT 1.0.1
 
-XRD CRAFT 0.1.0 is the first standalone release of the crystal-structure workspace in the XRD tools family.
+XRD CRAFT 1.0.1 is the first standalone toolkit release of the crystal-structure workspace in the XRD tools family.
 
 ## Features
 
@@ -10,4 +10,4 @@ XRD CRAFT 0.1.0 is the first standalone release of the crystal-structure workspa
 - Reuses compatible scientific packages and installs only missing or incompatible requirements.
 - Includes reliability safeguards for interrupted downloads and clear setup diagnostics.
 
-The initial release establishes the application foundation; performance tuning will continue as larger structure collections are tested.
+This release also establishes the application foundation for continued performance tuning with larger structure collections.

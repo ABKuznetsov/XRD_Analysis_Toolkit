@@ -21,10 +21,10 @@ def _application(payload: bytes = b"verified installer") -> ToolkitApplication:
         app_id="xrd_craft",
         name="XRD CRAFT",
         description="Crystal structure analysis.",
-        version="0.1.0",
+        version="1.0.1",
         announcement_revision=1,
-        installer_url="https://example.test/CRAFT_Setup_0.1.0.exe",
-        installer_filename="CRAFT_Setup_0.1.0.exe",
+        installer_url="https://example.test/CRAFT_Setup_1.0.1.exe",
+        installer_filename="CRAFT_Setup_1.0.1.exe",
         installer_sha256=hashlib.sha256(payload).hexdigest(),
         installer_size_bytes=len(payload),
     )
@@ -62,7 +62,7 @@ def test_parse_catalog_excludes_current_application_and_unsupported_platforms() 
                 "app_id": "xrd_craft",
                 "name": "CRAFT",
                 "description": "Crystal analysis",
-                "version": "0.1.0",
+                "version": "1.0.1",
                 "announcement_revision": 1,
                 "platforms": ["windows"],
                 "architectures": ["x86_64"],
@@ -102,7 +102,7 @@ def test_cache_path_is_scoped_by_application_and_version(tmp_path: Path) -> None
 
     result = cached_installer_path(application, tmp_path)
 
-    assert result == tmp_path / "xrd_craft" / "0.1.0" / "CRAFT_Setup_0.1.0.exe"
+    assert result == tmp_path / "xrd_craft" / "1.0.1" / "CRAFT_Setup_1.0.1.exe"
 
 
 def test_valid_cached_installer_is_reused_without_network(tmp_path: Path) -> None:

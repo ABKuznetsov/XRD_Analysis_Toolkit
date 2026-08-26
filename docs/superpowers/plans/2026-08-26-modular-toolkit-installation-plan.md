@@ -21,7 +21,7 @@
 - Never execute an installer whose byte size or SHA-256 differs from the catalogue.
 - Keep all startup, installer, catalogue, and failure copy in English.
 - Do not mention internal SCI Manager compatibility in release notes.
-- Finder release version is `1.5.0`; CRAFT release version is `0.1.0`.
+- Finder release version is `1.5.0`; CRAFT release version is `1.0.1`.
 - Commit only files belonging to the current task; use path-scoped `git add`.
 
 ## File and Responsibility Map
@@ -135,7 +135,7 @@ def validate_catalog(payload: Mapping[str, Any]) -> list[str]: ...
 
 **Step 1: Write manifest contract tests**
 
-Test schema version `1`, unique `app_id`, Finder `1.5.0`, CRAFT `0.1.0`, HTTPS URLs, Windows/x86_64 support, 64-character lowercase SHA-256, positive sizes, and independent update manifests. During development, permit the explicit all-zero hash only when `--allow-unbuilt` is passed to the validation script; tests for release mode must reject it.
+Test schema version `1`, unique `app_id`, Finder `1.5.0`, CRAFT `1.0.1`, HTTPS URLs, Windows/x86_64 support, 64-character lowercase SHA-256, positive sizes, and independent update manifests. During development, permit the explicit all-zero hash only when `--allow-unbuilt` is passed to the validation script; tests for release mode must reject it.
 
 Run:
 
@@ -483,7 +483,7 @@ git commit -m "build: add independent Finder and CRAFT installers"
 
 ---
 
-### Task 8: Prepare Finder 1.5.0 and CRAFT 0.1.0 release metadata
+### Task 8: Prepare Finder 1.5.0 and CRAFT 1.0.1 release metadata
 
 **Files:**
 
@@ -491,7 +491,7 @@ git commit -m "build: add independent Finder and CRAFT installers"
 - Modify: `XRD_Craft/pyproject.toml`
 - Modify: `XRD_Craft/src/crystal_viewer/__init__.py`
 - Create: `XRD_Finder/RELEASE_NOTES_1.5.0.md`
-- Create: `XRD_Craft/RELEASE_NOTES_0.1.0.md`
+- Create: `XRD_Craft/RELEASE_NOTES_1.0.1.md`
 - Modify: `toolkit/manifest.json`
 - Modify: `toolkit/updates/xrd_finder.json`
 - Modify: `toolkit/updates/xrd_craft.json`
@@ -500,7 +500,7 @@ git commit -m "build: add independent Finder and CRAFT installers"
 
 **Step 1: Write failing version-consistency tests**
 
-Assert Finder version `1.5.0` agrees across `pyproject.toml`, installer, update manifest, and release notes. Assert CRAFT version `0.1.0` agrees across package metadata, `__version__`, installer, update manifest, and release notes. Assert notes describe modular discovery, independent installation, performance, and reliability without mentioning SCI Manager.
+Assert Finder version `1.5.0` agrees across `pyproject.toml`, installer, update manifest, and release notes. Assert CRAFT version `1.0.1` agrees across package metadata, `__version__`, installer, update manifest, and release notes. Assert notes describe modular discovery, independent installation, performance, and reliability without mentioning SCI Manager.
 
 Run:
 
@@ -528,8 +528,8 @@ Expected: PASS.
 **Step 4: Commit only release metadata**
 
 ```powershell
-git add pyproject.toml XRD_Craft/pyproject.toml XRD_Craft/src/crystal_viewer/__init__.py XRD_Finder/RELEASE_NOTES_1.5.0.md XRD_Craft/RELEASE_NOTES_0.1.0.md toolkit/manifest.json toolkit/updates/xrd_finder.json toolkit/updates/xrd_craft.json toolkit/catalog.json XRD_Finder/tests/test_release_versions.py
-git commit -m "chore: prepare Finder 1.5.0 and CRAFT 0.1.0"
+git add pyproject.toml XRD_Craft/pyproject.toml XRD_Craft/src/crystal_viewer/__init__.py XRD_Finder/RELEASE_NOTES_1.5.0.md XRD_Craft/RELEASE_NOTES_1.0.1.md toolkit/manifest.json toolkit/updates/xrd_finder.json toolkit/updates/xrd_craft.json toolkit/catalog.json XRD_Finder/tests/test_release_versions.py
+git commit -m "chore: prepare Finder 1.5.0 and CRAFT 1.0.1"
 ```
 
 ---
@@ -564,7 +564,7 @@ Run the two build scripts with Inno Setup 6. Expected artefacts:
 
 ```text
 dist/releases/XRD_Phase_Finder_Setup_1.5.0.exe
-dist/releases/CRAFT_Setup_0.1.0.exe
+dist/releases/CRAFT_Setup_1.0.1.exe
 ```
 
 **Step 3: Insert exact release metadata**
@@ -603,7 +603,7 @@ Push the branch, create GitHub release `v1.5.0`, attach both installer assets, a
 
 ```powershell
 git push
-gh release create v1.5.0 dist/releases/XRD_Phase_Finder_Setup_1.5.0.exe dist/releases/CRAFT_Setup_0.1.0.exe --title "XRD Phase Finder 1.5.0 and XRD CRAFT 0.1.0" --notes-file XRD_Finder/RELEASE_NOTES_1.5.0.md
+gh release create v1.5.0 dist/releases/XRD_Phase_Finder_Setup_1.5.0.exe dist/releases/CRAFT_Setup_1.0.1.exe --title "XRD Phase Finder 1.5.0 and XRD CRAFT 1.0.1" --notes-file XRD_Finder/RELEASE_NOTES_1.5.0.md
 gh release view v1.5.0
 ```
 
