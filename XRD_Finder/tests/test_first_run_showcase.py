@@ -56,7 +56,7 @@ class FirstRunShowcaseTests(unittest.TestCase):
     def test_launcher_uses_versioned_ready_showcase(self) -> None:
         launcher = self.launcher_path.read_text(encoding="utf-8")
         self.assertIn("first_run_showcase.ps1", launcher)
-        self.assertIn('Test-ShowcaseSeen "1.4.1"', launcher)
+        self.assertIn('Test-ShowcaseSeen "1.5.0"', launcher)
         self.assertIn('Initialize-FirstRunShowcase', launcher)
         self.assertIn('-Mode "Ready"', launcher)
 
