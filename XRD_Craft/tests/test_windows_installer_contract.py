@@ -31,7 +31,7 @@ def test_installer_reuses_shared_sci_runtime() -> None:
     assert "PrivilegesRequired=lowest" in installer
     assert "setup_sci_env.bat" in installer
     assert ".xpff" not in installer
-    assert "XRD_Finder" not in installer
+    assert 'Source: "..\\..\\XRD_Finder\\*"' not in installer
     assert "%LOCALAPPDATA%\\Sci\\env\\Scripts\\pythonw.exe" in launcher
     assert "-m crystal_viewer.app" in launcher
 
@@ -52,3 +52,24 @@ def test_craft_installer_excludes_development_payload() -> None:
 
     for excluded in ("tests\\*", "__pycache__\\*", "*.pyc", "docs\\superpowers\\*"):
         assert excluded in source
+
+
+def test_craft_installer_offers_verified_finder_install_without_bundling_it() -> None:
+    source = INSTALLER.read_text(encoding="utf-8-sig")
+
+    assert 'Name: "installfinder"' in source
+    assert 'Description: "Download and install XRD Phase Finder 1.5.0"' in source
+    assert "Tasks: installfinder" in source
+    assert "install_companion_app.ps1" in source
+    assert '-TargetAppId ""xrd_finder""' in source
+    assert "XRD Phase Finder identifies and interprets phases" in source
+    assert "It is installed and updated independently." in source
+    assert 'Source: "..\\..\\XRD_Finder\\*"' not in source
+
+
+def test_craft_installer_skips_finder_offer_when_finder_is_already_installed() -> None:
+    source = INSTALLER.read_text(encoding="utf-8-sig")
+
+    assert "FinderIsInstalled" in source
+    assert "{commonpf64}\\XRD Phase Finder" in source
+    assert "not FinderIsInstalled" in source

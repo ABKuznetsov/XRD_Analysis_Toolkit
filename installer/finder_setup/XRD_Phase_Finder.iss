@@ -30,8 +30,12 @@ ChangesAssociations=yes
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[Messages]
+SelectTasksDesc=Choose optional components. XRD CRAFT provides interactive crystal-structure, morphology and framework analysis. It is installed and updated independently.
+
 [Tasks]
 Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: checkedonce
+Name: "installcraft"; Description: "Download and install XRD CRAFT 1.0.1"; GroupDescription: "Additional XRD software:"; Check: not CraftIsInstalled
 
 [Files]
 Source: "..\..\XRD_Finder\*"; DestDir: "{app}\XRD_Finder"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "tests\*,__pycache__\*,*.pyc,*.pyo,*.log,.pytest_cache\*,.ruff_cache\*,docs\superpowers\*,xrd_analysis_toolkit.egg-info\*"
@@ -56,6 +60,7 @@ Root: HKLM; Subkey: "Software\XRDPhaseFinder\Capabilities\FileAssociations"; Val
 
 [Run]
 Filename: "{win}\System32\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\toolkit\register_xpff_file_type.ps1"" -AppRoot ""{app}"" -Quiet"; Flags: runhidden waituntilterminated runascurrentuser
+Filename: "{win}\System32\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\toolkit\install_companion_app.ps1"" -TargetAppId ""xrd_craft"""; Description: "Download and install XRD CRAFT 1.0.1"; Flags: runhidden waituntilterminated skipifsilent; Tasks: installcraft; Check: not CraftIsInstalled
 Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\XRD_Finder\launch_xrd_finder_silent.vbs"""; Description: "Launch XRD Phase Finder"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
@@ -63,3 +68,10 @@ Filename: "{win}\System32\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
+
+[Code]
+function CraftIsInstalled: Boolean;
+begin
+  Result := FileExists(
+    ExpandConstant('{localappdata}\Sci\apps\craft\run_viewer_silent.vbs'));
+end;

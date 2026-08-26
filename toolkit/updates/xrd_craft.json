@@ -13,8 +13,8 @@
       "type": "installer",
       "platform": "windows-x64",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.5.0/CRAFT_Setup_1.0.1.exe",
-      "sha256": "4f2bff57f83775eeb79627054d64f2ec305bee1dfaf1f314017faf4c6411dc31",
-      "size_bytes": 3480076
+      "sha256": "315e2c38bf44597aae27cfc63df2f56ab9e1ecd44b243da9d3449fde13a16fd3",
+      "size_bytes": 3482812
     }
   ],
   "summary": [
@@ -23,5 +23,5 @@
     "Install and update independently while reusing the local scientific runtime."
   ],
   "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.5.0/CRAFT_Setup_1.0.1.exe",
-  "installer_sha256": "4f2bff57f83775eeb79627054d64f2ec305bee1dfaf1f314017faf4c6411dc31"
+  "installer_sha256": "315e2c38bf44597aae27cfc63df2f56ab9e1ecd44b243da9d3449fde13a16fd3"
 }
