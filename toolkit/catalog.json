@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit",
+  "applications": [
+    {
+      "app_id": "xrd_finder",
+      "name": "XRD Phase Finder",
+      "description": "Identify and interpret crystalline phases in powder X-ray diffraction patterns.",
+      "version": "1.5.0",
+      "icon": "XRD_Finder/icon.png",
+      "announcement_revision": 0,
+      "platforms": [
+        "windows"
+      ],
+      "architectures": [
+        "x86_64"
+      ],
+      "update_manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/toolkit/updates/xrd_finder.json",
+      "installer": {
+        "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.5.0/XRD_Phase_Finder_Setup_1.5.0.exe",
+        "filename": "XRD_Phase_Finder_Setup_1.5.0.exe",
+        "size_bytes": 1,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "app_id": "xrd_craft",
+      "name": "XRD CRAFT",
+      "description": "Explore crystal structures, structural units, morphology and framework mechanics.",
+      "version": "0.1.0",
+      "icon": "XRD_Craft/assets/crystal_blocks_icon.png",
+      "announcement_revision": 1,
+      "platforms": [
+        "windows"
+      ],
+      "architectures": [
+        "x86_64"
+      ],
+      "update_manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/toolkit/updates/xrd_craft.json",
+      "installer": {
+        "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.5.0/CRAFT_Setup_0.1.0.exe",
+        "filename": "CRAFT_Setup_0.1.0.exe",
+        "size_bytes": 1,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  ]
+}

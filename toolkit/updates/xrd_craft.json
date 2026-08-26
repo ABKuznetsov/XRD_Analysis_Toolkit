@@ -1,0 +1,27 @@
+{
+  "app_id": "xrd_craft",
+  "name": "XRD CRAFT",
+  "version": "0.1.0",
+  "channel": "stable",
+  "minimum_windows": "10.0",
+  "published_at": "2026-08-26",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.5.0",
+  "release_notes_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/XRD_Craft/RELEASE_NOTES_0.1.0.md",
+  "assets": [
+    {
+      "name": "CRAFT_Setup_0.1.0.exe",
+      "type": "installer",
+      "platform": "windows-x64",
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.5.0/CRAFT_Setup_0.1.0.exe",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size_bytes": 1
+    }
+  ],
+  "summary": [
+    "Explore crystal structures and hierarchy in an interactive 3D workspace.",
+    "Compare structures, series, morphology and framework mechanics.",
+    "Install and update independently while reusing the local scientific runtime."
+  ],
+  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.5.0/CRAFT_Setup_0.1.0.exe",
+  "installer_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+}
