@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -119,6 +119,7 @@ from crystal_viewer.ui.structure_load_requests import (
     QtStructureLoadExecutor,
     StructureLoadRequestManager,
 )
+from crystal_viewer.ui.toolkit_catalog_dialog import ToolkitCatalogController
 from crystal_viewer.ui.viewer import StructureViewer
 from crystal_viewer.knowledge.resolve import (
     confirm_bond_changes,
@@ -183,9 +184,14 @@ class MainWindow(QMainWindow):
         self.scene_rebuild_timer.timeout.connect(self._rebuild_scene)
         self._build_ui()
         self._build_actions()
+        self._toolkit_catalog = ToolkitCatalogController(
+            self,
+            QSettings("XRD Analysis Toolkit", "CRAFT"),
+        )
         self._initialize_comparison_requests(QtComparisonExecutor(self))
         self._initialize_structure_load_requests(QtStructureLoadExecutor(self))
         self.statusBar().showMessage("Ready · drop a CIF or open a structure")
+        self._schedule_toolkit_announcement()
 
     def _build_ui(self) -> None:
         self.compare_workspace = CompareWorkspace()
@@ -647,6 +653,12 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.output_dock)
         self.output_dock.hide()
 
+    def _open_toolkit_catalog(self) -> None:
+        self._toolkit_catalog.open_catalog()
+
+    def _schedule_toolkit_announcement(self) -> None:
+        self._toolkit_catalog.schedule_announcement()
+
     def _build_actions(self) -> None:
         menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu("File")
@@ -848,6 +860,7 @@ class MainWindow(QMainWindow):
         for label in ("User Guide", "Tutorials", "Hot Keys"):
             self._menu_action(help_menu, label, enabled=False)
         self._menu_action(help_menu, "Open Gehlenite Example", self.open_demo)
+        self._menu_action(help_menu, "More XRD tools…", self._open_toolkit_catalog)
         self._menu_action(help_menu, "About CRAFT", self._about)
 
         toolbar = QToolBar("Main")
