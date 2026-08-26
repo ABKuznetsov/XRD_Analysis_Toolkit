@@ -34,4 +34,9 @@ XRD_Craft/**/__pycache__/
 XRD_Craft/build/
 XRD_Craft/dist/
 installer/*
-!installer/XRD_Analysis_Toolkit.iss
+!installer/finder_setup/
+!installer/finder_setup/*.iss
+!installer/finder_setup/*.bat
+!installer/craft_setup/
+!installer/craft_setup/*.iss
+!installer/craft_setup/*.bat
