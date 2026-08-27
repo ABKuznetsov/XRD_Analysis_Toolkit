@@ -41,7 +41,7 @@ def test_installer_keeps_program_files_separate_from_shared_sci_metadata() -> No
     assert "DefaultDirName={autopf}\\XRD CRAFT" in installer
     assert "ArchitecturesInstallIn64BitMode=x64compatible" in installer
     assert "PrivilegesRequired=admin" in installer
-    assert "UsePreviousAppDir=no" in installer
+    assert "UsePreviousAppDir=yes" in installer
     assert "register_craft_install.ps1" in installer
     assert '-InstallDir ""{app}"" -Version ""{#MyAppVersion}""' in installer
     assert "{localappdata}" not in installer
@@ -51,6 +51,14 @@ def test_installer_keeps_program_files_separate_from_shared_sci_metadata() -> No
     assert 'Source: "..\\..\\XRD_Finder\\*"' not in installer
     assert "%LOCALAPPDATA%\\Sci\\env\\Scripts\\pythonw.exe" in launcher
     assert "-m crystal_viewer.app" in launcher
+
+
+def test_installer_recognizes_an_existing_craft_install_as_an_update() -> None:
+    installer = INSTALLER.read_text(encoding="utf-8-sig")
+
+    assert "AppId={{D40D3438-89A7-4FE2-B659-17B7D857F9AF}" in installer
+    assert "UsePreviousAppDir=yes" in installer
+    assert "DirExistsWarning=no" in installer
 
 
 def test_install_registration_keeps_only_metadata_under_sci_apps() -> None:
