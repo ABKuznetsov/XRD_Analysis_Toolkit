@@ -23,6 +23,16 @@ def test_windows_installer_contract_exists() -> None:
     ]
 
 
+def test_windows_installer_uses_craft_icon_for_setup_and_shortcuts() -> None:
+    installer = INSTALLER.read_text(encoding="utf-8-sig")
+    icon = MODULE_ROOT / "assets" / "craft.ico"
+
+    assert icon.is_file()
+    assert 'SetupIconFile=..\\..\\XRD_Craft\\assets\\craft.ico' in installer
+    assert 'UninstallDisplayIcon={app}\\assets\\craft.ico' in installer
+    assert installer.count('IconFilename: "{app}\\assets\\craft.ico"') == 2
+
+
 def test_installer_keeps_program_files_separate_from_shared_sci_metadata() -> None:
     installer = INSTALLER.read_text(encoding="utf-8-sig")
     launcher = (MODULE_ROOT / "run_viewer.bat").read_text(encoding="utf-8-sig")

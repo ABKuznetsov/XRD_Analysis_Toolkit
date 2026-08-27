@@ -24,6 +24,8 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 VersionInfoVersion={#MyAppVersion}
+SetupIconFile=..\..\XRD_Craft\assets\craft.ico
+UninstallDisplayIcon={app}\assets\craft.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -40,9 +42,9 @@ Source: "..\..\XRD_Craft\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdi
 Source: "..\..\toolkit\install_companion_app.ps1"; DestDir: "{app}\toolkit"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\CRAFT"; Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\run_viewer_silent.vbs"""; WorkingDir: "{app}"
+Name: "{group}\CRAFT"; Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\run_viewer_silent.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\assets\craft.ico"
 Name: "{group}\Uninstall CRAFT"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\CRAFT"; Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\run_viewer_silent.vbs"""; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autodesktop}\CRAFT"; Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\run_viewer_silent.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\assets\craft.ico"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\toolkit\setup_sci_env.bat"; Description: "Prepare the shared scientific environment"; Flags: waituntilterminated runasoriginaluser

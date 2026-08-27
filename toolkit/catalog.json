@@ -40,8 +40,8 @@
       "installer": {
         "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.5.0/CRAFT_Setup_1.0.1.exe",
         "filename": "CRAFT_Setup_1.0.1.exe",
-        "size_bytes": 3483527,
-        "sha256": "a23b93ce9ad8ef583da57f1f9f834bdb1b905bc253840ab3062cfa3ac5e43e45"
+        "size_bytes": 3694612,
+        "sha256": "0175e9ed62928a88c4d57bd289e8c2ee72a559a9b981cc10e7735ab46c565abd"
       }
     }
   ]
