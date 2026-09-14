@@ -1,459 +1,102 @@
-# XRD Analysis Toolkit
+# XRD Phase Finder
 
 ![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-blue.svg)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
-![Status](https://img.shields.io/badge/Status-Stable-green.svg)
 
-# Download XRD Phase Finder
+**XRD Phase Finder** is an open-source desktop application for powder X-ray diffraction phase identification. It is focused on practical interpretation of mixtures: loading experimental XRD patterns, selecting expected elements, searching open or local phase sources, comparing calculated/reference peaks with the experiment, and saving the full interpretation state in a portable project file.
 
-**Windows 10/11:** [Download `XRD_Phase_Finder_Setup_1.5.0.exe`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.5.0/XRD_Phase_Finder_Setup_1.5.0.exe) and run the installer.
+This repository is the standalone Finder application. Structure viewing and other crystallographic tools are developed separately.
 
-**Windows portable:** [Download `XRD_Phase_Finder_Portable_1.2.0.zip`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_Portable_1.2.0.zip), extract it and run the included launcher.
+## Main Features
 
-**macOS 13+:** [Download `XRD_Phase_Finder_macOS_1.2.0.pkg`](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_macOS_1.2.0.pkg) and run the installer.
+- import one or many XRD patterns and CIF files;
+- search local/user libraries, COD, RRUFF, PDF-style line databases and optional online sources;
+- rank candidates by Match and Gain scores;
+- show candidate peak markers, calculated overlays, residuals and selected phases;
+- estimate smoothing and background, including separate background and amorphous/halo handling;
+- save `.xpff` projects with imported data, processing state, selected phases, instrument profile and view settings;
+- use CRiStMa for crystallographic radiation/profile definitions used by Finder calculations.
 
-More detailed installation notes are below in [Installation](#installation).
+## Quick Start
 
-# XRD Phase Finder 1.5.0
+macOS:
 
-Portable scientific-result projects, faster staged candidate search and incremental multi-pattern rendering.
+```bash
+./run_finder.command
+```
 
-# Overview
+Windows:
 
-**XRD Phase Finder** is an open-source desktop tool for powder X-ray diffraction phase identification. It is built for everyday search-match work: load experimental XRD patterns, limit the chemistry by elements, search local or online phase sources, preview candidate peaks, inspect phase cards and keep selected phases in one project.
+```text
+run_finder.bat
+```
 
-![XRD Phase Finder workspace](XRD_Finder/docs/screenshots/xrd-phase-finder-overview.jpg)
+The launchers create or reuse a per-user scientific Python runtime and then start the graphical application. Installed builds use the same runtime logic through the preview launcher.
 
-## What It Can Do
+## Installation Assets
 
-- import one or many XRD patterns and CIF files
-- smooth patterns, subtract background and compare stacked patterns
-- search candidates by required and optional elements
-- preview calculated or measured reference peaks directly on the active pattern
-- rank candidates by peak-match score and keep selected phase overlays
-- calculate diffraction from CIF structures and display compound cards
-- save projects with imported data, processing state, selected phases and view settings
-- manage local caches, user libraries and external database folders from the Databases tab
+The macOS package builder creates:
+
+```text
+dist/XRD_Phase_Finder_macOS_1.6.0.pkg
+```
+
+Build it from the repository root:
+
+```bash
+scripts/build_macos_pkg.command
+```
+
+The package installs `XRD Phase Finder.app` into `/Applications`.
+
+Windows installer scripts live in:
+
+```text
+installer/finder_setup/
+```
+
+## Repository Layout
+
+```text
+xrd_finder/              application package
+launcher/                startup, update and runtime helper scripts
+installer/finder_setup/  Windows installer definition
+scripts/                 release/package scripts
+tests/                   development tests
+requirements.txt         runtime Python dependencies
+pyproject.toml           package metadata
+```
+
+Release packages intentionally exclude development-only folders such as `tests/`, `docs/`, `build/`, `dist/`, local caches and database downloads.
 
 ## Data Sources
 
-XRD Phase Finder can work with user CIF libraries, open crystallographic databases and user-provided restricted databases. Supported sources, official links and usage notes are summarized below in [Reference Data Sources](#reference-data-sources).
+XRD Phase Finder can use open crystallographic databases and user-provided files. User CIF files can be added directly, while larger external databases are indexed locally when configured by the user. Database terms and licenses remain the responsibility of the data provider and user.
 
----
+## Development
 
-# Typical Workflow
-
-```text
-Load experimental XRD
-        |
-        |
-Peak detection
-        |
-        |
-Search candidate phases
-(COD / local CIF / RRUFF / PDF-2 / CCDC / Materials Project)
-        |
-        |
-Load crystal structures (CIF)
-        |
-        |
-Calculate theoretical diffraction patterns
-        |
-        |
-Compare experimental and calculated profiles
-        |
-        |
-Assign diffraction peaks
-        |
-        |
-Identify unexplained peaks
-```
-
----
-
-# Interaction Guide
-
-- **Element table**
-  - Left click marks an element as required.
-  - Right click marks an element as optional.
-  - Clicking again removes that element from the gate.
-- **Candidate list**
-  - Single click previews the candidate and opens its card.
-  - Double click adds a structural candidate to the selected phase set.
-  - Right click opens actions such as add, calculate overlay and export CIF.
-- **Selected candidates**
-  - Single click shows that phase in the plot and card.
-  - Right click changes color, exports CIF, removes the phase or clears the list.
-- **Project tree**
-  - The highlighted XRD row is the active pattern for search and preview.
-  - Checkboxes control what is visible in the plot.
-  - Order arrows change plot and legend order.
-- **Projects**
-  - Save project writes one portable `.xpff` (XRD Phase Finder File) containing source XRD data, user CIF files, series, processed curves, selected phase assignments, Finder UI state, per-pattern previews and a versioned scientific result summary.
-  - Windows installation associates `.xpff` with XRD Phase Finder, so a project can be opened by double-clicking the file.
-- **Plot**
-  - Use mouse zoom/pan normally.
-  - `Reset view` or right click -> `Show full pattern` returns to the full range.
-
-The `?` button in the application opens a compact in-app helper with the same core controls.
-
----
-
-# Installation
-
-## Download
-
-Latest release assets:
-
-- Windows 10/11: [XRD_Phase_Finder_Setup_1.5.0.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.5.0/XRD_Phase_Finder_Setup_1.5.0.exe)
-- Windows portable: [XRD_Phase_Finder_Portable_1.2.0.zip](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_Portable_1.2.0.zip)
-- macOS 13+: [XRD_Phase_Finder_macOS_1.2.0.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.2.0/XRD_Phase_Finder_macOS_1.2.0.pkg)
-- All releases: [GitHub Releases](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases)
-
-Third-party database access and licensing are summarized in [Reference Data Sources](#reference-data-sources).
-
-## Requirements
-
-Windows installer:
-
-- Windows 10 or Windows 11, 64-bit recommended.
-- Administrator rights for installation into the selected application folder.
-- Internet access during first setup, because Python or Python packages may need to be downloaded.
-- About 1 GB of free disk space for the shared scientific Python environment.
-
-Source checkout / macOS / Linux:
-
-- Python 3.11 or 3.12.
-- `pip` and Python virtual environment support.
-- Internet access for installing Python packages.
-
-XRD Phase Finder uses a shared per-user environment named `Sci`. Future XRD applications from the same toolkit can reuse it.
-
-## Windows
-
-Download and run:
-
-```text
-XRD_Phase_Finder_Setup_1.5.0.exe
-```
-
-The installer:
-
-- installs XRD Phase Finder into the selected application folder
-- creates Start Menu and optional Desktop shortcuts
-- creates or reuses the shared `Sci` Python environment in user AppData
-- installs required Python packages
-- adds an uninstall entry to Windows
-- checks for updates when XRD Phase Finder starts
-
-If Python 3.11 is not already available, the setup script first tries `winget` and then falls back to the official Python 3.11.9 installer from python.org.
-
-## macOS
-
-Download:
-
-```text
-XRD_Phase_Finder_macOS_1.2.0.pkg
-```
-
-Open the package and follow the macOS installer. It installs
-`XRD Phase Finder.app` into `/Applications`, so the program appears in Finder,
-Launchpad and Spotlight.
-
-On first launch the application creates or reuses:
-
-```text
-Apple Silicon: ~/Library/Application Support/Sci/env-arm64
-Intel Mac:     ~/Library/Application Support/Sci/env-x86_64
-```
-
-The Apple Silicon runtime is launched natively as `arm64`; it does not reuse an
-older Intel/Rosetta environment. Windows keeps its existing shared runtime in
-`%AppData%\Sci\env`.
-
-macOS 13 or newer and Python 3.11 or 3.12 are required for this release.
-The macOS setup uses the current universal Qt runtime with native Apple Silicon
-support. Python 3.13 is not selected by the launcher.
-
-If macOS blocks the unsigned package, right-click it and choose **Open**. Source
-checkout users can remove quarantine attributes from the checkout with:
+Create a local environment:
 
 ```bash
-xattr -dr com.apple.quarantine .
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -U pip
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
-If the app does not open after a failed first setup, remove the old runtime and
-launch the application again:
+Run the application:
 
 ```bash
-rm -rf "$HOME/Library/Application Support/Sci/env-arm64"
+.venv/bin/python -m xrd_finder.apps.finder_gui
 ```
 
-Use `env-x86_64` instead on an Intel Mac. The legacy `Sci/env` directory is not
-modified by the architecture-specific macOS launcher.
-
-Installer and startup logs are written to:
-
-```text
-~/Library/Application Support/Sci/logs
-```
-
-Manual update from a source checkout:
-
-```text
-update_macos.command
-```
-
-## Linux
-
-Linux is currently source-checkout based:
+Run focused checks:
 
 ```bash
-chmod +x setup_env.sh XRD_Finder/*.sh
-./setup_env.sh
-./XRD_Finder/run_finder.sh
+python3 -m compileall xrd_finder
+python3 -m pytest tests
 ```
 
-Command line interface:
+## License
 
-```bash
-./XRD_Finder/run_finder_cli.sh
-```
-
-On a minimal Linux installation you may also need Python venv/pip and Qt desktop libraries:
-
-```bash
-sudo apt install python3 python3-venv python3-pip libxcb-cursor0 libegl1
-```
-
-For Fedora:
-
-```bash
-sudo dnf install python3 python3-pip xcb-util-cursor mesa-libEGL
-```
-
-## Source Checkout Commands
-
-These commands are mainly for developers or users running directly from a source checkout.
-
-Setup:
-
-```text
-setup_env.bat          # Windows
-setup_env.command      # macOS
-./setup_env.sh         # Linux
-```
-
-Graphical launchers:
-
-```text
-XRD_Finder\run_finder.bat
-./XRD_Finder/run_finder.command
-./XRD_Finder/run_finder.sh
-```
-
-Command-line launchers:
-
-```text
-XRD_Finder\run_finder_cli.bat
-./XRD_Finder/run_finder_cli.command
-./XRD_Finder/run_finder_cli.sh
-```
-
-The graphical launcher can receive initial files:
-
-```text
-XRD_Finder\run_finder.bat --pattern "path\to\pattern.xy" --cif "path\to\phase.cif"
-./XRD_Finder/run_finder.sh --pattern "path/to/pattern.xy" --cif "path/to/phase.cif"
-```
-
-For normal interactive work, importing XRD/CIF files from the application window is preferred.
-
----
-
-# Reference Data Sources
-
-The **Databases** tab controls which data sources participate in phase search. The user decides which sources are active for a particular search and which local libraries should be indexed or cleared. The links below point to the official pages of databases that XRD Phase Finder can use. Users should review access rules, licenses, citation requirements and terms of use on those official pages.
-
-Open or publicly accessible sources:
-
-- User phase library from imported CIF files
-- COD online search ([official site](https://www.crystallography.net/cod/))
-- COD local folder/archive indexed by the user
-- RRUFF measured powder-pattern data ([official site](https://rruff.info/))
-- Materials Project search with the user's own API key ([official site](https://materialsproject.org/))
-- AFLOW structure services when enabled in the application workflow ([official site](https://aflow.org/))
-- OQMD structure services when enabled in the application workflow ([official site](https://oqmd.org/))
-
-Restricted or license-controlled sources, available only when the user has the right to use them:
-
-- PDF-2 reference-card data from a local user-provided installation or folder ([official site](https://www.icdd.com/pdf-2/))
-- CCDC/CSD data through the user's own CCDC Python API installation and valid license/access rights ([official site](https://www.ccdc.cam.ac.uk/solutions/software/csd/))
-- other local commercial, institutional or private databases supplied by the user
-
-Large databases are never bundled with the application. The project does not redistribute third-party crystallographic databases; it provides convenient tools for reading, indexing and searching data that the user is allowed to access. Use the controls in **Databases** to download, index, update or clear local data explicitly where supported.
-
-Common database actions include:
-
-- `Index COD CIF folder` for an unpacked local COD CIF collection
-- `Index COD ZIP archive` for a downloaded COD archive
-- `Download COD archive URL` when you have a direct COD ZIP URL
-- `Download RRUFF` and `Index RRUFF` for RRUFF measured powder patterns
-
-RRUFF entries are measured reference patterns. They can be overlaid on the
-experimental pattern, but they are not calculated CIF phase profiles.
-
-See [Third-party Data Sources](THIRD_PARTY_DATA_SOURCES.md) for notes on COD,
-Materials Project, RRUFF and restricted CCDC/CSD data usage and attribution.
-
----
-
-# Multi-pattern Figures
-
-Use `Show -> All selected` to display all checked XRD patterns from the project
-tree. The `Offset` slider controls vertical separation between patterns as a
-percentage of the previous pattern height.
-
-The active XRD pattern is the row highlighted in the project tree. Search,
-candidate preview and phase calculations always use the active pattern only.
-Use the `Order` arrow buttons above the project tree to change the display order
-of XRD patterns and CIF phases.
-
-Zoom is intentionally stable while browsing candidates or changing the active
-pattern. Use `Reset view` or right-click the plot and choose `Show full pattern`
-to return to the full view.
-
----
-
-# Repository Structure
-
-```text
-XRD_Analysis_Toolkit/
-    README.md
-    CHANGELOG.md
-    THIRD_PARTY_DATA_SOURCES.md
-        Project documentation, release history and data-source notes
-
-    pyproject.toml
-        Python package metadata
-
-    setup_env.bat
-    setup_env.command
-    setup_env.sh
-        Manual source-checkout setup scripts for Windows, macOS and Linux
-
-    toolkit/
-        manifest.json
-            Toolkit and application version metadata
-        updates/xrd_finder.json
-            Machine-readable update metadata for release checks
-        setup_sci_env.bat
-        setup_sci_env.command
-        launch_xrd_finder_preview.ps1
-        launch_xrd_finder_preview.command
-            Shared runtime setup and startup/update preview support
-
-    XRD_Finder/
-        app.json
-            XRD Phase Finder application metadata
-        xrd_finder/
-            XRD Phase Finder application source code
-        docs/screenshots/
-            Screenshots used by the README
-        requirements.txt
-            Required Python packages for XRD Phase Finder
-        requirements-optional.txt
-            Reserved for integrations that may require extra user-installed packages
-        run_finder.bat
-        run_finder.command
-        run_finder.sh
-            Source-checkout graphical launchers
-        run_finder_cli.bat
-        run_finder_cli.command
-        run_finder_cli.sh
-            Source-checkout command-line launchers
-```
-
-The repository contains source code, documentation, runtime setup scripts and update metadata. Generated installer and portable files such as `XRD_Phase_Finder_Setup_1.2.1.exe`, `XRD_Phase_Finder_Portable_1.2.0.zip` and `XRD_Phase_Finder_macOS_1.2.0.pkg` are **not committed to the repository**; they are published separately as GitHub Release assets.
-
-The root `XRD_Analysis_Toolkit` layout keeps shared toolkit files separate from the `XRD_Finder` application folder. This leaves room for additional XRD-related applications later while preserving a clear application boundary.
-
-Downloaded databases, user libraries, temporary files and local caches are intentionally kept outside Git. The installed Windows application uses the per-user `Sci` location in AppData. Source-checkout users can set `XRD_FINDER_DATA_DIR` to use a custom data/cache location.
-
-Release source archives should be built from a clean Git tree so `.gitattributes` exclusions are applied:
-
-```bash
-python scripts/build_release_archive.py
-```
-
-The script creates `dist/XRD_Phase_Finder_Source_<version>.zip` with Git metadata, bytecode, OS junk, local database caches and legacy XRD Manager scaffolding excluded.
-
-## Profiling Finder performance
-
-Use the standalone profiler before making further hot-path optimizations:
-
-```bash
-python scripts/profile_finder.py --pattern path/to/pattern.xy --cif path/to/cif_folder --limit 100 --repeat 2
-```
-
-The first run captures `cProfile` statistics for `FinderService`; repeat runs reuse the same service instance so CIF-to-HKL cache effects are visible.
-
----
-
-# Scientific Background
-
-The software combines several standard crystallographic approaches:
-
-- Bragg diffraction
-- Structure-factor based diffraction simulation
-- CIF crystallographic models
-- Multi-phase profile fitting
-- Peak assignment
-- Open crystallographic databases
-
-Core open-source libraries used by the application:
-
-- [NumPy](https://numpy.org/) and [SciPy](https://scipy.org/) for numerical work
-- [pybaselines](https://pybaselines.readthedocs.io/) for background correction algorithms
-- [pyqtgraph](https://www.pyqtgraph.org/) for interactive plotting
-- [PySide6 / Qt for Python](https://doc.qt.io/qtforpython-6/) for the desktop interface
-- [gemmi](https://gemmi.readthedocs.io/) for crystallographic file handling
-- [pymatgen](https://pymatgen.org/) for Materials Project and structure workflows
-
-The current implementation is intended for **initial phase identification** and **visual interpretation** of powder diffraction patterns. It is **not** intended to replace full-profile refinement packages such as GSAS-II, FullProf or TOPAS.
-
----
-
-# Current Status
-
-Current development stage: **1.2.1 release candidate**.
-
-The application is ready for practical search-match and visual phase-identification workflows on Windows and macOS. The current release includes the graphical Phase Finder workspace, project save/load, multi-pattern display, CIF-based phase overlays, candidate cards, database management, startup/update preview and packaged installers.
-
-Quantification, I/Ic and match values should be treated as interpretive aids for phase screening. Next development work is focused on improving database connectors, refining candidate scoring, extending automated tests and preparing the algorithm description for publication.
-
----
-
-# License
-
-MIT License
-
----
-
-# Citation
-
-If you use this software in scientific research, please cite this GitHub repository.
-
-A dedicated software publication describing the Phase Finder algorithm is currently in preparation.
-
----
-
-# Author
-
-**Artem B. Kuznetsov**
-
-Institute geology and mineralogy SB RAS
-
-GitHub:
-https://github.com/ABKuznetsov
+MIT. See `LICENSE`.

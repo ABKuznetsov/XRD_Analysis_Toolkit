@@ -37,8 +37,8 @@ rm -rf "$STAGE_ROOT"
 mkdir -p \
     "$MACOS_DIR" \
     "$RESOURCES_DIR" \
-    "$APP_PAYLOAD_DIR/XRD_Finder/xrd_finder" \
-    "$APP_PAYLOAD_DIR/toolkit" \
+    "$APP_PAYLOAD_DIR/xrd_finder" \
+    "$APP_PAYLOAD_DIR/launcher" \
     "$SCRIPTS_DIR" \
     "$DIST_DIR"
 
@@ -48,77 +48,94 @@ rsync -a \
     --exclude "__pycache__/" \
     --exclude "*.pyc" \
     --exclude "*.pyo" \
-    --exclude "app.py" \
-    --exclude "io/exporters.py" \
-    --exclude "services/thermo_service.py" \
-    --exclude "services/solid_solution_service.py" \
-    --exclude "services/structure_service.py" \
-    --exclude "ui/legacy_windows.py" \
-    --exclude "ui/main_window.py" \
-    "$ROOT/XRD_Finder/xrd_finder/" \
-    "$APP_PAYLOAD_DIR/XRD_Finder/xrd_finder/"
+    "$ROOT/xrd_finder/" \
+    "$APP_PAYLOAD_DIR/xrd_finder/"
+
+rsync -a \
+    --exclude ".DS_Store" \
+    --exclude "._*" \
+    --exclude "__pycache__/" \
+    --exclude "*.pyc" \
+    --exclude "*.pyo" \
+    "$ROOT/launcher/" \
+    "$APP_PAYLOAD_DIR/launcher/"
 
 for runtime_file in \
-    "XRD_Finder/app.json" \
-    "XRD_Finder/Entry_96-100-0018.cif" \
-    "XRD_Finder/requirements.txt" \
-    "XRD_Finder/icon.png" \
-    "toolkit/launch_xrd_finder_preview.command" \
-    "toolkit/launch_xrd_finder_preview_macos.py" \
-    "toolkit/setup_sci_env.command" \
-    "toolkit/manifest.json" \
-    "LICENSE"
+    "app.json" \
+    "requirements.txt" \
+    "icon.png" \
+    "icon.ico" \
+    "run_finder.command" \
+    "run_finder.sh" \
+    "run_finder.bat" \
+    "run_finder_silent.vbs" \
+    "launch_xrd_finder.bat" \
+    "launch_xrd_finder_silent.vbs" \
+    "install_windows_runtime_direct.bat" \
+    "install_xrd_finder_windows_runtime.bat" \
+    "repair_xrd_finder_windows_runtime.bat" \
+    "README.md" \
+    "LICENSE" \
+    "THIRD_PARTY_DATA_SOURCES.md"
 do
-    target="$APP_PAYLOAD_DIR/$runtime_file"
-    mkdir -p "$(dirname "$target")"
-    cp -p "$ROOT/$runtime_file" "$target"
+    if [ -f "$ROOT/$runtime_file" ]; then
+        target="$APP_PAYLOAD_DIR/$runtime_file"
+        mkdir -p "$(dirname "$target")"
+        cp -p "$ROOT/$runtime_file" "$target"
+    fi
 done
 
 FORBIDDEN_PAYLOAD="$(find "$APP_PAYLOAD_DIR" \
-    \( -iname '*xrd_craft*' -o -iname '*xrd craft*' -o -iname '*crystal_viewer*' \) \
+    \( -iname '*crystal_viewer*' -o -iname '*xrd_manager*' \) \
     -print -quit)"
 if [ -n "$FORBIDDEN_PAYLOAD" ]; then
-    echo "Forbidden CRAFT payload in Finder package: $FORBIDDEN_PAYLOAD"
+    echo "Forbidden non-Finder payload in package: $FORBIDDEN_PAYLOAD"
     exit 1
 fi
 
 FORBIDDEN_NON_RUNTIME="$(find "$APP_PAYLOAD_DIR" \
-    \( -type d \( -name docs -o -name tests -o -name installer \) \
-    -o -type f \( -name 'RELEASE_NOTES_*' -o -name 'requirements-dev.txt' \) \) \
+    \( -type d \( -name docs -o -name tests -o -name installer -o -name dist -o -name build -o -name data \) \
+    -o -type f \( -name 'RELEASE_NOTES_*' -o -name 'requirements-dev.txt' -o -name '*.pkg' -o -name '*.zip' -o -name '.DS_Store' -o -name '*.pyc' \) \) \
     -print -quit)"
 if [ -n "$FORBIDDEN_NON_RUNTIME" ]; then
-    echo "Forbidden non-runtime payload in Finder package: $FORBIDDEN_NON_RUNTIME"
+    echo "Forbidden non-runtime payload in package: $FORBIDDEN_NON_RUNTIME"
     exit 1
 fi
 
-for required_module in \
-    "XRD_Finder/xrd_finder/core/refinement.py" \
-    "XRD_Finder/xrd_finder/core/series.py"
+for required_file in \
+    "xrd_finder/apps/finder_gui.py" \
+    "xrd_finder/ui/analysis_windows.py" \
+    "launcher/launch_xrd_finder_preview.command" \
+    "launcher/launch_xrd_finder_preview_macos.py" \
+    "launcher/setup_sci_env.command" \
+    "requirements.txt" \
+    "app.json"
 do
-    if [ ! -f "$APP_PAYLOAD_DIR/$required_module" ]; then
-        echo "Required Finder module is missing from the package: $required_module"
+    if [ ! -f "$APP_PAYLOAD_DIR/$required_file" ]; then
+        echo "Required Finder runtime file is missing from the package: $required_file"
         exit 1
     fi
 done
 
-chmod +x "$APP_PAYLOAD_DIR"/toolkit/*.command
+chmod +x "$APP_PAYLOAD_DIR"/launcher/*.command
+chmod +x "$APP_PAYLOAD_DIR"/run_finder.command "$APP_PAYLOAD_DIR"/run_finder.sh 2>/dev/null || true
 
-if [ -f "$APP_PAYLOAD_DIR/XRD_Finder/icon.png" ]; then
-    cp "$APP_PAYLOAD_DIR/XRD_Finder/icon.png" "$RESOURCES_DIR/icon.png"
+if [ -f "$APP_PAYLOAD_DIR/icon.png" ]; then
+    cp "$APP_PAYLOAD_DIR/icon.png" "$RESOURCES_DIR/icon.png"
     if command -v sips >/dev/null 2>&1 && command -v iconutil >/dev/null 2>&1; then
         ICONSET_DIR="$RESOURCES_DIR/icon.iconset"
         rm -rf "$ICONSET_DIR"
         mkdir -p "$ICONSET_DIR"
-        sips -z 16 16 "$APP_PAYLOAD_DIR/XRD_Finder/icon.png" --out "$ICONSET_DIR/icon_16x16.png" >/dev/null 2>&1 || true
-        sips -z 32 32 "$APP_PAYLOAD_DIR/XRD_Finder/icon.png" --out "$ICONSET_DIR/icon_16x16@2x.png" >/dev/null 2>&1 || true
-        sips -z 32 32 "$APP_PAYLOAD_DIR/XRD_Finder/icon.png" --out "$ICONSET_DIR/icon_32x32.png" >/dev/null 2>&1 || true
-        sips -z 64 64 "$APP_PAYLOAD_DIR/XRD_Finder/icon.png" --out "$ICONSET_DIR/icon_32x32@2x.png" >/dev/null 2>&1 || true
-        sips -z 128 128 "$APP_PAYLOAD_DIR/XRD_Finder/icon.png" --out "$ICONSET_DIR/icon_128x128.png" >/dev/null 2>&1 || true
-        sips -z 256 256 "$APP_PAYLOAD_DIR/XRD_Finder/icon.png" --out "$ICONSET_DIR/icon_128x128@2x.png" >/dev/null 2>&1 || true
-        sips -z 256 256 "$APP_PAYLOAD_DIR/XRD_Finder/icon.png" --out "$ICONSET_DIR/icon_256x256.png" >/dev/null 2>&1 || true
-        sips -z 512 512 "$APP_PAYLOAD_DIR/XRD_Finder/icon.png" --out "$ICONSET_DIR/icon_256x256@2x.png" >/dev/null 2>&1 || true
-        sips -z 512 512 "$APP_PAYLOAD_DIR/XRD_Finder/icon.png" --out "$ICONSET_DIR/icon_512x512.png" >/dev/null 2>&1 || true
-        sips -z 1024 1024 "$APP_PAYLOAD_DIR/XRD_Finder/icon.png" --out "$ICONSET_DIR/icon_512x512@2x.png" >/dev/null 2>&1 || true
+        sips -z 16 16 "$APP_PAYLOAD_DIR/icon.png" --out "$ICONSET_DIR/icon_16x16.png" >/dev/null 2>&1 || true
+        sips -z 32 32 "$APP_PAYLOAD_DIR/icon.png" --out "$ICONSET_DIR/icon_16x16@2x.png" >/dev/null 2>&1 || true
+        sips -z 32 32 "$APP_PAYLOAD_DIR/icon.png" --out "$ICONSET_DIR/icon_32x32.png" >/dev/null 2>&1 || true
+        sips -z 64 64 "$APP_PAYLOAD_DIR/icon.png" --out "$ICONSET_DIR/icon_32x32@2x.png" >/dev/null 2>&1 || true
+        sips -z 128 128 "$APP_PAYLOAD_DIR/icon.png" --out "$ICONSET_DIR/icon_128x128.png" >/dev/null 2>&1 || true
+        sips -z 256 256 "$APP_PAYLOAD_DIR/icon.png" --out "$ICONSET_DIR/icon_128x128@2x.png" >/dev/null 2>&1 || true
+        sips -z 256 256 "$APP_PAYLOAD_DIR/icon.png" --out "$ICONSET_DIR/icon_256x256.png" >/dev/null 2>&1 || true
+        sips -z 512 512 "$APP_PAYLOAD_DIR/icon.png" --out "$ICONSET_DIR/icon_256x256@2x.png" >/dev/null 2>&1 || true
+        sips -z 512 512 "$APP_PAYLOAD_DIR/icon.png" --out "$ICONSET_DIR/icon_512x512.png" >/dev/null 2>&1 || true
+        sips -z 1024 1024 "$APP_PAYLOAD_DIR/icon.png" --out "$ICONSET_DIR/icon_512x512@2x.png" >/dev/null 2>&1 || true
         iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/icon.icns" >/dev/null 2>&1 || true
         rm -rf "$ICONSET_DIR"
     fi
@@ -163,12 +180,17 @@ set -e
 
 APP_BUNDLE="$(cd "$(dirname "$0")/../.." && pwd)"
 APP_ROOT="$APP_BUNDLE/Contents/Resources/app"
-exec "$APP_ROOT/toolkit/launch_xrd_finder_preview.command" "$@"
+exec "$APP_ROOT/launcher/launch_xrd_finder_preview.command" "$@"
 LAUNCHER
 
 chmod +x "$MACOS_DIR/xrd-phase-finder"
-xattr -cr "$APP_BUNDLE" >/dev/null 2>&1 || true
-xattr -dr com.apple.quarantine "$APP_BUNDLE" >/dev/null 2>&1 || true
+xattr -cr "$PAYLOAD_ROOT" >/dev/null 2>&1 || true
+find "$PAYLOAD_ROOT" -exec xattr -c {} \; >/dev/null 2>&1 || true
+find "$PAYLOAD_ROOT" -exec xattr -d com.apple.provenance {} \; >/dev/null 2>&1 || true
+find "$PAYLOAD_ROOT" -exec xattr -d com.apple.quarantine {} \; >/dev/null 2>&1 || true
+find "$PAYLOAD_ROOT" \( -name "._*" -o -name ".DS_Store" \) -print | while read -r junk_file; do
+    rm -f "$junk_file"
+done
 
 cat > "$SCRIPTS_DIR/postinstall" <<POSTINSTALL
 #!/bin/zsh
@@ -178,31 +200,25 @@ APP_BUNDLE="/Applications/$APP_NAME.app"
 xattr -dr com.apple.quarantine "\$APP_BUNDLE" >/dev/null 2>&1 || true
 touch "\$APP_BUNDLE" >/dev/null 2>&1 || true
 
-LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-if [ -x "\$LSREGISTER" ]; then
-    "\$LSREGISTER" -f "\$APP_BUNDLE" >/dev/null 2>&1 || true
-fi
-
 exit 0
 POSTINSTALL
 chmod +x "$SCRIPTS_DIR/postinstall"
 
-rm -f "$COMPONENT_PKG" "$PKG_PATH"
 pkgbuild \
     --root "$PAYLOAD_ROOT" \
+    --scripts "$SCRIPTS_DIR" \
     --install-location "/" \
     --identifier "$PKG_IDENTIFIER" \
     --version "$VERSION" \
-    --scripts "$SCRIPTS_DIR" \
     --filter '(^|/)\._[^/]*$' \
     --filter '(^|/)\.DS_Store$' \
-    --filter '(^|/)\.git($|/)' \
-    --filter '(^|/)__pycache__($|/)' \
-    --filter '\.pyc$' \
     "$COMPONENT_PKG"
 
 productbuild \
     --package "$COMPONENT_PKG" \
     "$PKG_PATH"
 
-echo "$PKG_PATH"
+xattr -cr "$PKG_PATH" >/dev/null 2>&1 || true
+xattr -dr com.apple.quarantine "$PKG_PATH" >/dev/null 2>&1 || true
+
+echo "Created $PKG_PATH"

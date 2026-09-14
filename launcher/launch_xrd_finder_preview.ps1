@@ -1,0 +1,928 @@
+﻿param(
+    [string]$AppId = "xrd_finder",
+    [string]$ProjectPath = ""
+)
+
+$ErrorActionPreference = "Stop"
+
+function Resolve-AppRoot {
+    if ($PSScriptRoot) {
+        return (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+    }
+    return (Get-Location).Path
+}
+
+function Compare-VersionText {
+    param([string]$Left, [string]$Right)
+    try {
+        $lv = [version]$Left
+        $rv = [version]$Right
+        return $lv.CompareTo($rv)
+    } catch {
+        return [string]::Compare($Left, $Right, $true)
+    }
+}
+
+function Ensure-Folder {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    }
+}
+
+function New-Label {
+    param(
+        [string]$Text,
+        [int]$X,
+        [int]$Y,
+        [int]$W,
+        [int]$H,
+        [float]$Size = 9,
+        [string]$Style = "Regular",
+        [System.Drawing.Color]$Color = [System.Drawing.Color]::FromArgb(31, 41, 55)
+    )
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = $Text
+    $label.Location = New-Object System.Drawing.Point -ArgumentList $X, $Y
+    $label.Size = New-Object System.Drawing.Size -ArgumentList $W, $H
+    $label.Font = New-Object System.Drawing.Font -ArgumentList "Segoe UI", $Size, ([System.Drawing.FontStyle]::$Style)
+    $label.ForeColor = $Color
+    $label.BackColor = [System.Drawing.Color]::Transparent
+    return $label
+}
+
+
+
+
+function Utf8Text {
+    param([string]$Base64)
+    return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Base64))
+}
+
+function Show-StartupNoticeDialog {
+    param([System.Windows.Forms.Form]$Owner)
+
+    $dialog = New-Object System.Windows.Forms.Form
+    $dialog.Text = "XRD Phase Finder"
+    $dialog.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
+    $dialog.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $dialog.MaximizeBox = $false
+    $dialog.MinimizeBox = $false
+    $dialog.ShowInTaskbar = $false
+    $dialog.ClientSize = New-Object System.Drawing.Size -ArgumentList 680, 360
+    $dialog.BackColor = [System.Drawing.Color]::White
+
+    $banner = New-Object System.Windows.Forms.Panel
+    $banner.Location = New-Object System.Drawing.Point -ArgumentList 0, 0
+    $banner.Size = New-Object System.Drawing.Size -ArgumentList 680, 92
+    $banner.BackColor = [System.Drawing.Color]::FromArgb(255, 193, 7)
+    $dialog.Controls.Add($banner)
+
+    $mark = New-Label "!" 24 16 58 58 34 "Bold" ([System.Drawing.Color]::FromArgb(120, 53, 15))
+    $mark.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
+    $mark.BackColor = [System.Drawing.Color]::FromArgb(255, 236, 179)
+    $banner.Controls.Add($mark)
+
+    $heading = New-Label "First launch after install/update" 96 18 520 30 17 "Bold" ([System.Drawing.Color]::FromArgb(68, 36, 11))
+    $banner.Controls.Add($heading)
+    $subheading = New-Label (Utf8Text "0J/QtdGA0LLRi9C5INC30LDQv9GD0YHQuiDQv9C+0YHQu9C1INGD0YHRgtCw0L3QvtCy0LrQuCDQuNC70Lgg0L7QsdC90L7QstC70LXQvdC40Y8=") 96 52 520 22 11 "Bold" ([System.Drawing.Color]::FromArgb(92, 54, 10))
+    $banner.Controls.Add($subheading)
+
+    $ru = New-Label (Utf8Text "UlU6INCh0LXQudGH0LDRgSDQv9GA0LjQu9C+0LbQtdC90LjQtSDQvNC+0LbQtdGCINC30LDQvNC10YLQvdC+INGC0L7RgNC80L7Qt9C40YLRjDog0L7QvdC+INCz0L7RgtC+0LLQuNGCINC+0LrRgNGD0LbQtdC90LjQtSwg0YHQvtC30LTQsNGR0YIg0LrRjdGI0Lgg0Lgg0LzQvtC20LXRgiDQt9Cw0LPRgNGD0LbQsNGC0Ywg0LTQsNC90L3Ri9C1INC40Lcg0LHQsNC3LiDQn9C+0YHQu9C1INC/0LXRgNCy0L7QuSDQvdCw0YHRgtGA0L7QudC60Lgg0LfQsNC/0YPRgdC6INC4INC/0L7QuNGB0Log0LTQvtC70LbQvdGLINGB0YLQsNGC0Ywg0LHRi9GB0YLRgNC10LUuINCh0LrQvtGA0L7RgdGC0Ywg0LfQsNCy0LjRgdC40YIg0L7RgiDQstCw0YjQtdCz0L4g0LrQvtC80L/RjNGO0YLQtdGA0LAg0Lgg0LjQvdGC0LXRgNC90LXRgtCwLg==") 34 118 612 82 11 "Regular" ([System.Drawing.Color]::FromArgb(31, 41, 55))
+    $dialog.Controls.Add($ru)
+
+    $en = New-Label "EN: The app may feel slow for a while: it is preparing the runtime, building caches and may download database data. After the first setup, startup and search should be faster. Speed depends on your computer and internet connection." 34 208 612 82 10.5 "Regular" ([System.Drawing.Color]::FromArgb(55, 65, 81))
+    $dialog.Controls.Add($en)
+
+    $ok = New-Object System.Windows.Forms.Button
+    $ok.Text = "OK"
+    $ok.Size = New-Object System.Drawing.Size -ArgumentList 120, 34
+    $ok.Location = New-Object System.Drawing.Point -ArgumentList 526, 310
+    $ok.BackColor = [System.Drawing.Color]::FromArgb(37, 99, 235)
+    $ok.ForeColor = [System.Drawing.Color]::White
+    $ok.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $ok.Font = New-Object System.Drawing.Font -ArgumentList "Segoe UI", 10, ([System.Drawing.FontStyle]::Bold)
+    $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $dialog.AcceptButton = $ok
+    $dialog.Controls.Add($ok)
+
+    $dialog.ShowDialog($Owner) | Out-Null
+    $dialog.Dispose()
+}
+
+function New-StateBitmap {
+    param([string]$State)
+    $bmp = New-Object System.Drawing.Bitmap 34, 34
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.Clear([System.Drawing.Color]::Transparent)
+    if ($State -eq "OK") {
+        $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(46, 125, 50)), 2.6
+        $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(232, 245, 233))
+        $g.FillEllipse($brush, 4, 4, 26, 26)
+        $g.DrawEllipse($pen, 4, 4, 26, 26)
+        $g.DrawLines($pen, [System.Drawing.Point[]]@((New-Object System.Drawing.Point 11, 18), (New-Object System.Drawing.Point 15, 22), (New-Object System.Drawing.Point 23, 13)))
+    } elseif ($State -eq "Error") {
+        $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(185, 28, 28)), 2.6
+        $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(254, 226, 226))
+        $g.FillEllipse($brush, 4, 4, 26, 26)
+        $g.DrawEllipse($pen, 4, 4, 26, 26)
+        $g.DrawLine($pen, 12, 12, 22, 22)
+        $g.DrawLine($pen, 22, 12, 12, 22)
+    } elseif ($State -eq "Working") {
+        $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(37, 99, 235)), 2.8
+        $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(239, 246, 255))
+        $g.FillEllipse($brush, 4, 4, 26, 26)
+        $g.DrawArc($pen, 7, 7, 20, 20, 25, 285)
+        $g.FillEllipse((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(37, 99, 235))), 15, 15, 4, 4)
+    } else {
+        $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(148, 163, 184)), 2.2
+        $brush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(248, 250, 252))
+        $g.FillEllipse($brush, 4, 4, 26, 26)
+        $g.DrawEllipse($pen, 4, 4, 26, 26)
+    }
+    $g.Dispose()
+    return $bmp
+}
+
+function Set-StateIcon {
+    param([int]$Index, [string]$State)
+    if ($script:StepIconBoxes.Count -le $Index) { return }
+    $box = $script:StepIconBoxes[$Index]
+    if ($box.Image) { $box.Image.Dispose() }
+    $box.Image = New-StateBitmap $State
+}
+
+function Pause-PreviewStep {
+    Start-Sleep -Milliseconds 500
+}
+
+function Get-SetupProgressMessage {
+    param([string]$LogPath)
+    if (-not (Test-Path -LiteralPath $LogPath)) { return "Starting environment setup" }
+    try { $lines = Get-Content -LiteralPath $LogPath -Tail 40 -ErrorAction Stop } catch { return "Preparing environment" }
+    $joined = ($lines -join "`n")
+    if ($joined -match "Downloading Python") { return "Downloading Python 3.11" }
+    if ($joined -match "Installing Python") { return "Installing Python 3.11" }
+    if ($joined -match "Creating venv") { return "Creating Sci environment" }
+    if ($joined -match "Upgrading pip") { return "Upgrading pip" }
+    if ($joined -match "Failed to install package:\s*([^`r`n]+)") { return "Failed to install package: " + $Matches[1].Trim() }
+    if ($joined -match "RUNTIME_CHECK_FAILED") { return "Installed runtime failed its self-test" }
+    if ($joined -match "Installing package:\s*([^`r`n]+)") {
+        $packageName = $Matches[1].Trim()
+        if ($packageName -match "^(PySide6(?:==.*)?|pymatgen|mp-api)$") { return "Installing package: $packageName (this can take several minutes)" }
+        return "Installing package: $packageName"
+    }
+    if ($joined -match "Installing XRD Phase Finder requirements") { return "Installing scientific Python packages" }
+    if ($joined -match "Collecting ") { return "Downloading Python packages" }
+    if ($joined -match "Installing collected packages") { return "Installing Python packages" }
+    if ($joined -match "Successfully installed") { return "Finalizing installed packages" }
+    if ($joined -match "setup complete") { return "Environment setup complete" }
+    if ($joined -match "setup failed") { return "Environment setup failed" }
+    for ($idx = $lines.Count - 1; $idx -ge 0; $idx--) {
+        $line = ([string]$lines[$idx]).Trim()
+        if ($line -and $line.Length -lt 120) { return $line }
+    }
+    return "Preparing environment"
+}
+
+function Test-SciRuntime {
+    param(
+        [string]$PythonPath,
+        [string]$ProbePath,
+        [string]$RequirementsPath
+    )
+    if (-not (Test-Path -LiteralPath $PythonPath)) {
+        return [pscustomobject]@{ Ready = $false; Detail = "Python executable is missing: $PythonPath" }
+    }
+    if (-not (Test-Path -LiteralPath $ProbePath)) {
+        return [pscustomobject]@{ Ready = $false; Detail = "Runtime check is missing: $ProbePath" }
+    }
+    try {
+        $probeOutput = (& $PythonPath $ProbePath --requirements $RequirementsPath 2>&1 | Out-String).Trim()
+        $probeExitCode = $LASTEXITCODE
+        if ($probeExitCode -eq 0) {
+            return [pscustomobject]@{ Ready = $true; Detail = $probeOutput }
+        }
+        if (-not $probeOutput) { $probeOutput = "Runtime self-test returned exit code $probeExitCode" }
+        return [pscustomobject]@{ Ready = $false; Detail = $probeOutput }
+    } catch {
+        return [pscustomobject]@{ Ready = $false; Detail = $_.Exception.Message }
+    }
+}
+
+function Wait-SetupProcessWithProgress {
+    param([System.Diagnostics.Process]$Process, [string]$LogPath)
+    $lastMessage = ""
+    $tick = 0
+    while (-not $Process.HasExited) {
+        $message = Get-SetupProgressMessage $LogPath
+        if ($message -ne $lastMessage -or ($tick % 6) -eq 0) {
+            $dots = "." * (($tick % 4) + 1)
+            Set-Step 1 "Installing$dots" $message "Blue"
+            Set-ProgressText 28 $message
+            $lastMessage = $message
+        }
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 500
+        $tick++
+    }
+    $Process.Refresh()
+    $message = Get-SetupProgressMessage $LogPath
+    if ($message) {
+        Set-Step 1 "Checking..." $message "Blue"
+        Set-ProgressText 28 $message
+        [System.Windows.Forms.Application]::DoEvents()
+    }
+}
+
+function Show-RuntimeRepairDialog {
+    param(
+        [string]$Detail,
+        [string]$LogPath
+    )
+
+    $dialog = New-Object System.Windows.Forms.Form
+    $dialog.Text = "XRD Phase Finder: scientific environment required"
+    $dialog.StartPosition = "CenterScreen"
+    $dialog.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $dialog.MaximizeBox = $false
+    $dialog.MinimizeBox = $false
+    $dialog.ShowInTaskbar = $true
+    $dialog.TopMost = $true
+    $dialog.ClientSize = New-Object System.Drawing.Size(650, 430)
+    $dialog.BackColor = [System.Drawing.Color]::White
+
+    $title = New-Object System.Windows.Forms.Label
+    $title.Location = New-Object System.Drawing.Point(24, 20)
+    $title.Size = New-Object System.Drawing.Size(600, 32)
+    $title.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
+    $title.Text = "The scientific environment is incomplete"
+    $dialog.Controls.Add($title)
+
+    $intro = New-Object System.Windows.Forms.Label
+    $intro.Location = New-Object System.Drawing.Point(25, 62)
+    $intro.Size = New-Object System.Drawing.Size(600, 44)
+    $intro.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
+    $intro.Text = "The application tested Python and the required packages by running them. Missing or not working:"
+    $dialog.Controls.Add($intro)
+
+    $details = New-Object System.Windows.Forms.TextBox
+    $details.Location = New-Object System.Drawing.Point(27, 108)
+    $details.Size = New-Object System.Drawing.Size(596, 190)
+    $details.Multiline = $true
+    $details.ReadOnly = $true
+    $details.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+    $details.Font = New-Object System.Drawing.Font("Consolas", 9)
+    $details.BackColor = [System.Drawing.Color]::FromArgb(248, 248, 248)
+    $details.Text = $Detail
+    $dialog.Controls.Add($details)
+
+    $location = New-Object System.Windows.Forms.Label
+    $location.Location = New-Object System.Drawing.Point(27, 309)
+    $location.Size = New-Object System.Drawing.Size(596, 52)
+    $location.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $location.Text = "The environment will be updated in $env:LOCALAPPDATA\Sci.`r`nSetup log: $LogPath"
+    $dialog.Controls.Add($location)
+
+    $installButton = New-Object System.Windows.Forms.Button
+    $installButton.Location = New-Object System.Drawing.Point(301, 374)
+    $installButton.Size = New-Object System.Drawing.Size(205, 34)
+    $installButton.Text = "Update or complete installation"
+    $installButton.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $installButton.DialogResult = [System.Windows.Forms.DialogResult]::Retry
+    $dialog.AcceptButton = $installButton
+    $dialog.Controls.Add($installButton)
+
+    $closeButton = New-Object System.Windows.Forms.Button
+    $closeButton.Location = New-Object System.Drawing.Point(516, 374)
+    $closeButton.Size = New-Object System.Drawing.Size(107, 34)
+    $closeButton.Text = "Close"
+    $closeButton.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $closeButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $dialog.CancelButton = $closeButton
+    $dialog.Controls.Add($closeButton)
+
+    $result = $dialog.ShowDialog()
+    $dialog.Dispose()
+    return ($result -eq [System.Windows.Forms.DialogResult]::Retry)
+}
+
+function Invoke-SciRuntimeRepair {
+    param(
+        [string]$SetupScript,
+        [string]$LogPath
+    )
+    if (-not (Test-Path -LiteralPath $SetupScript)) {
+        throw "Setup script was not found: $SetupScript"
+    }
+    Set-ProgressText 28 "Installing Python and scientific packages"
+    Set-Step 1 "Installing..." "Updating or completing the scientific environment" "Blue"
+    $setupProcess = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", "`"$SetupScript`"") -PassThru -WindowStyle Hidden
+    Wait-SetupProcessWithProgress $setupProcess $LogPath
+    if ($setupProcess.ExitCode -ne 0) {
+        $lastSetupMessage = Get-SetupProgressMessage $LogPath
+        $setupDetails = Get-StartupLogTail $LogPath
+        throw "Installation failed: $lastSetupMessage`r`n`r`n$setupDetails"
+    }
+}
+
+function Show-OwnedQuestion {
+    param([string]$Message, [string]$Title)
+    $script:Form.TopMost = $true
+    $script:Form.Activate()
+    [System.Windows.Forms.Application]::DoEvents()
+    $result = [System.Windows.Forms.MessageBox]::Show($script:Form, $Message, $Title, [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Information, [System.Windows.Forms.MessageBoxDefaultButton]::Button1)
+    $script:Form.TopMost = $false
+    return $result
+}
+
+function Invoke-UpdateDownload {
+    param(
+        [string]$Url,
+        [string]$OutFile
+    )
+    if (-not $Url) { throw "Update installer URL is not available." }
+    $errors = New-Object System.Collections.Generic.List[string]
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    } catch {
+    }
+
+    try {
+        Write-LauncherLog "Downloading update with Invoke-WebRequest: $Url"
+        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -TimeoutSec 300 -MaximumRedirection 10 -Headers @{ "User-Agent" = "XRD-Phase-Finder-Updater" }
+        if ((Test-Path -LiteralPath $OutFile) -and ((Get-Item -LiteralPath $OutFile).Length -gt 1024)) { return }
+        $errors.Add("Invoke-WebRequest produced an empty or incomplete file.") | Out-Null
+    } catch {
+        $errors.Add("Invoke-WebRequest: " + $_.Exception.Message) | Out-Null
+    }
+
+    try {
+        Write-LauncherLog "Downloading update with BITS: $Url"
+        Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
+        Start-BitsTransfer -Source $Url -Destination $OutFile -DisplayName "XRD Phase Finder update" -Description "Downloading XRD Phase Finder update" -ErrorAction Stop
+        if ((Test-Path -LiteralPath $OutFile) -and ((Get-Item -LiteralPath $OutFile).Length -gt 1024)) { return }
+        $errors.Add("BITS produced an empty or incomplete file.") | Out-Null
+    } catch {
+        $errors.Add("BITS: " + $_.Exception.Message) | Out-Null
+    }
+
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    if ($curl) {
+        try {
+            Write-LauncherLog "Downloading update with curl.exe: $Url"
+            Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
+            $curlProcess = Start-Process -FilePath $curl.Source -ArgumentList @("-L", "--fail", "--retry", "3", "--connect-timeout", "30", "--max-time", "300", "-A", "XRD-Phase-Finder-Updater", "-o", $OutFile, $Url) -Wait -PassThru -WindowStyle Hidden
+            if ($curlProcess.ExitCode -eq 0 -and (Test-Path -LiteralPath $OutFile) -and ((Get-Item -LiteralPath $OutFile).Length -gt 1024)) { return }
+            $errors.Add("curl.exe exit code: " + $curlProcess.ExitCode) | Out-Null
+        } catch {
+            $errors.Add("curl.exe: " + $_.Exception.Message) | Out-Null
+        }
+    } else {
+        $errors.Add("curl.exe is not available.") | Out-Null
+    }
+
+    throw "Could not download the update installer automatically.`r`n" + ($errors -join "`r`n")
+}
+function Download-And-RunUpdate {
+    param([string]$Url, [string]$ExpectedSha256, [string]$LatestVersion)
+    if (-not $Url) { throw "Update installer URL is not available." }
+    Set-Step 3 "Downloading" "The update installer can take a few minutes on a slow connection." "Blue"
+    [System.Windows.Forms.Application]::DoEvents()
+    Ensure-Folder $updateRoot
+    $fileName = [System.IO.Path]::GetFileName(([System.Uri]$Url).AbsolutePath)
+    if (-not $fileName) { $fileName = "XRD_Phase_Finder_Setup_$LatestVersion.exe" }
+    $targetPath = Join-Path $updateRoot $fileName
+    Set-Step 3 "Downloading" ("Downloading update " + $LatestVersion) "Blue"
+    Set-ProgressText 76 "Downloading update installer"
+    [System.Windows.Forms.Application]::DoEvents()
+    Invoke-UpdateDownload $Url $targetPath
+    if ($ExpectedSha256) {
+        Set-Step 3 "Checking" "Verifying downloaded installer" "Blue"
+        Set-ProgressText 78 "Verifying update installer"
+        [System.Windows.Forms.Application]::DoEvents()
+        $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $targetPath).Hash.ToLowerInvariant()
+        if ($actualSha256 -ne $ExpectedSha256.ToLowerInvariant()) {
+            Remove-Item -LiteralPath $targetPath -Force -ErrorAction SilentlyContinue
+            throw "Downloaded installer checksum does not match the update manifest."
+        }
+    }
+    Set-Step 3 "Ready" "Starting update installer" "Green"
+    Set-ProgressText 80 "Starting update installer"
+    [System.Windows.Forms.Application]::DoEvents()
+    Start-Process -FilePath $targetPath | Out-Null
+}
+function Get-StartupLogTail {
+    param([string]$LogPath)
+    if (-not $LogPath -or -not (Test-Path -LiteralPath $LogPath)) { return "" }
+    try {
+        $tail = Get-Content -LiteralPath $LogPath -Tail 18 -ErrorAction Stop
+        $text = ($tail -join "`r`n").Trim()
+        if ($text.Length -gt 1600) { return $text.Substring($text.Length - 1600) }
+        return $text
+    } catch {
+        return ""
+    }
+}
+
+function Wait-ApplicationMainWindow {
+    param(
+        [System.Diagnostics.Process]$Process,
+        [int]$TimeoutSeconds = 120,
+        [string]$LogPath = "",
+        [string]$ReadyFile = ""
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $tick = 0
+    while ((Get-Date) -lt $deadline) {
+        if ($ReadyFile -and (Test-Path -LiteralPath $ReadyFile)) {
+            return $true
+        }
+        if ($Process.HasExited) {
+            if ($Process.ExitCode -eq 0) {
+                Write-LauncherLog "Python app exited normally before splash detected a window. Closing preview."
+                return $true
+            }
+            $details = Get-StartupLogTail $LogPath
+            if ($details) {
+                throw "XRD Phase Finder closed during startup. Exit code: $($Process.ExitCode)`r`n`r`nStartup log:`r`n$details`r`n`r`nFull log: $LogPath"
+            }
+            throw "XRD Phase Finder closed during startup. Exit code: $($Process.ExitCode)"
+        }
+        $Process.Refresh()
+        if ($Process.MainWindowHandle -ne [IntPtr]::Zero -or (Test-ProcessHasVisibleWindow $Process.Id)) {
+            return $true
+        }
+        $dots = "." * (($tick % 4) + 1)
+        Set-Step 4 "Starting$dots" "Waiting for the main application window" "Blue"
+        Set-ProgressText 96 "Starting XRD Phase Finder$dots"
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 500
+        $tick++
+    }
+    $details = Get-StartupLogTail $LogPath
+    if ($details) {
+        throw "XRD Phase Finder is running, but the main window did not appear within $TimeoutSeconds seconds.`r`n`r`nStartup log:`r`n$details`r`n`r`nFull log: $LogPath"
+    }
+    throw "XRD Phase Finder is running, but the main window did not appear within $TimeoutSeconds seconds."
+}
+function Add-StepRow {
+    param(
+        [int]$Index,
+        [string]$Glyph,
+        [string]$Title,
+        [string]$Detail,
+        [int]$Y
+    )
+    $iconBox = New-Object System.Windows.Forms.PictureBox
+    $iconBox.Location = New-Object System.Drawing.Point -ArgumentList 430, ($Y + 8)
+    $iconBox.Size = New-Object System.Drawing.Size -ArgumentList 34, 34
+    $iconBox.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::CenterImage
+    $iconBox.Image = New-StateBitmap "Waiting"
+    $script:Form.Controls.Add($iconBox)
+    $script:StepIconBoxes.Add($iconBox)
+
+    $titleLabel = New-Label $Title 492 ($Y - 2) 315 25 11 "Bold" ([System.Drawing.Color]::FromArgb(15, 23, 42))
+    $script:Form.Controls.Add($titleLabel)
+
+    $detailLabel = New-Label $Detail 492 ($Y + 24) 315 40 9.5 "Regular" ([System.Drawing.Color]::FromArgb(75, 85, 99))
+    $script:Form.Controls.Add($detailLabel)
+
+    $statusLabel = New-Label "Waiting" 784 ($Y + 11) 102 22 9.5 "Regular" ([System.Drawing.Color]::FromArgb(37, 99, 235))
+    $statusLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleRight
+    $script:Form.Controls.Add($statusLabel)
+
+    $divider = New-Object System.Windows.Forms.Panel
+    $divider.Location = New-Object System.Drawing.Point -ArgumentList 430, ($Y + 62)
+    $divider.Size = New-Object System.Drawing.Size -ArgumentList 456, 1
+    $divider.BackColor = [System.Drawing.Color]::FromArgb(226, 232, 240)
+    $script:Form.Controls.Add($divider)
+
+    $script:StepStatusLabels.Add($statusLabel)
+    $script:StepDetailLabels.Add($detailLabel)
+}
+
+function Set-Step {
+    param([int]$Index, [string]$Status, [string]$Detail, [string]$Tone = "Blue")
+        if ($Status -match "OK") { Set-StateIcon $Index "OK" } elseif ($Tone -eq "Red" -or $Status -match "Failed") { Set-StateIcon $Index "Error" } elseif ($Status -match "Checking|Installing|Repairing|Loading|Starting") { Set-StateIcon $Index "Working" } else { Set-StateIcon $Index "Waiting" }
+if ($script:StepStatusLabels.Count -gt $Index) {
+        $label = $script:StepStatusLabels[$Index]
+        $label.Text = $Status
+        if ($Tone -eq "Green") {
+            $label.ForeColor = [System.Drawing.Color]::FromArgb(46, 125, 50)
+        } elseif ($Tone -eq "Red") {
+            $label.ForeColor = [System.Drawing.Color]::FromArgb(185, 28, 28)
+        } elseif ($Tone -eq "Muted") {
+            $label.ForeColor = [System.Drawing.Color]::FromArgb(100, 116, 139)
+        } else {
+            $label.ForeColor = [System.Drawing.Color]::FromArgb(37, 99, 235)
+        }
+    }
+    if ($script:StepDetailLabels.Count -gt $Index -and $Detail) {
+        $script:StepDetailLabels[$Index].Text = $Detail
+    }
+    [System.Windows.Forms.Application]::DoEvents()
+}
+
+function Set-ProgressText {
+    param([int]$Value, [string]$Text)
+    [System.Windows.Forms.Application]::DoEvents()
+}
+
+$appRoot = Resolve-AppRoot
+$associationScript = Join-Path $appRoot "launcher\register_xpff_file_type.ps1"
+if (Test-Path -LiteralPath $associationScript) {
+    try {
+        & $associationScript -AppRoot $appRoot -Quiet
+    } catch {
+        # File association repair must never block application startup.
+    }
+}
+$sciRoot = Join-Path $env:LOCALAPPDATA "Sci"
+$envRoot = Join-Path $sciRoot "env"
+$appsRoot = Join-Path $sciRoot "apps"
+$finderRoot = Join-Path $appsRoot "xrd_phase_finder"
+$dataRoot = Join-Path $finderRoot "data"
+$logsRoot = Join-Path $sciRoot "logs"
+$updateRoot = Join-Path $sciRoot "updates"
+function Write-LauncherLog {
+    param([string]$Message)
+}
+$pythonw = Join-Path $envRoot "Scripts\pythonw.exe"
+$pythonExe = Join-Path $envRoot "Scripts\python.exe"
+$setupBat = Join-Path $appRoot "launcher\setup_sci_env.bat"
+$runtimeCheck = Join-Path $appRoot "launcher\check_sci_runtime.py"
+$requirementsPath = Join-Path $appRoot "requirements.txt"
+$manifestPath = Join-Path $appRoot "launcher\manifest.json"
+$appManifestPath = Join-Path $appRoot "app.json"
+$appPackageRoot = $appRoot
+$appIconPath = Join-Path $appRoot "icon.png"
+$localVersion = "0.0.0"
+$manifestUrl = ""
+$updateManifestUrl = ""
+$installerUrl = ""
+$installerSha256 = ""
+$releaseUrl = ""
+$entryModule = "xrd_finder.apps.finder_gui"
+if (Test-Path -LiteralPath $appManifestPath) {
+    try {
+        $earlyAppManifest = Get-Content -LiteralPath $appManifestPath -Raw | ConvertFrom-Json
+        if ($earlyAppManifest.version) { $localVersion = [string]$earlyAppManifest.version }
+        if ($earlyAppManifest.entry_module) { $entryModule = [string]$earlyAppManifest.entry_module }
+    } catch {
+    }
+}
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+[System.Windows.Forms.Application]::EnableVisualStyles()
+$showcaseModule = Join-Path $appRoot "launcher\first_run_showcase.ps1"
+$runtimeSetupModule = Join-Path $appRoot "launcher\sci_runtime_setup_ui.ps1"
+if (-not (Test-Path -LiteralPath $showcaseModule)) { throw "Showcase module is missing: $showcaseModule" }
+if (-not (Test-Path -LiteralPath $runtimeSetupModule)) { throw "Runtime setup UI module is missing: $runtimeSetupModule" }
+. $showcaseModule
+. $runtimeSetupModule
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class XrdWindowFinder {
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    public static extern int GetWindowTextLength(IntPtr hWnd);
+}
+"@
+
+function Test-ProcessHasVisibleWindow {
+    param([int]$ProcessId)
+    $found = $false
+    $callback = [XrdWindowFinder+EnumWindowsProc]{
+        param([IntPtr]$hWnd, [IntPtr]$lParam)
+        [uint32]$windowProcessId = 0
+        [void][XrdWindowFinder]::GetWindowThreadProcessId($hWnd, [ref]$windowProcessId)
+        if ($windowProcessId -eq [uint32]$ProcessId -and [XrdWindowFinder]::IsWindowVisible($hWnd) -and [XrdWindowFinder]::GetWindowTextLength($hWnd) -gt 0) {
+            $script:XrdVisibleWindowFound = $true
+            return $false
+        }
+        return $true
+    }
+    $script:XrdVisibleWindowFound = $false
+    [void][XrdWindowFinder]::EnumWindows($callback, [IntPtr]::Zero)
+    $found = [bool]$script:XrdVisibleWindowFound
+    Remove-Variable -Name XrdVisibleWindowFound -Scope Script -ErrorAction SilentlyContinue
+    return $found
+}
+
+$script:Form = New-Object System.Windows.Forms.Form
+$script:Form.Text = "XRD Phase Finder"
+$script:Form.StartPosition = "CenterScreen"
+$script:Form.Size = New-Object System.Drawing.Size -ArgumentList 940, 590
+$script:Form.MinimumSize = New-Object System.Drawing.Size -ArgumentList 940, 590
+$script:Form.FormBorderStyle = "FixedSingle"
+$script:Form.MaximizeBox = $false
+$script:Form.BackColor = [System.Drawing.Color]::FromArgb(248, 250, 252)
+
+$leftPanel = New-Object System.Windows.Forms.Panel
+$leftPanel.Location = New-Object System.Drawing.Point -ArgumentList 0, 0
+$leftPanel.Size = New-Object System.Drawing.Size -ArgumentList 400, 552
+$leftPanel.BackColor = [System.Drawing.Color]::White
+$script:Form.Controls.Add($leftPanel)
+
+$splitter = New-Object System.Windows.Forms.Panel
+$splitter.Location = New-Object System.Drawing.Point -ArgumentList 400, 0
+$splitter.Size = New-Object System.Drawing.Size -ArgumentList 1, 552
+$splitter.BackColor = [System.Drawing.Color]::FromArgb(226, 232, 240)
+$script:Form.Controls.Add($splitter)
+
+if (Test-Path -LiteralPath $appIconPath) {
+    $picture = New-Object System.Windows.Forms.PictureBox
+    $picture.Location = New-Object System.Drawing.Point -ArgumentList 60, 92
+    $picture.Size = New-Object System.Drawing.Size -ArgumentList 280, 280
+    $picture.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
+    $picture.Image = [System.Drawing.Image]::FromFile($appIconPath)
+    $leftPanel.Controls.Add($picture)
+}
+
+$brand = New-Label "XRD Phase Finder" 58 390 320 46 24 "Bold" ([System.Drawing.Color]::FromArgb(15, 23, 42))
+$leftPanel.Controls.Add($brand)
+$subtitle = New-Label "Phase identification from`r`nX-ray diffraction data" 60 438 290 58 12 "Regular" ([System.Drawing.Color]::FromArgb(71, 85, 105))
+$leftPanel.Controls.Add($subtitle)
+$versionLabel = New-Label "Version $localVersion" 60 512 140 24 9 "Regular" ([System.Drawing.Color]::FromArgb(100, 116, 139))
+$leftPanel.Controls.Add($versionLabel)
+
+$title = New-Label "Starting XRD Phase Finder..." 430 46 420 42 19 "Bold" ([System.Drawing.Color]::FromArgb(15, 23, 42))
+$script:Form.Controls.Add($title)
+$topHint = New-Label "Preparing folders, databases, updates and user settings." 432 82 420 24 9.5 "Regular" ([System.Drawing.Color]::FromArgb(100, 116, 139))
+$script:Form.Controls.Add($topHint)
+
+$script:StepStatusLabels = New-Object System.Collections.Generic.List[System.Windows.Forms.Label]
+$script:StepDetailLabels = New-Object System.Collections.Generic.List[System.Windows.Forms.Label]
+$script:StepIconBoxes = New-Object System.Collections.Generic.List[System.Windows.Forms.PictureBox]
+Add-StepRow 0 "" "Checking application folders" "User data directory`r`nCache directory" 132
+Add-StepRow 1 "" "Checking scientific runtime" "Python environment`r`nRequired packages" 204
+Add-StepRow 2 "" "Checking data sources" "COD`r`nMaterials Project" 276
+Add-StepRow 3 "" "Checking for updates" ("Current version: " + $localVersion) 348
+Add-StepRow 4 "" "Opening application" "Loading settings and main window" 420
+$script:Form.Show()
+[System.Windows.Forms.Application]::DoEvents()
+
+
+try {
+    $script:ActiveStep = 0
+    Set-ProgressText 8 "Initializing"
+    Set-Step 0 "Checking..." "Creating user data folders" "Blue"
+    Ensure-Folder $sciRoot
+    Ensure-Folder $appsRoot
+    Ensure-Folder $finderRoot
+    Ensure-Folder $dataRoot
+    Ensure-Folder $logsRoot
+    Ensure-Folder $updateRoot
+    Ensure-Folder (Join-Path $finderRoot "matplotlib")
+    Set-Step 0 "OK" "User data and cache folders are ready" "Green"
+
+    Pause-PreviewStep
+    $script:ActiveStep = 1
+    Set-ProgressText 28 "Preparing runtime"
+    Set-Step 1 "Checking..." "Testing Python and required scientific packages" "Blue"
+    $setupLog = Join-Path $logsRoot "setup.log"
+    $runtimeProbe = Test-SciRuntime $pythonExe $runtimeCheck $requirementsPath
+    $runtimeReady = ($runtimeProbe.Ready -and (Test-Path -LiteralPath $pythonw))
+    $runtimeDetail = [string]$runtimeProbe.Detail
+    if (-not (Test-Path -LiteralPath $pythonw)) {
+        $runtimeDetail = ($runtimeDetail + "`r`n- Python GUI launcher was not found: $pythonw").Trim()
+    }
+    while (-not $runtimeReady) {
+        Set-ProgressText 28 "Environment setup required"
+        Set-Step 1 "Action required" "Python or scientific packages are missing or damaged" "Red"
+        if (-not (Show-RuntimeConsent $runtimeDetail $sciRoot $setupLog)) {
+            throw "The scientific environment is not ready. Installation was cancelled by the user.`r`n`r`n$runtimeDetail"
+        }
+        try {
+            $showcase = Initialize-FirstRunShowcase -Owner $script:Form -AssetRoot (Join-Path $appRoot "launcher\showcase") -Version "1.6.0" -Mode "Installing"
+            $showcase.Dialog.Show()
+            $script:Form.Hide()
+            Invoke-VisibleSciRuntimeRepair $setupBat $setupLog {
+                param($progress)
+                Set-ShowcaseProgress -Text ([string]$progress.Text) -Current ([int]$progress.Current) -Total ([int]$progress.Total)
+            }
+            $runtimeProbe = Test-SciRuntime $pythonExe $runtimeCheck $requirementsPath
+            $runtimeReady = ($runtimeProbe.Ready -and (Test-Path -LiteralPath $pythonw))
+            $runtimeDetail = [string]$runtimeProbe.Detail
+            if (-not (Test-Path -LiteralPath $pythonw)) {
+                $runtimeDetail = ($runtimeDetail + "`r`n- Python GUI launcher was not found: $pythonw").Trim()
+            }
+            if ($runtimeReady) {
+                Set-ShowcaseProgress -Text "Environment ready" -Current 1 -Total 1
+                Set-ShowcaseInstallationComplete
+                while (-not $showcase.ContinueRequested -and $showcase.Dialog.Visible) {
+                    [System.Windows.Forms.Application]::DoEvents()
+                    Start-Sleep -Milliseconds 80
+                }
+            }
+        } catch {
+            $runtimeReady = $false
+            $runtimeDetail = $_.Exception.Message
+            if ($showcase -and $showcase.Dialog) {
+                $showcase.InstallationComplete = $true
+                $showcase.Dialog.Close()
+            }
+            $failureChoice = Show-RuntimeSetupFailure $runtimeDetail $setupLog
+            if ($failureChoice -ne [System.Windows.Forms.DialogResult]::Retry) {
+                throw "The scientific environment is not ready.`r`n`r`n$runtimeDetail"
+            }
+        } finally {
+            Dispose-FirstRunShowcase
+            $script:Form.Show()
+        }
+    }
+    if (-not (Test-ShowcaseSeen "1.6.0")) {
+        $showcase = Initialize-FirstRunShowcase -Owner $script:Form -AssetRoot (Join-Path $appRoot "launcher\showcase") -Version "1.6.0" -Mode "Ready"
+        $script:Form.Hide()
+        Show-FirstRunShowcaseDialog | Out-Null
+        Dispose-FirstRunShowcase
+        $script:Form.Show()
+    }
+    Ensure-Folder (Join-Path $dataRoot "cod_cache")
+    Ensure-Folder (Join-Path $dataRoot "cod_cache\rruff")
+    Set-Step 1 "OK" "Python and required scientific packages were tested" "Green"
+
+    $env:PYTHONDONTWRITEBYTECODE = "1"
+    $env:XRD_FINDER_DATA_DIR = $dataRoot
+    $env:XRD_FINDER_LOG_DIR = $logsRoot
+    $env:MPLCONFIGDIR = Join-Path $finderRoot "matplotlib"
+    $env:QT_OPENGL = "software"
+    $env:QT_QUICK_BACKEND = "software"
+    $env:QT_ANGLE_PLATFORM = "warp"
+    $env:QT_QPA_PLATFORM = "windows"
+    if ($env:PYTHONPATH) {
+        $env:PYTHONPATH = "$appPackageRoot;$env:PYTHONPATH"
+    } else {
+        $env:PYTHONPATH = $appPackageRoot
+    }
+    $startupLog = ""
+    $readyFile = Join-Path $logsRoot "xrd_finder_ready.flag"
+    $preparedFile = Join-Path $logsRoot "xrd_finder_prepared.flag"
+    $showSignalFile = Join-Path $logsRoot "xrd_finder_show.signal"
+    Remove-Item -LiteralPath $readyFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $preparedFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $showSignalFile -Force -ErrorAction SilentlyContinue
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $pythonExe
+    $startInfo.Arguments = "-m $entryModule"
+    if ($ProjectPath) {
+        $escapedProjectPath = $ProjectPath.Replace('"', '\"')
+        $startInfo.Arguments += " --project `"$escapedProjectPath`""
+    }
+    $startInfo.WorkingDirectory = $appRoot
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.EnvironmentVariables["PYTHONDONTWRITEBYTECODE"] = "1"
+    $startInfo.EnvironmentVariables["XRD_FINDER_DATA_DIR"] = $dataRoot
+    $startInfo.EnvironmentVariables["XRD_FINDER_LOG_DIR"] = $logsRoot
+    $startInfo.EnvironmentVariables["XRD_FINDER_PREPARED_FILE"] = $preparedFile
+    $startInfo.EnvironmentVariables["XRD_FINDER_SHOW_SIGNAL_FILE"] = $showSignalFile
+    $startInfo.EnvironmentVariables["XRD_FINDER_READY_FILE"] = $readyFile
+    $startInfo.EnvironmentVariables["MPLCONFIGDIR"] = Join-Path $finderRoot "matplotlib"
+    $startInfo.EnvironmentVariables["PYTHONPATH"] = $env:PYTHONPATH
+    $startInfo.EnvironmentVariables["QT_OPENGL"] = "software"
+    $startInfo.EnvironmentVariables["QT_QUICK_BACKEND"] = "software"
+    $startInfo.EnvironmentVariables["QT_ANGLE_PLATFORM"] = "warp"
+    $startInfo.EnvironmentVariables["QT_QPA_PLATFORM"] = "windows"
+    $appProcess = New-Object System.Diagnostics.Process
+    $appProcess.StartInfo = $startInfo
+    $null = $appProcess.Start()
+
+
+    Pause-PreviewStep
+    $script:ActiveStep = 2
+    Set-ProgressText 48 "Checking sources"
+    Set-Step 2 "Checking..." "COD, Materials Project, local sources" "Blue"
+    Set-Step 2 "OK" "Configured sources are available" "Green"
+
+    Pause-PreviewStep
+    $script:ActiveStep = 3
+    Set-ProgressText 68 "Checking for updates"
+    Set-Step 3 "Checking..." ("Current version: " + $localVersion) "Blue"
+    if (Test-Path -LiteralPath $appManifestPath) {
+        $appManifest = Get-Content -LiteralPath $appManifestPath -Raw | ConvertFrom-Json
+        if ($appManifest.version) { $localVersion = [string]$appManifest.version }
+        if ($appManifest.entry_module) { $entryModule = [string]$appManifest.entry_module }
+        $versionLabel.Text = "Version $localVersion"
+        Set-Step 3 "Checking..." ("Current version: " + $localVersion) "Blue"
+    }
+    if (Test-Path -LiteralPath $manifestPath) {
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $appInfo = $manifest.apps.$AppId
+        if ($appInfo.manifest_url) { $manifestUrl = [string]$appInfo.manifest_url }
+        if ($appInfo.update_manifest_url) { $updateManifestUrl = [string]$appInfo.update_manifest_url }
+        if ($appInfo.installer_url) { $installerUrl = [string]$appInfo.installer_url }
+        if ($appInfo.installer_sha256) { $installerSha256 = [string]$appInfo.installer_sha256 }
+        if ($appInfo.release_url) { $releaseUrl = [string]$appInfo.release_url }
+    }
+
+    $updateStatus = [ordered]@{
+        checked_at = (Get-Date).ToString("s")
+        app_id = $AppId
+        current_version = $localVersion
+        latest_version = $localVersion
+        update_available = $false
+        release_url = $releaseUrl
+        installer_url = $installerUrl
+        installer_sha256 = $installerSha256
+        error = $null
+    }
+    if ($manifestUrl -or $updateManifestUrl) {
+        try {
+            $remoteUrl = $manifestUrl
+            if ($updateManifestUrl) { $remoteUrl = $updateManifestUrl }
+            $remote = Invoke-RestMethod -Uri $remoteUrl -UseBasicParsing -TimeoutSec 5
+            if ($remote -is [string]) { $remote = $remote | ConvertFrom-Json }
+            $remoteApp = $remote
+            if ($remote.apps -and $remote.apps.$AppId) { $remoteApp = $remote.apps.$AppId }
+            if ($remoteApp.version) {
+                $latestVersion = [string]$remoteApp.version
+                $updateStatus.latest_version = $latestVersion
+                if ((Compare-VersionText $latestVersion $localVersion) -gt 0) {
+                    $updateStatus.update_available = $true
+                    if ($remoteApp.release_url) { $updateStatus.release_url = [string]$remoteApp.release_url }
+                    if ($remoteApp.installer_url) { $updateStatus.installer_url = [string]$remoteApp.installer_url }
+                    if ($remoteApp.installer_sha256) { $updateStatus.installer_sha256 = [string]$remoteApp.installer_sha256 }
+                    if ($remoteApp.assets -and $remoteApp.assets.Count -gt 0) {
+                        $asset = $remoteApp.assets | Select-Object -First 1
+                        if ($asset.url) { $updateStatus.installer_url = [string]$asset.url }
+                        if ($asset.sha256) { $updateStatus.installer_sha256 = [string]$asset.sha256 }
+                    }
+                    Set-Step 3 "Update" ("$localVersion -> $latestVersion") "Blue"
+                    $summaryLines = New-Object System.Collections.Generic.List[string]
+                    if ($remoteApp.summary) {
+                        foreach ($line in $remoteApp.summary) {
+                            $textLine = [string]$line
+                            if ($textLine.Trim()) { $summaryLines.Add("- " + $textLine.Trim()) | Out-Null }
+                        }
+                    }
+                    if ($summaryLines.Count -eq 0) {
+                        $summaryLines.Add("- See the release notes for details.") | Out-Null
+                    }
+                    $message = "A new XRD Phase Finder version is available: $latestVersion.`r`nCurrent version: $localVersion`r`n`r`nWhat changed:`r`n" + ($summaryLines -join "`r`n") + "`r`n`r`nDownload and start the installer now?"
+                    $choice = Show-OwnedQuestion $message "XRD Phase Finder update available"
+                    if ($choice -eq [System.Windows.Forms.DialogResult]::Yes) {
+                        $downloadTarget = $updateStatus.installer_url
+                        if (-not $downloadTarget) { $downloadTarget = $updateStatus.release_url }
+                        try {
+                            Download-And-RunUpdate $downloadTarget $updateStatus.installer_sha256 $latestVersion
+                            ($updateStatus | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath (Join-Path $updateRoot "$AppId.json") -Encoding UTF8
+                            $script:Form.Close()
+                            return
+                        } catch {
+                            $fallbackMessage = "The automatic update download failed:`r`n" + $_.Exception.Message + "`r`n`r`nOpen the release page instead?"
+                            $fallbackChoice = Show-OwnedQuestion $fallbackMessage "XRD Phase Finder update"
+                            if ($fallbackChoice -eq [System.Windows.Forms.DialogResult]::Yes -and $updateStatus.release_url) {
+                                Start-Process $updateStatus.release_url | Out-Null
+                                $script:Form.Close()
+                                return
+                            }
+                        }
+                    }
+                } else {
+                    Set-Step 3 "OK" ("No update available. Current version: $localVersion") "Green"
+                }
+            } else {
+                Set-Step 3 "OK" ("No update available. Current version: $localVersion") "Green"
+            }
+        } catch {
+            $updateStatus.error = $_.Exception.Message
+            Set-Step 3 "Offline" "Update check unavailable" "Muted"
+        }
+    } else {
+        Set-Step 3 "OK" "No update source configured" "Muted"
+    }
+    ($updateStatus | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath (Join-Path $updateRoot "$AppId.json") -Encoding UTF8
+
+    Pause-PreviewStep
+    $script:ActiveStep = 4
+    Set-ProgressText 88 "Opening application"
+    Set-Step 4 "Opening..." "Showing the main application window" "Blue"
+    "show" | Set-Content -LiteralPath $showSignalFile -Encoding UTF8
+    Wait-ApplicationMainWindow $appProcess 120 $startupLog $readyFile | Out-Null
+    Set-Step 4 "OK" "XRD Phase Finder window is ready" "Green"
+    Set-ProgressText 100 "Ready"
+    [System.Windows.Forms.Application]::DoEvents()
+    Start-Sleep -Milliseconds 400
+} catch {
+    Set-ProgressText 100 "Failed"
+    if ($script:StepStatusLabels.Count -gt 0) {
+        $failedStep = 4
+        if ($null -ne $script:ActiveStep) { $failedStep = [Math]::Max(0, [Math]::Min(4, [int]$script:ActiveStep)) }
+        Set-Step $failedStep "Failed" $_.Exception.Message "Red"
+    }
+    [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "XRD Phase Finder startup failed", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+} finally {
+    if ($picture -and $picture.Image) { $picture.Image.Dispose() }
+    $script:Form.Close()
+    $script:Form.Dispose()
+}

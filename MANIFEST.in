@@ -1,20 +1,15 @@
 prune .git
-prune XRD_Finder/data
 prune build
 prune dist
-prune *.egg-info
+prune docs
+prune tests
+prune data
+prune installer
 
 global-exclude *.py[cod] __pycache__ .DS_Store ._*
-recursive-exclude XRD_Finder/data *
 recursive-exclude * __pycache__ *.py[cod]
+recursive-exclude data *
 
-exclude XRD_Finder/xrd_finder/app.py
-exclude XRD_Finder/xrd_finder/core/refinement.py
-exclude XRD_Finder/xrd_finder/core/series.py
-exclude XRD_Finder/xrd_finder/io/exporters.py
-exclude XRD_Finder/xrd_finder/services/refinement_service.py
-exclude XRD_Finder/xrd_finder/services/thermo_service.py
-exclude XRD_Finder/xrd_finder/services/solid_solution_service.py
-exclude XRD_Finder/xrd_finder/services/structure_service.py
-exclude XRD_Finder/xrd_finder/ui/legacy_windows.py
-exclude XRD_Finder/xrd_finder/ui/main_window.py
+exclude requirements-dev.txt
+exclude *.pkg
+exclude *.zip

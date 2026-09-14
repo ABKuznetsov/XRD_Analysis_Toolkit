@@ -1,0 +1,26 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from xrd_finder.core.base import ProjectObject, new_id
+
+
+@dataclass(slots=True)
+class Pattern(ProjectObject):
+    source_path: str = ""
+    x_unit: str = "2theta"
+    y_unit: str = "intensity"
+    wavelength: float | None = None
+    instrument_profile: dict[str, Any] = field(default_factory=dict)
+    linked_phase_ids: list[str] = field(default_factory=list)
+    processed_points: list[list[float]] = field(default_factory=list)
+    processed_label: str = ""
+    processed_background_removed: bool = False
+    estimated_background_points: list[list[float]] = field(default_factory=list)
+    estimated_background_with_halo_points: list[list[float]] = field(default_factory=list)
+    crop_ranges: list[list[float]] = field(default_factory=list)
+
+    @classmethod
+    def create(cls, name: str, source_path: str = "") -> "Pattern":
+        return cls(name=name, id=new_id("pattern"), source_path=source_path)
