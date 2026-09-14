@@ -28,6 +28,29 @@ All release files are listed on the [XRD Phase Finder 1.6.1 release page](https:
 - keep personal appearance settings, instrument profiles and local database caches in user AppData/Application Support;
 - export and import settings and cached user/COD/Materials Project phase libraries between computers.
 
+## Libraries and data sources
+
+Core runtime libraries:
+
+- **PySide6** for the desktop interface;
+- **pyqtgraph** for interactive diffraction plots;
+- **NumPy** and **SciPy** for numerical processing, peak operations, fitting and optimization;
+- **pybaselines** for baseline/background-processing methods;
+- **CRiStMa** for CIF-backed crystallographic and powder-diffraction calculations;
+- **SQLite** through the Python standard library for local phase, search and peak indexes;
+- **mp-api** for optional Materials Project access;
+- **rfc8785**, **certifi** and **packaging** for project serialization, HTTPS certificate handling and version/runtime checks.
+
+Supported phase and reference sources:
+
+- **User CIF library**: direct CIF import and local user phase collections;
+- **COD**: online search, downloaded CIF cache and optional local/bulk COD indexing;
+- **Materials Project**: optional online search with a user API key;
+- **AFLOW** and **OQMD**: optional online computational-structure searches;
+- **RRUFF**: optional local powder-reference index from RRUFF data;
+- **PDF-style line databases**: local line-list databases when configured by the user;
+- **CCDC/CSD**: optional DOI/refcode lookup when the CCDC Python API or public CCDC download route is available; CSD itself is not bundled.
+
 ## Quick start
 
 ### Windows
