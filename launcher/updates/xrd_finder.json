@@ -16,6 +16,14 @@
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_Setup_v1_6_1.exe",
       "sha256": "3b92fff4de16905a53b18ec1ab89b178e69c4c6941df526a5a99c021de833a57",
       "size_bytes": 5287983
+    },
+    {
+      "name": "XRD_Phase_Finder_macOS_1.6.1.pkg",
+      "type": "installer",
+      "platform": "macos",
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_macOS_1.6.1.pkg",
+      "sha256": "c5d7bab1642747ce810f7c43da1cf54973fd4b3f860f34725090b06df24bcbf8",
+      "size_bytes": 4758389
     }
   ],
   "summary": [
@@ -26,5 +34,7 @@
   "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_Setup_v1_6_1.exe",
   "installer_sha256": "3b92fff4de16905a53b18ec1ab89b178e69c4c6941df526a5a99c021de833a57",
   "installer_filename": "XRD_Phase_Finder_Setup_v1_6_1.exe",
-  "installer_size_bytes": 5287983
+  "installer_size_bytes": 5287983,
+  "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_macOS_1.6.1.pkg",
+  "macos_installer_sha256": "c5d7bab1642747ce810f7c43da1cf54973fd4b3f860f34725090b06df24bcbf8"
 }
