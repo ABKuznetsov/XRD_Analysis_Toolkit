@@ -11,7 +11,8 @@ This repository contains the standalone Finder application. Structure viewing an
 ## Download
 
 - [Windows installer: XRD_Phase_Finder_Setup_v1_6_1.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_Setup_v1_6_1.exe)
-- macOS package: build from this repository with `scripts/build_macos_pkg.command` until the 1.6.1 macOS package is attached to the release.
+- [macOS package: XRD_Phase_Finder_macOS_1.6.1.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_macOS_1.6.1.pkg)
+- Linux: install from source with the commands below.
 
 All release files are listed on the [XRD Phase Finder 1.6.1 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.1).
 
@@ -37,13 +38,17 @@ On first launch, XRD Phase Finder checks the per-user scientific Python runtime.
 
 ### macOS
 
-From the repository root on macOS:
+Download and run `XRD_Phase_Finder_macOS_1.6.1.pkg` from the release page. The package installs `XRD Phase Finder.app` into `/Applications`.
+
+On first launch, XRD Phase Finder checks the per-user scientific Python runtime under `~/Library/Application Support/Sci`. If required packages are missing, the launcher offers to install or repair them. Project files, settings, caches and local databases are stored in the user Application Support directory, not inside the application bundle.
+
+For local packaging from source on macOS:
 
 ```bash
 scripts/build_macos_pkg.command
 ```
 
-The package builder creates a Finder-only `.pkg` under `dist/` and installs `XRD Phase Finder.app` into `/Applications`.
+The package builder creates a Finder-only `.pkg` under `dist/`.
 
 For development or direct source runs:
 
@@ -53,28 +58,61 @@ For development or direct source runs:
 
 ### Ubuntu / Linux from source
 
-Ubuntu packages commonly needed by Qt/PySide:
+Linux is supported from source. A dedicated `.deb`/AppImage package is not bundled in the 1.6.1 release yet, because Qt/PySide binary compatibility depends on the target distribution, desktop session and system libraries.
+
+The commands below were written for recent Ubuntu/Debian systems. Python 3.11 or 3.12 is recommended.
+
+Install Python, Git and the Qt/PySide system libraries commonly required by the desktop interface:
 
 ```bash
 sudo apt update
-sudo apt install -y python3.12 python3.12-venv python3-pip libxcb-cursor0 libegl1 libgl1 libxkbcommon-x11-0
+sudo apt install -y \
+  git \
+  python3.12 \
+  python3.12-venv \
+  python3-pip \
+  libegl1 \
+  libgl1 \
+  libxcb-cursor0 \
+  libxkbcommon-x11-0 \
+  libxcb-xinerama0 \
+  libxcb-icccm4 \
+  libxcb-image0 \
+  libxcb-keysyms1 \
+  libxcb-render-util0
 ```
 
-Create and run a local environment:
+Clone the repository and create an isolated Python environment:
 
 ```bash
+git clone https://github.com/ABKuznetsov/XRD_Analysis_Toolkit.git
+cd XRD_Analysis_Toolkit
+
 python3.12 -m venv .venv
 . .venv/bin/activate
 python -m pip install -U pip setuptools wheel
 python -m pip install -r requirements.txt
+```
+
+Start the graphical application:
+
+```bash
 python -m xrd_finder.apps.finder_gui
 ```
 
-If Qt fails under Wayland, try starting from an X11 session or run:
+If `python3.12` is not available on the distribution, use Python 3.11 instead:
+
+```bash
+python3.11 -m venv .venv
+```
+
+If Qt fails under Wayland, try an X11 desktop session or force the Qt XCB backend:
 
 ```bash
 QT_QPA_PLATFORM=xcb python -m xrd_finder.apps.finder_gui
 ```
+
+User settings and caches are created in the user profile. On Linux this includes local Finder data, imported CIF libraries and downloaded database caches; the repository directory can remain read-only after installation.
 
 ## Example project
 
