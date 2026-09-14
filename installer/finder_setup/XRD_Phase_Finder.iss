@@ -18,7 +18,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 PrivilegesRequired=admin
 OutputDir=..\..\dist\releases
-OutputBaseFilename=XRD_Phase_Finder_Setup_{#MyAppVersion}
+OutputBaseFilename=XRD_Phase_Finder_Setup_v1_6_1
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -46,6 +46,7 @@ Source: "..\..\launcher\launch_xrd_finder_preview.ps1"; DestDir: "{app}\launcher
 Source: "..\..\launcher\manifest.json"; DestDir: "{app}\launcher"; Flags: ignoreversion
 Source: "..\..\launcher\register_xpff_file_type.ps1"; DestDir: "{app}\launcher"; Flags: ignoreversion
 Source: "..\..\launcher\sci_runtime_setup_ui.ps1"; DestDir: "{app}\launcher"; Flags: ignoreversion
+Source: "..\..\launcher\stop_running_finder.ps1"; DestDir: "{app}\launcher"; Flags: ignoreversion
 Source: "..\..\launcher\setup_sci_env.bat"; DestDir: "{app}\launcher"; Flags: ignoreversion
 Source: "..\..\launcher\showcase\*"; DestDir: "{app}\launcher\showcase"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "__pycache__\*,*.pyc,*.pyo,*.log,*.pkg,*.zip,*.7z"
 Source: "..\..\launcher\updates\xrd_finder.json"; DestDir: "{app}\launcher\updates"; Flags: ignoreversion
@@ -124,6 +125,7 @@ Root: HKLM; Subkey: "Software\XRDPhaseFinder\Capabilities"; ValueType: string; V
 Root: HKLM; Subkey: "Software\XRDPhaseFinder\Capabilities\FileAssociations"; ValueType: string; ValueName: ".xpff"; ValueData: "XRDPhaseFinder.Project"
 
 [Run]
+Filename: "{win}\System32\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\launcher\stop_running_finder.ps1"""; Flags: runhidden waituntilterminated runascurrentuser
 Filename: "{win}\System32\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\launcher\register_xpff_file_type.ps1"" -AppRoot ""{app}"" -Quiet"; Flags: runhidden waituntilterminated runascurrentuser
 Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\launch_xrd_finder_silent.vbs"""; Description: "Launch XRD Phase Finder"; Flags: postinstall nowait skipifsilent
 

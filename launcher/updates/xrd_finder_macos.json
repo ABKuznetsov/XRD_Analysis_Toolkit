@@ -11,5 +11,9 @@
   "assets": [],
   "summary": [
     "Version 1.6.1 source is ready. Build the macOS package on macOS with scripts/build_macos_pkg.command."
-  ]
+  ],
+  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_Setup_v1_6_1.exe",
+  "installer_sha256": "3b92fff4de16905a53b18ec1ab89b178e69c4c6941df526a5a99c021de833a57",
+  "installer_filename": "XRD_Phase_Finder_Setup_v1_6_1.exe",
+  "installer_size_bytes": 5287983
 }

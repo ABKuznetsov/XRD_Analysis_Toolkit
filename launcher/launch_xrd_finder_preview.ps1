@@ -391,8 +391,12 @@ function Download-And-RunUpdate {
     Set-Step 3 "Downloading" "The update installer can take a few minutes on a slow connection." "Blue"
     [System.Windows.Forms.Application]::DoEvents()
     Ensure-Folder $updateRoot
-    $fileName = [System.IO.Path]::GetFileName(([System.Uri]$Url).AbsolutePath)
-    if (-not $fileName) { $fileName = "XRD_Phase_Finder_Setup_$LatestVersion.exe" }
+        $fileName = [System.IO.Path]::GetFileName(([System.Uri]$Url).AbsolutePath)
+    if (-not $fileName -or -not $fileName.ToLowerInvariant().EndsWith(".exe")) {
+        $safeVersion = ($LatestVersion -replace "[^0-9A-Za-z]+", "_").Trim("_")
+        if (-not $safeVersion) { $safeVersion = "update" }
+        $fileName = "XRD_Phase_Finder_Setup_v$safeVersion.exe"
+    }
     $targetPath = Join-Path $updateRoot $fileName
     Set-Step 3 "Downloading" ("Downloading update " + $LatestVersion) "Blue"
     Set-ProgressText 76 "Downloading update installer"
@@ -412,6 +416,17 @@ function Download-And-RunUpdate {
     Set-ProgressText 80 "Starting update installer"
     [System.Windows.Forms.Application]::DoEvents()
     Start-Process -FilePath $targetPath | Out-Null
+}
+function Stop-PreparedApplication {
+    param($Process)
+    if ($null -eq $Process) { return }
+    try {
+        if (-not $Process.HasExited) {
+            $Process.Kill()
+            $Process.WaitForExit(5000) | Out-Null
+        }
+    } catch {
+    }
 }
 function Get-StartupLogTail {
     param([string]$LogPath)
@@ -892,6 +907,8 @@ try {
                         if (-not $downloadTarget) { $downloadTarget = $updateStatus.release_url }
                         try {
                             Download-And-RunUpdate $downloadTarget $updateStatus.installer_sha256 $latestVersion
+                            $updateStatus.update_started = $true
+                            Stop-PreparedApplication $appProcess
                             ($updateStatus | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath (Join-Path $updateRoot "$AppId.json") -Encoding UTF8
                             $script:Form.Close()
                             return

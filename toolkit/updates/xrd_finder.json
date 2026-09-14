@@ -14,13 +14,17 @@
       "type": "installer",
       "platform": "windows",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_Setup_v1_6_1.exe",
-      "sha256": "9392f828466104f3d2140f6972a13666820969364d2756fd41500f791c0be81a",
-      "size_bytes": 5287561
+      "sha256": "3b92fff4de16905a53b18ec1ab89b178e69c4c6941df526a5a99c021de833a57",
+      "size_bytes": 5287983
     }
   ],
   "summary": [
     "Use CRiStMa consistently for CIF-backed Finder diffraction calculations.",
     "Search local peak indexes by d-spacing for the active wavelength.",
     "Add example project, settings transfer and USER/COD/Materials Project cache transfer."
-  ]
+  ],
+  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_Setup_v1_6_1.exe",
+  "installer_sha256": "3b92fff4de16905a53b18ec1ab89b178e69c4c6941df526a5a99c021de833a57",
+  "installer_filename": "XRD_Phase_Finder_Setup_v1_6_1.exe",
+  "installer_size_bytes": 5287983
 }
