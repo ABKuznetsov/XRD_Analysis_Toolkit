@@ -14,8 +14,8 @@
       "type": "installer",
       "platform": "macos",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_macOS_1.6.1.pkg",
-      "sha256": "d8fc3b4f5fabe89fc26537307c482fb17b2752ea5abad4aa74d47174b6cb31b0",
-      "size_bytes": 4758850
+      "sha256": "cf731aa62b6d8139115f0dd24ac398425158e7c686b20b2183570c39ed8e6df9",
+      "size_bytes": 4759143
     }
   ],
   "summary": [
@@ -24,5 +24,5 @@
     "Add example project, settings transfer and USER/COD/Materials Project cache transfer."
   ],
   "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_macOS_1.6.1.pkg",
-  "macos_installer_sha256": "d8fc3b4f5fabe89fc26537307c482fb17b2752ea5abad4aa74d47174b6cb31b0"
+  "macos_installer_sha256": "cf731aa62b6d8139115f0dd24ac398425158e7c686b20b2183570c39ed8e6df9"
 }

@@ -13,7 +13,7 @@
       "manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/launcher/manifest.json",
       "update_manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/launcher/updates/xrd_finder.json",
       "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_macOS_1.6.1.pkg",
-      "macos_installer_sha256": "d8fc3b4f5fabe89fc26537307c482fb17b2752ea5abad4aa74d47174b6cb31b0",
+      "macos_installer_sha256": "cf731aa62b6d8139115f0dd24ac398425158e7c686b20b2183570c39ed8e6df9",
       "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_Setup_v1_6_1.exe",
       "installer_sha256": "3b92fff4de16905a53b18ec1ab89b178e69c4c6941df526a5a99c021de833a57",
       "installer_filename": "XRD_Phase_Finder_Setup_v1_6_1.exe",

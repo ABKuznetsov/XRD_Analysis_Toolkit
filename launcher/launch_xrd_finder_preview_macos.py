@@ -277,6 +277,42 @@ class PreviewApp:
         self.step_status.append(status)
         tk.Frame(self.root, bg="#e2e8f0", width=458, height=1).place(x=430, y=y + 64)
 
+    def _call_on_ui_thread(self, callback):
+        if threading.current_thread() is threading.main_thread():
+            return callback()
+        done = threading.Event()
+        result = {"value": None, "error": None}
+
+        def run_callback() -> None:
+            try:
+                result["value"] = callback()
+            except Exception as exc:
+                result["error"] = exc
+            finally:
+                done.set()
+
+        self.root.after(0, run_callback)
+        done.wait()
+        if result["error"] is not None:
+            raise result["error"]
+        return result["value"]
+
+    def _close_preview_soon(self, delay_ms: int = 300) -> None:
+        def close() -> None:
+            self.root.after(delay_ms, self.root.destroy)
+
+        self._call_on_ui_thread(close)
+
+    def _ask_yes_no(self, title: str, message: str) -> bool:
+        return bool(
+            self._call_on_ui_thread(
+                lambda: messagebox.askyesno(title, message, parent=self.root)
+            )
+        )
+
+    def _show_error(self, title: str, message: str) -> None:
+        self._call_on_ui_thread(lambda: messagebox.showerror(title, message, parent=self.root))
+
     def set_step(self, index: int, status: str, detail: str = "", tone: str = "blue") -> None:
         colors = {
             "blue": ("●", "#2563eb"),
@@ -284,12 +320,15 @@ class PreviewApp:
             "red": ("×", "#b91c1c"),
             "muted": ("○", "#64748b"),
         }
-        glyph, color = colors.get(tone, colors["blue"])
-        self.step_icon[index].configure(text=glyph, fg=color)
-        self.step_status[index].configure(text=status, fg=color)
-        if detail:
-            self.step_detail[index].configure(text=detail)
-        self.root.update_idletasks()
+        def apply() -> None:
+            glyph, color = colors.get(tone, colors["blue"])
+            self.step_icon[index].configure(text=glyph, fg=color)
+            self.step_status[index].configure(text=status, fg=color)
+            if detail:
+                self.step_detail[index].configure(text=detail)
+            self.root.update_idletasks()
+
+        self._call_on_ui_thread(apply)
 
     def ensure_folders(self) -> None:
         self.set_step(0, "Checking...", "Creating user data folders")
@@ -380,20 +419,19 @@ class PreviewApp:
             summary = "\n".join(f"- {line}" for line in remote_app.get("summary", []) if str(line).strip())
             if not summary:
                 summary = "- See the release notes for details."
-            answer = messagebox.askyesno(
+            answer = self._ask_yes_no(
                 "XRD Phase Finder update available",
                 f"A new XRD Phase Finder version is available: {latest}\n"
                 f"Current version: {self.local_version}\n\n"
                 f"What changed:\n{summary}\n\n"
                 "Download and start the macOS installer now?",
-                parent=self.root,
             )
             if not answer:
                 return False
             if not installer_url:
                 if release_url:
                     subprocess.Popen(["open", str(release_url)])
-                    self.root.after(300, self.root.destroy)
+                    self._close_preview_soon()
                     return True
                 raise RuntimeError("macOS installer URL is not available.")
             target = self.update_root / Path(installer_url.split("?")[0]).name
@@ -405,7 +443,7 @@ class PreviewApp:
                 (self.update_root / f"{APP_ID}.json").write_text(json.dumps(update_status, indent=2), encoding="utf-8")
                 self.set_step(3, "Ready", "Starting macOS installer", "green")
                 subprocess.Popen(["open", str(target)])
-                self.root.after(300, self.root.destroy)
+                self._close_preview_soon()
                 return True
             except Exception as download_error:
                 detail = exception_message(download_error)
@@ -416,16 +454,15 @@ class PreviewApp:
                     pass
                 self.set_step(3, "Failed", "Update download failed", "red")
                 fallback_url = str(remote_app.get("release_url") or release_url or "")
-                fallback = messagebox.askyesno(
+                fallback = self._ask_yes_no(
                     "XRD Phase Finder update failed",
                     "The update was found, but the macOS installer could not be downloaded or started.\n\n"
                     f"Reason:\n{detail}\n\n"
                     "Open the GitHub release page instead?",
-                    parent=self.root,
                 )
                 if fallback and fallback_url:
                     subprocess.Popen(["open", fallback_url])
-                    self.root.after(300, self.root.destroy)
+                    self._close_preview_soon()
                     return True
                 return False
         except Exception as exc:
@@ -472,14 +509,14 @@ class PreviewApp:
         while time.monotonic() < deadline:
             if ready_file.exists():
                 self.set_step(4, "OK", "XRD Phase Finder window is ready", "green")
-                self.root.after(400, self.root.destroy)
+                self._close_preview_soon(400)
                 return
             if self.app_process.poll() is not None:
                 raise RuntimeError(f"XRD Phase Finder closed during startup. Log: {log_file}")
             self.set_step(4, "Starting...", "Waiting for the main application window")
             time.sleep(0.5)
         self.set_step(4, "OK", "Application is running; startup is taking longer than expected", "green")
-        self.root.after(900, self.root.destroy)
+        self._close_preview_soon(900)
 
     def run_checks(self) -> None:
         try:
@@ -496,7 +533,7 @@ class PreviewApp:
             self.launch_main_app()
         except Exception as exc:
             self.set_step(4, "Failed", str(exc), "red")
-            messagebox.showerror("XRD Phase Finder startup failed", str(exc), parent=self.root)
+            self._show_error("XRD Phase Finder startup failed", str(exc))
 
     def on_close(self) -> None:
         self.root.destroy()
