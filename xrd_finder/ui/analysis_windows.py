@@ -1594,7 +1594,7 @@ class PhaseFinderWindow(
         )
 
     def _open_example_project(self) -> None:
-        example_path = Path(__file__).resolve().parents[1] / "examples" / "Exemple.xpff"
+        example_path = Path(__file__).resolve().parents[1] / "examples" / "XRD_Phase_Finder_example.xpff"
         if not example_path.is_file():
             QMessageBox.warning(
                 self,
