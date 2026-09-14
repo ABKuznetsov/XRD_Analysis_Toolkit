@@ -10,7 +10,7 @@ This repository contains the standalone Finder application. Structure viewing an
 
 ## Download
 
-- [Windows installer: XRD_Phase_Finder_Setup_1.6.1.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_Setup_1.6.1.exe)
+- [Windows installer: XRD_Phase_Finder_Setup_v1_6_1.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_Setup_v1_6_1.exe)
 - macOS package: build from this repository with `scripts/build_macos_pkg.command` until the 1.6.1 macOS package is attached to the release.
 
 All release files are listed on the [XRD Phase Finder 1.6.1 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.1).
@@ -31,7 +31,7 @@ All release files are listed on the [XRD Phase Finder 1.6.1 release page](https:
 
 ### Windows
 
-Download and run `XRD_Phase_Finder_Setup_1.6.1.exe` from the release page. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
+Download and run `XRD_Phase_Finder_Setup_v1_6_1.exe` from the release page. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
 
 On first launch, XRD Phase Finder checks the per-user scientific Python runtime. If required packages are missing, the launcher offers to install or repair them under the user profile. Project files and personal data are not stored in the installation directory.
 

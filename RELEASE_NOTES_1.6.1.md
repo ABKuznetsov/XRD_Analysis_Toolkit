@@ -17,5 +17,5 @@ This release focuses on packaging, reproducible diffraction calculation and prac
 
 ## Notes
 
-- Windows asset: `XRD_Phase_Finder_Setup_1.6.1.exe`.
+- Windows asset: `XRD_Phase_Finder_Setup_v1_6_1.exe`.
 - macOS package should be built separately on macOS with `scripts/build_macos_pkg.command`.
