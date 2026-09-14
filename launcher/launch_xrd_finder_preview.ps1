@@ -853,7 +853,11 @@ try {
                     if ($remoteApp.installer_url) { $updateStatus.installer_url = [string]$remoteApp.installer_url }
                     if ($remoteApp.installer_sha256) { $updateStatus.installer_sha256 = [string]$remoteApp.installer_sha256 }
                     if ($remoteApp.assets -and $remoteApp.assets.Count -gt 0) {
-                        $asset = $remoteApp.assets | Select-Object -First 1
+                        $asset = $remoteApp.assets | Where-Object {
+                            $platform = ([string]$_.platform).ToLowerInvariant()
+                            $name = ([string]$_.name).ToLowerInvariant()
+                            $platform -like "*windows*" -or $name.EndsWith(".exe")
+                        } | Select-Object -First 1
                         if ($asset.url) { $updateStatus.installer_url = [string]$asset.url }
                         if ($asset.sha256) { $updateStatus.installer_sha256 = [string]$asset.sha256 }
                     }
