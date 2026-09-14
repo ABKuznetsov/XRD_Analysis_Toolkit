@@ -50,7 +50,15 @@ def ensure_right_legend(plot: pg.PlotWidget, clear: bool = False):
     return legend
 
 
-def calculate_profile_for_structure(service, structure, x_grid, fwhm: float | None = None):
+def calculate_profile_for_structure(
+    service,
+    structure,
+    x_grid,
+    fwhm: float | None = None,
+    *,
+    wavelength: float | None = None,
+    include_kalpha2: bool = True,
+):
     x_grid = np.asarray(x_grid, dtype=float)
     kwargs = {}
     if fwhm is not None:
@@ -60,7 +68,8 @@ def calculate_profile_for_structure(service, structure, x_grid, fwhm: float | No
         x_grid=x_grid,
         two_theta_min=float(np.nanmin(x_grid)),
         two_theta_max=float(np.nanmax(x_grid)),
-        wavelength=structure.wavelength or CU_KA1_WAVELENGTH,
+        wavelength=wavelength or structure.wavelength or CU_KA1_WAVELENGTH,
+        include_kalpha2=bool(include_kalpha2),
         use_lp=True,
         **kwargs,
     )
@@ -158,6 +167,27 @@ def plot_peak_intensity_sticks(
     label: str | None = None,
     width: float = 1.6,
     ceiling=None,
+    reach_ceiling: bool = False,
+):
+    stick_x, stick_y = peak_intensity_stick_arrays(
+        peaks,
+        x_grid,
+        baseline,
+        height,
+        ceiling=ceiling,
+        reach_ceiling=reach_ceiling,
+    )
+    return _set_legend_label(plot.plot(stick_x, stick_y, pen=pg.mkPen(color, width=width)), label)
+
+
+def peak_intensity_stick_arrays(
+    peaks,
+    x_grid,
+    baseline,
+    height: float,
+    *,
+    ceiling=None,
+    reach_ceiling: bool = False,
 ):
     x_grid = np.asarray(x_grid, dtype=float)
     baseline = np.asarray(baseline, dtype=float)
@@ -174,10 +204,11 @@ def plot_peak_intensity_sticks(
         intensity = max(float(getattr(peak, "intensity", 0.0)), 0.0)
         top_y = base_y + height * intensity / 100.0
         if ceiling_values is not None:
-            top_y = min(top_y, max(base_y, float(np.interp(two_theta, x_grid, ceiling_values))))
+            ceiling_y = max(base_y, float(np.interp(two_theta, x_grid, ceiling_values)))
+            top_y = ceiling_y if reach_ceiling else min(top_y, ceiling_y)
         stick_x.extend([two_theta, two_theta, np.nan])
         stick_y.extend([base_y, top_y, np.nan])
-    return _set_legend_label(plot.plot(stick_x, stick_y, pen=pg.mkPen(color, width=width)), label)
+    return stick_x, stick_y
 
 
 def plot_hkl_ticks(plot: pg.PlotWidget, peaks, color: str, baseline: float, height: float):

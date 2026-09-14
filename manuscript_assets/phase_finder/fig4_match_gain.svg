@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1088" height="920" viewBox="0 0 1088 920">
+<rect width="100%" height="100%" fill="white"/>
+<rect x="24" y="30" width="508" height="390" rx="5" fill="#ffffff" stroke="#b7bdc3" stroke-width="0.9"/>
+<rect x="556" y="30" width="508" height="390" rx="5" fill="#ffffff" stroke="#b7bdc3" stroke-width="0.9"/>
+<rect x="24" y="444" width="508" height="390" rx="5" fill="#ffffff" stroke="#b7bdc3" stroke-width="0.9"/>
+<rect x="556" y="444" width="508" height="390" rx="5" fill="#ffffff" stroke="#b7bdc3" stroke-width="0.9"/>
+<text x="42" y="65" font-family="Arial, sans-serif" font-size="29" font-weight="700" fill="#20252b" text-anchor="start" dominant-baseline="middle">(a) Experimental lines</text>
+<text x="42" y="110" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="start" dominant-baseline="middle">profile → position, area and FWHM</text>
+<polyline points="84,297.9997316809716 87,297.9989890730533 90,297.996464220463 93,297.9885198466926 96,297.96539751396415 99,297.9031802357029 102,297.74851166553935 105,297.39358662294876 108,296.6425719917123 111,295.17926723334193 114,292.5586810206596 117,288.2558596069639 120,281.80130664598227 123,273.0015235916105 126,262.1867115038149 129,250.3709447932401 132,239.1973583348481 135,230.60637583140013 138,226.29690679425997 141,227.18030121432065 144,233.06671656500345 147,242.7314898268524 150,254.32979229114363 153,265.9675712335449 156,276.18819413555394 159,284.2123358107713 162,289.90926259916387 165,293.59252481297005 168,295.77088340719985 171,296.9527570170062 174,297.5414185271649 177,297.80864225972886 180,297.9133298526452 183,297.9339138623032 186,297.8956143243455 189,297.785241424161 192,297.55310135751176 195,297.10440983159185 198,296.2838692603118 201,294.85867978043683 204,292.5078814128822 207,288.8287932166444 210,283.3724669450585 213,275.717002541152 216,265.5784300193615 219,252.94402642503695 222,238.19622181310558 225,222.18366753591698 228,206.19743229164226 231,191.8292729289609 234,180.72305053511153 237,174.26902457765829 240,173.31847116508993 243,177.9993198393153 246,187.68788717692559 249,201.14532138959385 252,216.77758236425507 255,232.9437348724122 258,248.23084722327314 261,261.6345241192293 264,272.6209004685926 267,281.08308959532343 270,287.2297993105257 273,291.4508573626735 276,294.19632842694256 279,295.89001438053486 282,296.8820714794733 285,297.4342718146341 288,297.72655424230027 291,297.8737320319028 294,297.9442010818331 297,297.9760644430255 300,297.98892916757404 303,297.9912656225261 306,297.9837234640763 309,297.9584775024609 312,297.89390438542364 315,297.74315297621416 318,297.4152237764893 321,296.74909391196996 324,295.4862346221244 327,293.25449409896885 330,289.58416804005276 333,283.97934754212326 336,276.05699915791655 339,265.73880361845414 342,253.4424160617446 345,240.18777925524788 348,227.53477695337767 351,217.31591597818294 354,211.21185059226022 357,210.30063218186908 360,214.7458762578558 363,223.74717158310293 366,235.7725278857881 369,248.97891732370016 372,261.6607574839468 375,272.5764368908104 378,281.07496736076666 381,287.0342208709653 384,290.68493940036177 387,292.4107420521077 390,292.5915984005843 393,291.51969324810256 396,289.38356108082627 399,286.29875539068684 402,282.3599761425892 405,277.69409953022756 408,272.5000313757472 411,267.06692640017235 414,261.7669549179224 417,257.02331920982385 420,253.25902177316175 423,250.83636252011632 426,249.99999640710428 429,250.83637667994287 432,253.2590801951631 435,257.0235346212931 438,261.7676990981463 441,267.0693412072701 444,272.5073924301186 447,277.7151787252583 450,282.41668156679503 453,286.4420572349315 456,289.7237620530998 459,292.27840343667293 462,294.1811435815251 465,295.5391719822084 468,296.46904991861646" fill="none" stroke="#20252b" stroke-width="2.2"/>
+<polyline points="76,305 479,305" fill="none" stroke="#626b73" stroke-width="1.0"/>
+<polyline points="139,317 139,372" fill="none" stroke="#276fbf" stroke-width="2.8"/>
+<polyline points="239,317 239,405" fill="none" stroke="#276fbf" stroke-width="2.8"/>
+<polyline points="356,317 356,382" fill="none" stroke="#276fbf" stroke-width="2.8"/>
+<polyline points="426,317 426,355" fill="none" stroke="#276fbf" stroke-width="2.8"/>
+<text x="462" y="162" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#20252b" text-anchor="end" dominant-baseline="middle">observed profile</text>
+<rect x="72" y="358" width="262" height="40" rx="0" fill="#ffffff" stroke="#ffffff" stroke-width="0"/>
+<text x="84" y="378" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#276fbf" text-anchor="start" dominant-baseline="middle">integrated line records</text>
+<text x="574" y="65" font-family="Arial, sans-serif" font-size="29" font-weight="700" fill="#20252b" text-anchor="start" dominant-baseline="middle">(b) Global Match</text>
+<text x="574" y="110" font-family="Arial, sans-serif" font-size="25" font-weight="400" fill="#626b73" text-anchor="start" dominant-baseline="middle">two-way coverage after bounded alignment</text>
+<polyline points="611,280 1011,280" fill="none" stroke="#626b73" stroke-width="0.8"/>
+<polyline points="666,280 666,285" fill="none" stroke="#626b73" stroke-width="0.7"/>
+<polyline points="721,280 721,285" fill="none" stroke="#626b73" stroke-width="0.7"/>
+<polyline points="776,280 776,285" fill="none" stroke="#626b73" stroke-width="0.7"/>
+<polyline points="628.8,280 628.8,222.25" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="668.85,280 668.85,235.9" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="722.25,280 722.25,175.0" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="766.75,280 766.75,246.4" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="833.5,280 833.5,204.4" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="891.35,280 891.35,232.75" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="949.2,280 949.2,243.25" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="629.69,283 629.69,308.2" fill="none" stroke="#276fbf" stroke-width="2.1"/>
+<polyline points="669.295,283 669.295,300.64" fill="none" stroke="#276fbf" stroke-width="2.1"/>
+<polyline points="721.36,283 721.36,329.368" fill="none" stroke="#276fbf" stroke-width="2.1"/>
+<polyline points="834.39,283 834.39,317.272" fill="none" stroke="#276fbf" stroke-width="2.1"/>
+<polyline points="948.31,283 948.31,298.12" fill="none" stroke="#276fbf" stroke-width="2.1"/>
+<text x="611" y="150" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#20252b" text-anchor="start" dominant-baseline="middle">strong observed anchors</text>
+<text x="611" y="365" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#276fbf" text-anchor="start" dominant-baseline="middle">candidate reflection support</text>
+<text x="42" y="479" font-family="Arial, sans-serif" font-size="29" font-weight="700" fill="#20252b" text-anchor="start" dominant-baseline="middle">(c) Condition on selected phases</text>
+<text x="42" y="524" font-family="Arial, sans-serif" font-size="25" font-weight="400" fill="#626b73" text-anchor="start" dominant-baseline="middle">joint non-negative fit reveals deficits</text>
+<polyline points="79,694 479,694" fill="none" stroke="#626b73" stroke-width="0.8"/>
+<polyline points="134,694 134,699" fill="none" stroke="#626b73" stroke-width="0.7"/>
+<polyline points="189,694 189,699" fill="none" stroke="#626b73" stroke-width="0.7"/>
+<polyline points="244,694 244,699" fill="none" stroke="#626b73" stroke-width="0.7"/>
+<polyline points="96.8,694 96.8,636.25" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="136.85,694 136.85,649.9" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="190.25,694 190.25,589.0" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="234.75,694 234.75,660.4" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="301.5,694 301.5,618.4" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="359.35,694 359.35,646.75" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="417.2,694 417.2,657.25" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="96.8,694 96.8,641.5" fill="none" stroke="#2f7d5a" stroke-width="5.0"/>
+<polyline points="136.85,694 136.85,654.1" fill="none" stroke="#2f7d5a" stroke-width="5.0"/>
+<polyline points="190.25,694 190.25,597.4" fill="none" stroke="#2f7d5a" stroke-width="5.0"/>
+<polyline points="301.5,694 301.5,624.7" fill="none" stroke="#2f7d5a" stroke-width="5.0"/>
+<polygon points="234.75,652.4 228.75,640.4 240.75,640.4" fill="#ffffff" stroke="#b23a3a" stroke-width="1"/>
+<polygon points="359.35,638.75 353.35,626.75 365.35,626.75" fill="#ffffff" stroke="#b23a3a" stroke-width="1"/>
+<polygon points="417.2,649.25 411.2,637.25 423.2,637.25" fill="#ffffff" stroke="#b23a3a" stroke-width="1"/>
+<text x="79" y="779" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#b23a3a" text-anchor="start" dominant-baseline="middle">uncovered and under-fitted lines</text>
+<text x="574" y="479" font-family="Arial, sans-serif" font-size="29" font-weight="700" fill="#20252b" text-anchor="start" dominant-baseline="middle">(d) Staged Gain</text>
+<text x="574" y="524" font-family="Arial, sans-serif" font-size="25" font-weight="400" fill="#626b73" text-anchor="start" dominant-baseline="middle">direct → overlap → hidden evidence</text>
+<polyline points="611,669 1011,669" fill="none" stroke="#626b73" stroke-width="0.8"/>
+<polyline points="666,669 666,674" fill="none" stroke="#626b73" stroke-width="0.7"/>
+<polyline points="721,669 721,674" fill="none" stroke="#626b73" stroke-width="0.7"/>
+<polyline points="776,669 776,674" fill="none" stroke="#626b73" stroke-width="0.7"/>
+<polyline points="766.75,669 766.75,635.4" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="891.35,669 891.35,621.75" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="949.2,669 949.2,632.25" fill="none" stroke="#20252b" stroke-width="2.1"/>
+<polyline points="628.8,674 628.8,690.8" fill="none" stroke="#626b73" stroke-width="1.7"/>
+<polyline points="668.85,674 668.85,688.7" fill="none" stroke="#626b73" stroke-width="1.7"/>
+<polyline points="722.25,674 722.25,700.25" fill="none" stroke="#626b73" stroke-width="1.7"/>
+<polyline points="833.5,674 833.5,692.9" fill="none" stroke="#626b73" stroke-width="1.7"/>
+<polyline points="766.3050000000001,674 766.3050000000001,705.5" fill="none" stroke="#b23a3a" stroke-width="2.8"/>
+<polyline points="892.24,674 892.24,716.0" fill="none" stroke="#b23a3a" stroke-width="2.8"/>
+<polyline points="949.645,674 949.645,706.55" fill="none" stroke="#b23a3a" stroke-width="2.8"/>
+<text x="810.0" y="744" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#b23a3a" text-anchor="middle" dominant-baseline="middle">reward supported deficits</text>
+<text x="810.0" y="790" font-family="Arial, sans-serif" font-size="25" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">penalize duplicates and absent strong lines</text>
+<text x="544" y="858" font-family="Arial, sans-serif" font-size="25" font-weight="700" fill="#20252b" text-anchor="middle" dominant-baseline="middle">Match tests global compatibility.</text>
+<text x="544" y="890" font-family="Arial, sans-serif" font-size="25" font-weight="700" fill="#20252b" text-anchor="middle" dominant-baseline="middle">Gain measures added evidence after selected phases are fitted.</text>
+</svg>

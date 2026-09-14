@@ -8,6 +8,7 @@ from xrd_finder.finder.models import (
     PeakAssignment,
     PeakStatus,
 )
+from xrd_finder.finder.reference_lines import ReferenceLine, ReferenceLineSet
 
 
 def __getattr__(name: str):
@@ -26,6 +27,8 @@ __all__ = [
     "ObservedPeak",
     "PeakAssignment",
     "PeakStatus",
+    "ReferenceLine",
+    "ReferenceLineSet",
     "FinderHeuristics",
     "FinderService",
 ]

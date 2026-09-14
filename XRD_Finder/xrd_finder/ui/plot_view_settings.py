@@ -32,6 +32,20 @@ from PySide6.QtWidgets import (
 from xrd_finder.ui.plot_style import PlotLineStyle, PlotMarkerStyle, PlotStyle
 
 
+PLOT_ASPECTS = {
+    "Fit": None,
+    "16:9": 16.0 / 9.0,
+    "3:2": 3.0 / 2.0,
+    "4:3": 4.0 / 3.0,
+    "1:1": 1.0,
+    "2:1": 2.0,
+    "4:2": 2.0,
+    "Vertical 4:2": 0.5,
+    "18:6": 3.0,
+    "Custom": None,
+}
+
+
 @dataclass(slots=True)
 class PlotViewSettings:
     title_visible: bool = True
@@ -185,17 +199,7 @@ class PlotViewSettingsWidget(QScrollArea):
     profileCandidateColorRequested = Signal(int)
     _DEFAULT_SETTINGS_KEY = "plot_view/default_settings_v2"
 
-    _ASPECTS = {
-        "Fit": None,
-        "1:1": 1.0,
-        "2:1": 2.0,
-        "4:2": 2.0,
-        "Vertical 4:2": 0.5,
-        "18:6": 3.0,
-        "16:9": 16.0 / 9.0,
-        "4:3": 4.0 / 3.0,
-        "Custom": None,
-    }
+    _ASPECTS = PLOT_ASPECTS
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)

@@ -11,6 +11,7 @@ from xrd_finder.plot_export.paint_exporter import (
 from xrd_finder.plot_export.snapshot import freeze_canvas
 from xrd_finder.services.runtime_diagnostics import traced_operation
 from xrd_finder.ui.pattern_plot_helpers import ensure_right_legend
+from xrd_finder.ui.finder_plot_control_bar import d_spacing_from_two_theta
 from xrd_finder.ui.plot_export_dialog import PlotExportDialog
 from xrd_finder.ui.plot_layer_items import remove_pattern_layer_items
 from PySide6.QtCore import QSize, Qt
@@ -28,11 +29,11 @@ class PhaseFinderPlotActionsMixin:
         "hkl_labels_visible": False,
         "layer_observed_visible": True,
         "layer_preview_peak_positions_visible": True,
-        "layer_total_profile_visible": False,
-        "layer_phase_profiles_visible": False,
+        "layer_total_profile_visible": True,
+        "layer_phase_profiles_visible": True,
         "layer_background_visible": False,
         "layer_difference_visible": False,
-        "layer_phase_ticks_visible": False,
+        "layer_phase_ticks_visible": True,
         "layer_coverage_markers_visible": True,
         "layer_peak_labels_visible": False,
         "layer_unknown_peaks_visible": False,
@@ -685,13 +686,32 @@ class PhaseFinderPlotActionsMixin:
         scene_pos = event[0] if isinstance(event, tuple) else event
         view_box = self.match_plot.plotItem.vb
         if not view_box.sceneBoundingRect().contains(scene_pos):
-            if getattr(self, "cursor_position_status_label", None) is not None:
-                self.cursor_position_status_label.setText("2theta: -    I: -")
+            control_bar = getattr(self, "finder_plot_control_bar", None)
+            if control_bar is not None:
+                control_bar.set_cursor_readout()
+            elif getattr(self, "cursor_position_status_label", None) is not None:
+                self.cursor_position_status_label.setText("2theta: -    I: -    d: -")
             return
         view_pos = view_box.mapSceneToView(scene_pos)
         two_theta = float(view_pos.x())
         intensity = float(view_pos.y())
         self.cursor_position_line.setPos(two_theta)
         self.cursor_position_line.setVisible(bool(getattr(self, "cursor_vertical_line_enabled", False)))
-        if getattr(self, "cursor_position_status_label", None) is not None:
-            self.cursor_position_status_label.setText(f"2theta: {two_theta:.3f} deg    I: {intensity:.3g}")
+        wavelength = self._active_wavelength() if hasattr(self, "_active_wavelength") else None
+        d_spacing = (
+            d_spacing_from_two_theta(two_theta, wavelength)
+            if wavelength is not None
+            else None
+        )
+        control_bar = getattr(self, "finder_plot_control_bar", None)
+        if control_bar is not None:
+            control_bar.set_cursor_readout(
+                two_theta=two_theta,
+                intensity=intensity,
+                d_spacing=d_spacing,
+            )
+        elif getattr(self, "cursor_position_status_label", None) is not None:
+            d_text = "-" if d_spacing is None else f"{d_spacing:.3f} A"
+            self.cursor_position_status_label.setText(
+                f"2theta: {two_theta:.3f} deg    I: {intensity:.3g}    d: {d_text}"
+            )

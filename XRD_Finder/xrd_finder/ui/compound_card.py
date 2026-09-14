@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -69,6 +70,8 @@ class CompoundCardWidget(QWidget):
             "Link to orig. entry": data.get("Entry", ""),
             "Crystal system": data.get("Crystal system", ""),
             "Cell parameters": data.get("Cell", ""),
+            "Estimated starting cell": self._estimated_cell_text(data),
+            "Cell fit": self._cell_fit_text(data),
         }
         data.update({key: value for key, value in aliases.items() if key not in data or not data.get(key)})
 
@@ -211,7 +214,9 @@ class CompoundCardWidget(QWidget):
                 [
                     ("Space group", "Space group"),
                     ("Crystal system", "Crystal system"),
-                    ("Cell parameters", "Cell parameters"),
+                    ("Cell parameters", "Source cell"),
+                    ("Estimated starting cell", "Estimated starting cell"),
+                    ("Cell fit", "Approximate fit"),
                 ]
             )
         )
@@ -225,6 +230,42 @@ class CompoundCardWidget(QWidget):
         self.diffraction_table.setMinimumHeight(300)
         layout.addWidget(self.diffraction_table, 3)
         return scroll
+
+    def _estimated_cell_text(self, data: Mapping[str, object]) -> str:
+        cell = data.get("_EstimatedCell")
+        if not isinstance(cell, Mapping) or not cell:
+            return ""
+        parts = []
+        for name in ("a", "b", "c"):
+            value = self._finite_number(cell.get(name))
+            if value is not None:
+                parts.append(f"{name}={value:.6g} A")
+        for name in ("alpha", "beta", "gamma"):
+            value = self._finite_number(cell.get(name))
+            if value is not None:
+                parts.append(f"{name}={value:.6g} deg")
+        volume = self._finite_number(cell.get("volume"))
+        if volume is not None:
+            parts.append(f"V={volume:.6g} A^3")
+        return "; ".join(parts)
+
+    def _cell_fit_text(self, data: Mapping[str, object]) -> str:
+        peaks = self._finite_number(data.get("_CellFitPeaks"))
+        initial_rms = self._finite_number(data.get("_CellFitInitialRmsDeg"))
+        fitted_rms = self._finite_number(data.get("_CellFitRmsDeg"))
+        if peaks is None or peaks <= 0 or initial_rms is None or fitted_rms is None:
+            return ""
+        return (
+            f"{int(peaks)} indexed peaks; RMS {initial_rms:.4g} -> "
+            f"{fitted_rms:.4g} deg"
+        )
+
+    def _finite_number(self, value: object) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
 
     def _scroll_area(self, colors: dict[str, str]) -> QScrollArea:
         scroll = QScrollArea()

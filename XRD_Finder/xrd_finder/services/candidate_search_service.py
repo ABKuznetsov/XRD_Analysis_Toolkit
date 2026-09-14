@@ -3,11 +3,16 @@ from __future__ import annotations
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-import itertools
-import queue
 import re
 import threading
+import time
 
+from xrd_finder.services.candidate_preparation_queue import (
+    CandidatePreparationJob,
+    CandidatePreparationProgress,
+    CandidatePreparationQueue,
+    CandidatePreparedNotice,
+)
 from xrd_finder.services.ccdc_service import CcdcService, extract_doi
 from xrd_finder.services.cod_online_service import CodEntry, CodOnlineService, formula_elements
 from xrd_finder.services.computational_database_service import AflowService, OqmdService
@@ -41,8 +46,10 @@ class CandidateSearchService:
     STRUCTURAL_RESULT_LIMIT = 500
     LOCAL_INDEXED_RESULT_LIMIT = 5000
     ONLINE_RESULT_LIMIT = 300
+    ONLINE_MAX_RESULT_LIMIT = 1200
     COMPUTATIONAL_RESULT_LIMIT = 150
     BACKGROUND_DOWNLOAD_LIMIT = 20
+    BACKGROUND_REFRESH_COOLDOWN_SECONDS = 5 * 60
     CCDC_RESULT_LIMIT = 20
 
     def __init__(
@@ -56,6 +63,8 @@ class CandidateSearchService:
         aflow: AflowService | None = None,
         oqmd: OqmdService | None = None,
         status_callback: Callable[[str], None] | None = None,
+        prepared_callback: Callable[[CandidatePreparedNotice], None] | None = None,
+        preparation_progress_callback: Callable[[CandidatePreparationProgress], None] | None = None,
     ) -> None:
         self.local_phase_cache = local_phase_cache
         self.cod_online = cod_online
@@ -66,19 +75,21 @@ class CandidateSearchService:
         self.aflow = aflow or AflowService()
         self.oqmd = oqmd or OqmdService()
         self._status_callback = status_callback
-        self._download_lock = threading.Lock()
-        self._queued_downloads: set[tuple[str, str]] = set()
+        self._prepared_listeners: list[Callable[[CandidatePreparedNotice], None]] = []
+        self._preparation_progress_listeners: list[
+            Callable[[CandidatePreparationProgress], None]
+        ] = []
+        if prepared_callback is not None:
+            self._prepared_listeners.append(prepared_callback)
+        if preparation_progress_callback is not None:
+            self._preparation_progress_listeners.append(preparation_progress_callback)
         self._refresh_lock = threading.Lock()
         self._queued_refreshes: set[tuple[str, str]] = set()
-        self._download_counter = itertools.count()
-        self._download_queue: queue.PriorityQueue = queue.PriorityQueue()
-        self._download_shutdown = False
-        self._download_thread = threading.Thread(
-            target=self._run_download_queue,
-            name="xrd-cache-priority",
-            daemon=True,
+        self._refresh_attempted_at: dict[tuple[str, str], float] = {}
+        self.preparation_queue = CandidatePreparationQueue(
+            notice_callback=self._emit_prepared_notice,
+            progress_callback=self._emit_preparation_progress,
         )
-        self._download_thread.start()
 
     def _emit_background_status(self, message: str) -> None:
         callback = self._status_callback
@@ -89,12 +100,55 @@ class CandidateSearchService:
         except Exception:
             pass
 
+    def add_prepared_listener(
+        self,
+        callback: Callable[[CandidatePreparedNotice], None],
+    ) -> None:
+        if callback not in self._prepared_listeners:
+            self._prepared_listeners.append(callback)
+
+    def remove_prepared_listener(
+        self,
+        callback: Callable[[CandidatePreparedNotice], None],
+    ) -> None:
+        if callback in self._prepared_listeners:
+            self._prepared_listeners.remove(callback)
+
+    def _emit_prepared_notice(self, notice: CandidatePreparedNotice) -> None:
+        for callback in tuple(self._prepared_listeners):
+            try:
+                callback(notice)
+            except Exception:
+                pass
+
+    def _emit_preparation_progress(self, progress: CandidatePreparationProgress) -> None:
+        active = progress.queued + progress.downloading + progress.indexing
+        if not active:
+            if progress.failed:
+                self._emit_background_status(
+                    f"Background: ready {progress.ready}, failed {progress.failed}"
+                )
+            else:
+                self._emit_background_status("Ready")
+        else:
+            self._emit_background_status(
+                "Background: "
+                f"queued {progress.queued}, downloading {progress.downloading}, "
+                f"indexing {progress.indexing}, ready {progress.ready}, failed {progress.failed}"
+            )
+        for callback in tuple(self._preparation_progress_listeners):
+            try:
+                callback(progress)
+            except Exception:
+                pass
+
     def search_text(
         self,
         query: str,
         options: CandidateSearchOptions,
         progress: SearchProgressCallback | None = None,
         partial_results: SearchPartialResultsCallback | None = None,
+        session_token: int | None = None,
     ) -> list[list[str]]:
         query = query.strip()
         if not query:
@@ -185,13 +239,14 @@ class CandidateSearchService:
         if options.cod_online_enabled and options.structural_data_enabled:
             cod_key = self.search_cache_key("text", query, options.excluded_elements)
             if not self.local_phase_cache.search_is_fresh("COD", cod_key):
-                if rows and partial_results is None:
+                if rows:
                     self._queue_background_cod_text_refresh(
                         cod_key=cod_key,
                         query=query,
                         formula_query=formula_query,
                         query_elements=query_elements,
                         options=options,
+                        session_token=session_token,
                     )
                     self._emit_search_progress(
                         progress,
@@ -203,20 +258,28 @@ class CandidateSearchService:
                 else:
                     try:
                         self._emit_search_progress(progress, "Searching COD online...", len(rows), 0, 7)
-                        cod_entries, cod_result_count = self._timed_source_call(
+                        self._timed_source_call(
                             "cod",
-                            lambda: self._search_cod_text_entries(
-                                query=query,
-                                formula_query=formula_query,
-                                query_elements=query_elements,
-                                options=options,
+                            lambda: self._refresh_cod_batches(
+                                cod_key=cod_key,
+                                result_limit=self.ONLINE_RESULT_LIMIT,
+                                fetch=lambda limit: self._search_cod_text_entries(
+                                    query=query,
+                                    formula_query=formula_query,
+                                    query_elements=query_elements,
+                                    options=options,
+                                    result_limit=limit,
+                                ),
+                                session_token=session_token,
                             ),
                         )
-                        self.local_phase_cache.upsert_cod_entries(cod_entries)
-                        self._mark_search_if_complete("COD", cod_key, cod_result_count, self.ONLINE_RESULT_LIMIT)
-                        queued = self.queue_background_cod_downloads(cod_entries)
-                        rows = self.dedupe_candidate_rows(rows + self.cod_rows(cod_entries))
-                        self._emit_search_progress(progress, f"COD: found {len(cod_entries)}, queued {queued} CIF downloads", len(rows), queued, 8)
+                        self._emit_search_progress(
+                            progress,
+                            "COD results are loading into the local index",
+                            len(rows),
+                            0,
+                            8,
+                        )
                     except Exception:
                         pass
 
@@ -241,8 +304,10 @@ class CandidateSearchService:
                         )
                         self.local_phase_cache.upsert_materials_project_entries(mp_entries)
                         self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                        queued = self.queue_background_mp_downloads(mp_entries)
-                        rows = self.dedupe_candidate_rows(rows + self.mp_rows(mp_entries))
+                        queued = self.queue_background_mp_downloads(
+                            mp_entries,
+                            session_token=session_token,
+                        )
                         self._emit_search_progress(progress, f"Materials Project: found {len(mp_entries)}, queued {queued} CIF downloads", len(rows), queued, 9)
                     except Exception as exc:
                         if not rows:
@@ -263,8 +328,10 @@ class CandidateSearchService:
                         )
                         self.local_phase_cache.upsert_computational_entries(aflow_entries)
                         self._mark_search_if_complete("AFLOW", aflow_key, len(aflow_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                        queued = self.queue_background_aflow_downloads(aflow_entries)
-                        rows = self.dedupe_candidate_rows(rows + self.computational_rows(aflow_entries))
+                        queued = self.queue_background_aflow_downloads(
+                            aflow_entries,
+                            session_token=session_token,
+                        )
                         self._emit_search_progress(progress, f"AFLOW: found {len(aflow_entries)}, queued {queued} CIF downloads", len(rows), queued, 10)
                     except Exception as exc:
                         if not rows:
@@ -285,8 +352,10 @@ class CandidateSearchService:
                         )
                         self.local_phase_cache.upsert_computational_entries(oqmd_entries)
                         self._mark_search_if_complete("OQMD", oqmd_key, len(oqmd_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                        queued = self.queue_background_oqmd_downloads(oqmd_entries)
-                        rows = self.dedupe_candidate_rows(rows + self.computational_rows(oqmd_entries))
+                        queued = self.queue_background_oqmd_downloads(
+                            oqmd_entries,
+                            session_token=session_token,
+                        )
                         self._emit_search_progress(progress, f"OQMD: found {len(oqmd_entries)}, queued {queued} CIF downloads", len(rows), queued, 11)
                     except Exception as exc:
                         if not rows:
@@ -302,6 +371,7 @@ class CandidateSearchService:
         options: CandidateSearchOptions,
         progress: SearchProgressCallback | None = None,
         partial_results: SearchPartialResultsCallback | None = None,
+        session_token: int | None = None,
     ) -> list[list[str]]:
         rows = []
         self._emit_search_progress(progress, "Checking local cache...", 0, 0, 1)
@@ -361,8 +431,13 @@ class CandidateSearchService:
         if options.cod_online_enabled and options.structural_data_enabled:
             cod_key = self.search_cache_key("elements", elements, options.excluded_elements)
             if not self.local_phase_cache.search_is_fresh("COD", cod_key):
-                if rows and partial_results is None:
-                    self._queue_background_cod_elements_refresh(cod_key, elements, options)
+                if rows:
+                    self._queue_background_cod_elements_refresh(
+                        cod_key,
+                        elements,
+                        options,
+                        session_token=session_token,
+                    )
                     self._emit_search_progress(
                         progress,
                         "Local cache is ready; COD online refresh is running in the background",
@@ -373,21 +448,23 @@ class CandidateSearchService:
                 else:
                     try:
                         self._emit_search_progress(progress, "Searching COD online...", len(rows), 0, 5)
-                        cod_entries = self._timed_source_call(
+                        self._timed_source_call(
                             "cod",
-                            lambda: self.cod_online.search_elements(
+                            lambda: self._refresh_cod_elements_cache(
+                                cod_key,
                                 elements,
-                                excluded_elements=options.excluded_elements,
-                                limit=self.ONLINE_RESULT_LIMIT,
+                                options,
+                                session_token=session_token,
+                                result_limit=self.ONLINE_RESULT_LIMIT,
                             ),
                         )
-                        cod_result_count = len(cod_entries)
-                        cod_entries = self.filter_cod_entries(cod_entries, options)
-                        self.local_phase_cache.upsert_cod_entries(cod_entries)
-                        self._mark_search_if_complete("COD", cod_key, cod_result_count, self.ONLINE_RESULT_LIMIT)
-                        queued = self.queue_background_cod_downloads(cod_entries)
-                        rows = self.dedupe_candidate_rows(rows + self.cod_rows(cod_entries))
-                        self._emit_search_progress(progress, f"COD: found {len(cod_entries)}, queued {queued} CIF downloads", len(rows), queued, 6)
+                        self._emit_search_progress(
+                            progress,
+                            "COD results are loading into the local index",
+                            len(rows),
+                            0,
+                            6,
+                        )
                     except Exception as exc:
                         rows.append(["", "COD", "", "", f"COD search failed: {exc}", "", "", "", "", ""])
         if options.materials_project_enabled and options.structural_data_enabled:
@@ -411,8 +488,10 @@ class CandidateSearchService:
                         )
                         self.local_phase_cache.upsert_materials_project_entries(mp_entries)
                         self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                        queued = self.queue_background_mp_downloads(mp_entries)
-                        rows = self.dedupe_candidate_rows(rows + self.mp_rows(mp_entries))
+                        queued = self.queue_background_mp_downloads(
+                            mp_entries,
+                            session_token=session_token,
+                        )
                         self._emit_search_progress(progress, f"Materials Project: found {len(mp_entries)}, queued {queued} CIF downloads", len(rows), queued, 8)
                     except Exception as exc:
                         rows.append(["MP", "", "", "Materials Project search failed", "", str(exc)])
@@ -431,8 +510,10 @@ class CandidateSearchService:
                         )
                         self.local_phase_cache.upsert_computational_entries(aflow_entries)
                         self._mark_search_if_complete("AFLOW", aflow_key, len(aflow_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                        queued = self.queue_background_aflow_downloads(aflow_entries)
-                        rows = self.dedupe_candidate_rows(rows + self.computational_rows(aflow_entries))
+                        queued = self.queue_background_aflow_downloads(
+                            aflow_entries,
+                            session_token=session_token,
+                        )
                         self._emit_search_progress(progress, f"AFLOW: found {len(aflow_entries)}, queued {queued} CIF downloads", len(rows), queued, 10)
                     except Exception as exc:
                         rows.append(["AFLOW", "", "", "AFLOW search failed", "", str(exc)])
@@ -451,8 +532,10 @@ class CandidateSearchService:
                         )
                         self.local_phase_cache.upsert_computational_entries(oqmd_entries)
                         self._mark_search_if_complete("OQMD", oqmd_key, len(oqmd_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                        queued = self.queue_background_oqmd_downloads(oqmd_entries)
-                        rows = self.dedupe_candidate_rows(rows + self.computational_rows(oqmd_entries))
+                        queued = self.queue_background_oqmd_downloads(
+                            oqmd_entries,
+                            session_token=session_token,
+                        )
                         self._emit_search_progress(progress, f"OQMD: found {len(oqmd_entries)}, queued {queued} CIF downloads", len(rows), queued, 11)
                     except Exception as exc:
                         rows.append(["OQMD", "", "", "OQMD search failed", "", str(exc)])
@@ -541,16 +624,18 @@ class CandidateSearchService:
         formula_query: str,
         query_elements: list[str],
         options: CandidateSearchOptions,
+        result_limit: int | None = None,
     ) -> tuple[list[CodEntry], int]:
+        limit = max(1, int(result_limit or self.ONLINE_RESULT_LIMIT))
         cod_result_count = 0
         if formula_query:
-            cod_entries = self.cod_online.search_formula(formula_query, limit=self.ONLINE_RESULT_LIMIT)
+            cod_entries = self.cod_online.search_formula(formula_query, limit=limit)
             cod_result_count = len(cod_entries)
             if len(cod_entries) < 5 and query_elements:
                 element_entries = self.cod_online.search_elements(
                     query_elements,
                     excluded_elements=options.excluded_elements,
-                    limit=self.ONLINE_RESULT_LIMIT,
+                    limit=limit,
                 )
                 cod_result_count = max(cod_result_count, len(element_entries))
                 cod_entries = self._dedupe_cod_entries(cod_entries + element_entries)
@@ -558,11 +643,11 @@ class CandidateSearchService:
             cod_entries = self.cod_online.search_elements(
                 query_elements,
                 excluded_elements=options.excluded_elements,
-                limit=self.ONLINE_RESULT_LIMIT,
+                limit=limit,
             )
             cod_result_count = len(cod_entries)
         else:
-            cod_entries = self.cod_online.search_text(query=query, limit=self.ONLINE_RESULT_LIMIT)
+            cod_entries = self.cod_online.search_text(query=query, limit=limit)
             cod_result_count = len(cod_entries)
         return self.filter_cod_entries(cod_entries, options), cod_result_count
 
@@ -574,10 +659,20 @@ class CandidateSearchService:
         formula_query: str,
         query_elements: list[str],
         options: CandidateSearchOptions,
+        session_token: int | None = None,
     ) -> None:
+        result_limit = self._next_cod_result_limit(cod_key)
         self._queue_background_refresh(
             ("COD", cod_key),
-            lambda: self._refresh_cod_text_cache(cod_key, query, formula_query, query_elements, options),
+            lambda: self._refresh_cod_text_cache(
+                cod_key,
+                query,
+                formula_query,
+                query_elements,
+                options,
+                session_token=session_token,
+                result_limit=result_limit,
+            ),
         )
 
     def _queue_background_cod_elements_refresh(
@@ -585,10 +680,19 @@ class CandidateSearchService:
         cod_key: str,
         elements: list[str],
         options: CandidateSearchOptions,
+        *,
+        session_token: int | None = None,
     ) -> None:
+        result_limit = self._next_cod_result_limit(cod_key)
         self._queue_background_refresh(
             ("COD", cod_key),
-            lambda: self._refresh_cod_elements_cache(cod_key, elements, options),
+            lambda: self._refresh_cod_elements_cache(
+                cod_key,
+                elements,
+                options,
+                session_token=session_token,
+                result_limit=result_limit,
+            ),
         )
 
     def _queue_background_mp_text_refresh(self, mp_key: str, query: str) -> None:
@@ -616,10 +720,18 @@ class CandidateSearchService:
         )
 
     def _queue_background_refresh(self, key: tuple[str, str], task: Callable[[], object]) -> None:
+        now = time.monotonic()
         with self._refresh_lock:
             if key in self._queued_refreshes:
                 return
+            last_attempt = self._refresh_attempted_at.get(key)
+            if (
+                last_attempt is not None
+                and now - last_attempt < self.BACKGROUND_REFRESH_COOLDOWN_SECONDS
+            ):
+                return
             self._queued_refreshes.add(key)
+            self._refresh_attempted_at[key] = now
         self._emit_background_status(f"Background: queued {key[0]} database update")
         thread = threading.Thread(
             target=self._run_background_refresh,
@@ -650,33 +762,74 @@ class CandidateSearchService:
         formula_query: str,
         query_elements: list[str],
         options: CandidateSearchOptions,
+        *,
+        session_token: int | None = None,
+        result_limit: int | None = None,
     ) -> None:
-        cod_entries, cod_result_count = self._search_cod_text_entries(
-            query=query,
-            formula_query=formula_query,
-            query_elements=query_elements,
-            options=options,
+        self._refresh_cod_batches(
+            cod_key=cod_key,
+            result_limit=result_limit,
+            fetch=lambda limit: self._search_cod_text_entries(
+                query=query,
+                formula_query=formula_query,
+                query_elements=query_elements,
+                options=options,
+                result_limit=limit,
+            ),
+            session_token=session_token,
         )
-        self.local_phase_cache.upsert_cod_entries(cod_entries)
-        self._mark_search_if_complete("COD", cod_key, cod_result_count, self.ONLINE_RESULT_LIMIT)
-        self.queue_background_cod_downloads(cod_entries)
 
     def _refresh_cod_elements_cache(
         self,
         cod_key: str,
         elements: list[str],
         options: CandidateSearchOptions,
+        *,
+        session_token: int | None = None,
+        result_limit: int | None = None,
     ) -> None:
-        cod_entries = self.cod_online.search_elements(
-            elements,
-            excluded_elements=options.excluded_elements,
-            limit=self.ONLINE_RESULT_LIMIT,
+        def fetch(limit: int) -> tuple[list[CodEntry], int]:
+            entries = self.cod_online.search_elements(
+                elements,
+                excluded_elements=options.excluded_elements,
+                limit=limit,
+            )
+            result_count = len(entries)
+            return self.filter_cod_entries(entries, options), result_count
+
+        self._refresh_cod_batches(
+            cod_key=cod_key,
+            result_limit=result_limit,
+            fetch=fetch,
+            session_token=session_token,
         )
-        cod_result_count = len(cod_entries)
-        cod_entries = self.filter_cod_entries(cod_entries, options)
-        self.local_phase_cache.upsert_cod_entries(cod_entries)
-        self._mark_search_if_complete("COD", cod_key, cod_result_count, self.ONLINE_RESULT_LIMIT)
-        self.queue_background_cod_downloads(cod_entries)
+
+    def _refresh_cod_batches(
+        self,
+        *,
+        cod_key: str,
+        result_limit: int | None,
+        fetch: Callable[[int], tuple[list[CodEntry], int]],
+        session_token: int | None,
+    ) -> None:
+        limit = max(1, int(result_limit or self.ONLINE_RESULT_LIMIT))
+        while True:
+            cod_entries, result_count = fetch(limit)
+            self.local_phase_cache.upsert_cod_entries(cod_entries)
+            self._mark_search_if_complete("COD", cod_key, result_count, limit)
+            self.queue_background_cod_downloads(
+                cod_entries,
+                session_token=session_token,
+            )
+            if result_count < limit or limit >= self.ONLINE_MAX_RESULT_LIMIT:
+                return
+            limit = min(
+                self.ONLINE_MAX_RESULT_LIMIT,
+                limit + self.ONLINE_RESULT_LIMIT,
+            )
+            self._emit_background_status(
+                f"Background: COD returned a full batch; extending search to {limit}"
+            )
 
     def _refresh_mp_text_cache(self, mp_key: str, query: str) -> None:
         mp_entries = self.materials_project.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT)
@@ -732,64 +885,167 @@ class CandidateSearchService:
                 errors += 1
         return errors
 
-    def queue_background_cod_downloads(self, entries: list[CodEntry]) -> int:
+    def queue_background_cod_downloads(
+        self,
+        entries: list[CodEntry],
+        *,
+        session_token: int | None = None,
+    ) -> int:
         queued = 0
-        for entry in entries[: self.BACKGROUND_DOWNLOAD_LIMIT]:
+        for entry in entries:
             if not entry.cod_id:
                 continue
-            queued += int(self._queue_background_download(
-                ("COD", entry.cod_id),
-                lambda entry=entry: self.local_phase_cache.download_cod_entry(entry, self.cod_online),
-            ))
+            target = self.local_phase_cache.cif_dir / f"{entry.cod_id}.cif"
+            queued += int(
+                self._queue_candidate_preparation(
+                    source="COD",
+                    entry_id=entry.cod_id,
+                    fetch=lambda entry=entry: self.cod_online.download_cif(
+                        entry.cod_id,
+                        self.local_phase_cache.cif_dir,
+                    ),
+                    existing_path=target if target.is_file() else None,
+                    fallback=entry,
+                    session_token=session_token,
+                )
+            )
         return queued
 
-    def queue_background_mp_downloads(self, entries) -> int:
+    def queue_background_mp_downloads(self, entries, *, session_token: int | None = None) -> int:
         target_dir = self.local_phase_cache.root / "materials_project_cif"
         queued = 0
         for entry in entries[: self.BACKGROUND_DOWNLOAD_LIMIT]:
             if not entry.material_id:
                 continue
-            queued += int(self._queue_background_download(
-                ("MP", entry.material_id),
-                lambda entry=entry: self._download_mp_entry_to_cache(entry, target_dir),
-            ))
+            target = target_dir / f"{entry.material_id}.cif"
+            queued += int(
+                self._queue_candidate_preparation(
+                    source="MP",
+                    entry_id=entry.material_id,
+                    fetch=lambda entry=entry: self.materials_project.download_cif(
+                        entry.material_id,
+                        target_dir,
+                    ),
+                    existing_path=target if target.is_file() else None,
+                    session_token=session_token,
+                )
+            )
         return queued
 
     def _download_mp_entry_to_cache(self, entry, target_dir) -> None:
         cif_path = self.materials_project.download_cif(entry.material_id, target_dir)
         self.local_phase_cache.index_cif(cif_path, source="MP", entry_id=entry.material_id)
 
-    def queue_background_aflow_downloads(self, entries) -> int:
+    def queue_background_aflow_downloads(self, entries, *, session_token: int | None = None) -> int:
         target_dir = self.local_phase_cache.root / "aflow_cif"
         queued = 0
         for entry in entries[: self.BACKGROUND_DOWNLOAD_LIMIT]:
             if not entry.entry_id:
                 continue
-            queued += int(self._queue_background_download(
-                ("AFLOW", entry.entry_id),
-                lambda entry=entry: self._download_aflow_entry_to_cache(entry, target_dir),
-            ))
+            existing = self.local_phase_cache.cif_path("AFLOW", entry.entry_id)
+            queued += int(
+                self._queue_candidate_preparation(
+                    source="AFLOW",
+                    entry_id=entry.entry_id,
+                    fetch=lambda entry=entry: self.aflow.download_cif(
+                        entry.entry_id,
+                        target_dir,
+                        url_hint=entry.url_hint,
+                    ),
+                    existing_path=existing,
+                    session_token=session_token,
+                )
+            )
         return queued
 
     def _download_aflow_entry_to_cache(self, entry, target_dir) -> None:
         cif_path = self.aflow.download_cif(entry.entry_id, target_dir, url_hint=entry.url_hint)
         self.local_phase_cache.index_cif(cif_path, source="AFLOW", entry_id=entry.entry_id)
 
-    def queue_background_oqmd_downloads(self, entries) -> int:
+    def queue_background_oqmd_downloads(self, entries, *, session_token: int | None = None) -> int:
         target_dir = self.local_phase_cache.root / "oqmd_cif"
         queued = 0
         for entry in entries[: self.BACKGROUND_DOWNLOAD_LIMIT]:
             if not entry.entry_id:
                 continue
-            queued += int(self._queue_background_download(
-                ("OQMD", entry.entry_id),
-                lambda entry=entry: self._download_oqmd_entry_to_cache(entry, target_dir),
-            ))
+            existing = self.local_phase_cache.cif_path("OQMD", entry.entry_id)
+            queued += int(
+                self._queue_candidate_preparation(
+                    source="OQMD",
+                    entry_id=entry.entry_id,
+                    fetch=lambda entry=entry: self.oqmd.download_cif(
+                        entry.entry_id,
+                        target_dir,
+                        url_hint=entry.url_hint,
+                        formula_hint=entry.formula,
+                    ),
+                    existing_path=existing,
+                    session_token=session_token,
+                )
+            )
         return queued
 
     def _download_oqmd_entry_to_cache(self, entry, target_dir) -> None:
         cif_path = self.oqmd.download_cif(entry.entry_id, target_dir, url_hint=entry.url_hint, formula_hint=entry.formula)
         self.local_phase_cache.index_cif(cif_path, source="OQMD", entry_id=entry.entry_id)
+
+    def _queue_candidate_preparation(
+        self,
+        *,
+        source: str,
+        entry_id: str,
+        fetch: Callable[[], object],
+        existing_path=None,
+        fallback: CodEntry | None = None,
+        session_token: int | None = None,
+    ) -> bool:
+        cached = self.local_phase_cache.get(source, entry_id)
+        if (
+            cached is not None
+            and int(getattr(cached, "derived_version", 0)) == DERIVED_CACHE_VERSION
+            and self.local_phase_cache.peak_records(source, entry_id)
+        ):
+            return False
+        if existing_path is None:
+            existing_path = self.local_phase_cache.cif_path(source, entry_id)
+        return self.preparation_queue.submit(
+            CandidatePreparationJob(
+                source=source,
+                entry_id=entry_id,
+                fetch=None if existing_path is not None else fetch,
+                existing_payload=existing_path,
+                index=lambda path: self._index_prepared_cif(
+                    path,
+                    source=source,
+                    entry_id=entry_id,
+                    fallback=fallback,
+                ),
+            ),
+            session_token=session_token,
+        )
+
+    def _index_prepared_cif(
+        self,
+        path,
+        *,
+        source: str,
+        entry_id: str,
+        fallback: CodEntry | None = None,
+    ):
+        self.local_phase_cache.index_cif(
+            path,
+            source=source,
+            entry_id=entry_id,
+            fallback=fallback,
+        )
+        cached = self.local_phase_cache.get(source, entry_id)
+        if (
+            cached is None
+            or int(getattr(cached, "derived_version", 0)) != DERIVED_CACHE_VERSION
+            or not self.local_phase_cache.peak_records(source, entry_id)
+        ):
+            raise ValueError(f"{source}:{entry_id} could not be indexed for Match/Gain.")
+        return path
 
     def _queue_background_download(
         self,
@@ -800,83 +1056,38 @@ class CandidateSearchService:
         completion: threading.Event | None = None,
         result_box: dict | None = None,
     ) -> bool:
-        if self.local_phase_cache.cif_path(key[0], key[1]) is not None:
+        del allow_duplicate
+
+        def finish(result):
+            if result_box is not None:
+                result_box["result"] = result
             if completion is not None:
-                result_box = result_box if result_box is not None else {}
-                result_box["result"] = self.local_phase_cache.cif_path(key[0], key[1])
                 completion.set()
-            return False
-        with self._download_lock:
-            if key in self._queued_downloads and not allow_duplicate:
-                return False
-            self._queued_downloads.add(key)
-        self._download_queue.put((priority, next(self._download_counter), key, task, completion, result_box))
-        return True
+            return result
+
+        return self.preparation_queue.submit(
+            CandidatePreparationJob(
+                source=key[0],
+                entry_id=key[1],
+                fetch=task,
+                index=finish,
+                priority=priority,
+            )
+        )
 
     def download_with_priority(self, key: tuple[str, str], task: Callable[[], object]) -> object:
         cached_path = self.local_phase_cache.cif_path(key[0], key[1])
         if cached_path is not None:
             return cached_path
-        with self._download_lock:
-            self._queued_downloads.discard(key)
         return task()
 
     def cancel_background_downloads(self) -> int:
-        cancelled = 0
-        while True:
-            try:
-                _priority, _sequence, key, _task, completion, result_box = self._download_queue.get_nowait()
-            except queue.Empty:
-                break
-            with self._download_lock:
-                self._queued_downloads.discard(key)
-            if completion is not None:
-                if result_box is not None:
-                    result_box["error"] = TimeoutError("Cancelled because a new database search started.")
-                completion.set()
-            self._download_queue.task_done()
-            cancelled += 1
-        return cancelled
-
-    def _run_download_queue(self) -> None:
-        while True:
-            priority, sequence, key, task, completion, result_box = self._download_queue.get()
-            try:
-                if self._download_shutdown:
-                    return
-                self._emit_background_status(
-                    f"Background: downloading CIF {key[0]}:{key[1]}..."
-                )
-                cached_path = self.local_phase_cache.cif_path(key[0], key[1])
-                if cached_path is not None:
-                    result = cached_path
-                else:
-                    result = task()
-                if result_box is not None:
-                    result_box["result"] = result
-            except Exception as exc:
-                if result_box is not None:
-                    result_box["error"] = exc
-                self._emit_background_status(
-                    f"Background: CIF {key[0]}:{key[1]} failed — {exc}"
-                )
-            finally:
-                with self._download_lock:
-                    self._queued_downloads.discard(key)
-                if completion is not None:
-                    completion.set()
-                self._download_queue.task_done()
-                remaining = self._download_queue.qsize()
-                if remaining:
-                    self._emit_background_status(
-                        f"Background: downloading CIF files — {remaining} remaining"
-                    )
-                elif not self._download_shutdown:
-                    self._emit_background_status("Ready")
+        # Search sessions are invalidated by token. Useful cache preparation is
+        # allowed to finish and can serve a later search.
+        return 0
 
     def shutdown_background_downloads(self) -> None:
-        self._download_shutdown = True
-        self._download_queue.put((999999, next(self._download_counter), ("", ""), lambda: None, None, None))
+        self.preparation_queue.shutdown(wait=False)
 
     def download_ccdc_doi_to_cache(self, doi: str):
         target_dir = self.local_phase_cache.root / "ccdc_cif"
@@ -906,6 +1117,10 @@ class CandidateSearchService:
                 self.display_iic(getattr(entry, "iic", None), getattr(entry, "derived_version", 0)),
             ]
             for entry in entries
+            if (
+                str(getattr(entry, "source", "")).upper() == "USER"
+                or int(getattr(entry, "derived_version", 0)) == DERIVED_CACHE_VERSION
+            )
         ]
 
     def rruff_rows(self, entries) -> list[list[str]]:
@@ -1061,6 +1276,28 @@ class CandidateSearchService:
     def _mark_search_if_complete(self, source: str, query_key: str, result_count: int, limit: int) -> None:
         if int(result_count) < int(limit):
             self.local_phase_cache.mark_search(source, query_key)
+            return
+        recorder = getattr(self.local_phase_cache, "record_search_attempt", None)
+        if callable(recorder):
+            recorder(
+                source,
+                query_key,
+                result_limit=limit,
+                complete=False,
+            )
+
+    def _next_cod_result_limit(self, query_key: str) -> int:
+        resolver = getattr(self.local_phase_cache, "next_search_limit", None)
+        if not callable(resolver):
+            return self.ONLINE_RESULT_LIMIT
+        return int(
+            resolver(
+                "COD",
+                query_key,
+                base_limit=self.ONLINE_RESULT_LIMIT,
+                maximum_limit=self.ONLINE_MAX_RESULT_LIMIT,
+            )
+        )
 
     def _emit_partial_candidate_rows(
         self,

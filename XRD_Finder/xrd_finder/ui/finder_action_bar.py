@@ -1,30 +1,40 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QWidget
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import (
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QScrollArea,
+    QStyle,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
-from xrd_finder.ui.theme import action_button_style
+from xrd_finder.ui.plot_view_settings import CollapsibleSection
 
 
 class FinderActionBar(QWidget):
     smoothRequested = Signal()
     cropRequested = Signal()
     subtractBackgroundRequested = Signal()
-    resetDataRequested = Signal()
     searchRequested = Signal()
-    autoSearchRequested = Signal()
-    resetViewRequested = Signal()
-    patternDisplayModeChanged = Signal(str)
-    patternOffsetPercentChanged = Signal(int)
-    normalizePatternsChanged = Signal(bool)
+    instrumentProfileSelected = Signal(str)
+    instrumentProfileEditRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.search_input = QLineEdit()
-        self.pattern_display_mode = QComboBox()
-        self.pattern_offset_slider = QSlider()
-        self.pattern_offset_value = QLabel()
-        self.normalize_patterns_checkbox = QCheckBox("Normalize")
+        self.instrument_profile_combo = QComboBox()
+        self.instrument_profile_edit_button = QToolButton()
+        self._preprocessing_hosts: dict[str, QWidget] = {}
+        self._preprocessing_host_layouts: dict[str, QVBoxLayout] = {}
+        self._preprocessing_placeholders: dict[str, QLabel] = {}
+        self._preprocessing_sections: dict[str, CollapsibleSection] = {}
+        self._current_preprocessing_key: str | None = None
+        self._current_preprocessing_panel: QWidget | None = None
         self._build_ui()
 
     def search_text(self) -> str:
@@ -34,92 +44,198 @@ class FinderActionBar(QWidget):
         self.search_input.setText(text)
 
     def _build_ui(self) -> None:
-        layout = QHBoxLayout(self)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        self.processing_scroll = QScrollArea()
+        self.processing_scroll.setWidgetResizable(True)
+        self.processing_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        body = QWidget()
+        body.setObjectName("processingBody")
+        layout = QVBoxLayout(body)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-
-        self.smooth_button = QPushButton("Smooth")
-        self.smooth_button.setToolTip("Smooth observed XRD curve")
-        self.smooth_button.setStyleSheet(action_button_style("#2367a5", "#5a9bd8"))
-        self.smooth_button.clicked.connect(self.smoothRequested)
-
-        self.background_button = QPushButton("Remove background")
-        self.background_button.setToolTip("Estimate and subtract background")
-        self.background_button.setStyleSheet(action_button_style("#8a5a16", "#c68a2e"))
-        self.background_button.clicked.connect(self.subtractBackgroundRequested)
-
-        self.crop_button = QPushButton("Crop XRD")
-        self.crop_button.setToolTip("Set displayed 2theta range for one or more XRD patterns")
-        self.crop_button.setStyleSheet(action_button_style("#3f5f82", "#7296bd"))
-        self.crop_button.clicked.connect(self.cropRequested)
-
-        reset_data_button = QPushButton("Reset data")
-        reset_data_button.setAutoDefault(False)
-        reset_data_button.setDefault(False)
-        reset_data_button.setToolTip("Restore the original observed pattern")
-        reset_data_button.setStyleSheet(action_button_style("#6f45a3", "#9972ca"))
-        reset_data_button.clicked.connect(self.resetDataRequested)
-
-        self.auto_search_button = QPushButton("Auto search")
-        self.auto_search_button.setAutoDefault(False)
-        self.auto_search_button.setToolTip(
-            "Find and rank phase candidates from the active XRD pattern.\n"
-            "Selected elements are used as composition constraints."
+        self.processing_scroll.setWidget(body)
+        root_layout.addWidget(self.processing_scroll)
+        self.setStyleSheet(
+            """
+            QWidget#processingBody {
+                background: #24282d;
+            }
+            QWidget#viewSection {
+                background: #20252b;
+                border: 1px solid #3d4651;
+                border-radius: 4px;
+            }
+            QToolButton#viewSectionHeader {
+                background: #4a4f55;
+                color: #eef2f7;
+                border: 0;
+                border-top-left-radius: 3px;
+                border-top-right-radius: 3px;
+                padding: 5px 8px;
+                font-weight: 700;
+                text-align: left;
+            }
+            QWidget#viewSectionContent {
+                background: #20252b;
+                padding: 6px;
+            }
+            QLabel#processingPlaceholder {
+                color: #9aa4af;
+                padding: 8px;
+            }
+            """
         )
-        self.auto_search_button.setStyleSheet(action_button_style("#00695c", "#26a69a"))
-        self.auto_search_button.clicked.connect(self.autoSearchRequested)
-        reset_button = QPushButton("Reset view")
-        reset_button.setAutoDefault(False)
-        reset_button.setToolTip("Show the full XRD range and reset plot zoom")
-        reset_button.setStyleSheet(action_button_style("#5f6368", "#8a8d91"))
-        reset_button.clicked.connect(self.resetViewRequested)
 
-        self.pattern_display_mode.addItems(["One", "All selected"])
-        self.pattern_display_mode.setToolTip(
-            "One: show only the active XRD pattern.\n"
-            "All selected: show all checked XRD patterns from the project tree."
+        self.instrument_profile_combo.setMinimumContentsLength(12)
+        self.instrument_profile_combo.setMinimumWidth(120)
+        self.instrument_profile_combo.setMaximumWidth(170)
+        self.instrument_profile_combo.setToolTip("Instrument and radiation profile used for calculated patterns")
+        self.instrument_profile_combo.currentIndexChanged.connect(self._emit_instrument_profile)
+        self.instrument_profile_edit_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
         )
-        self.pattern_display_mode.currentTextChanged.connect(self.patternDisplayModeChanged)
+        self.instrument_profile_edit_button.setToolTip("Edit instrument profile")
+        self.instrument_profile_edit_button.clicked.connect(self.instrumentProfileEditRequested)
 
-        self.pattern_offset_slider.setOrientation(Qt.Orientation.Horizontal)
-        self.pattern_offset_slider.setRange(0, 150)
-        self.pattern_offset_slider.setValue(10)
-        self.pattern_offset_slider.setFixedWidth(150)
-        self.pattern_offset_slider.setToolTip(
-            "Vertical offset between selected XRD patterns.\n"
-            "The value is a percent of the previous pattern height."
+        instrument_row = QHBoxLayout()
+        instrument_row.setContentsMargins(0, 0, 0, 0)
+        instrument_row.setSpacing(6)
+        instrument_row.addWidget(QLabel("Active instrument profile"))
+        instrument_row.addWidget(self.instrument_profile_combo, 1)
+        instrument_row.addWidget(self.instrument_profile_edit_button)
+
+        self.smooth_button = self._add_preprocessing_section(
+            layout,
+            "smooth",
+            "Smoothing",
+            "Select an active XRD pattern, then expand this section to configure smoothing.",
         )
-        self.pattern_offset_value.setMinimumWidth(38)
-        self.pattern_offset_value.setText("10%")
-        self.pattern_offset_slider.valueChanged.connect(self._set_offset_value)
-        self.pattern_offset_slider.valueChanged.connect(self.patternOffsetPercentChanged)
-        self.normalize_patterns_checkbox.setToolTip("Normalize observed XRD patterns to Imax = 100 for display and phase search.")
-        self.normalize_patterns_checkbox.toggled.connect(self.normalizePatternsChanged)
-
-        layout.addWidget(self.smooth_button)
-        layout.addWidget(self.background_button)
-        layout.addWidget(self.crop_button)
-        layout.addWidget(reset_data_button)
-        layout.addWidget(self.auto_search_button)
-        layout.addWidget(QLabel("Show"))
-        layout.addWidget(self.pattern_display_mode)
-        layout.addWidget(QLabel("Offset"))
-        layout.addWidget(self.pattern_offset_slider)
-        layout.addWidget(self.pattern_offset_value)
-        layout.addWidget(self.normalize_patterns_checkbox)
+        self.background_button = self._add_preprocessing_section(
+            layout,
+            "background",
+            "Background",
+            "Select an active XRD pattern, then expand this section to estimate background.",
+        )
+        self.crop_button = self._add_preprocessing_section(
+            layout,
+            "xrd_crop",
+            "Crop XRD",
+            "Select imported XRD patterns, then expand this section to edit crop ranges.",
+        )
+        layout.addWidget(self._section_from_layout("Instrument and radiation", instrument_row))
         layout.addStretch(1)
 
         self.search_input.setPlaceholderText("Formula / elements / phase name")
         self.search_input.returnPressed.connect(self.searchRequested)
         self.search_input.hide()
-        layout.addWidget(reset_button)
 
-    def offset_percent(self) -> int:
-        return self.pattern_offset_slider.value()
+    def preprocessing_panel_host(self, key: str) -> QWidget | None:
+        return self._preprocessing_hosts.get(str(key))
 
-    def set_auto_search_busy(self, busy: bool) -> None:
-        self.auto_search_button.setEnabled(not busy)
-        self.auto_search_button.setText("Searching..." if busy else "Auto search")
+    def show_preprocessing_panel(self, key: str, panel: QWidget, title: str) -> None:
+        self.close_preprocessing_panel()
+        self._current_preprocessing_key = str(key)
+        self._current_preprocessing_panel = panel
+        host = self._preprocessing_hosts.get(str(key))
+        host_layout = self._preprocessing_host_layouts.get(str(key))
+        placeholder = self._preprocessing_placeholders.get(str(key))
+        section = self._preprocessing_sections.get(str(key))
+        if host is None or host_layout is None:
+            return
+        if section is not None and not section.toggle.isChecked():
+            section.toggle.setChecked(True)
+            section._set_expanded(True)
+        if placeholder is not None:
+            placeholder.hide()
+        panel.setParent(host)
+        panel.setMinimumWidth(0)
+        host_layout.addWidget(panel)
+        panel.show()
 
-    def _set_offset_value(self, value: int) -> None:
-        self.pattern_offset_value.setText(f"{value}%")
+    def close_preprocessing_panel(self) -> None:
+        current_key = self._current_preprocessing_key
+        panel = self._current_preprocessing_panel
+        if panel is not None:
+            host_layout = self._preprocessing_host_layouts.get(str(current_key))
+            if host_layout is not None:
+                host_layout.removeWidget(panel)
+            panel.hide()
+            panel.deleteLater()
+        placeholder = self._preprocessing_placeholders.get(str(current_key))
+        if placeholder is not None:
+            placeholder.show()
+        section = self._preprocessing_sections.get(str(current_key))
+        if section is not None:
+            section.toggle.setChecked(False)
+            section._set_expanded(False)
+        self._current_preprocessing_key = None
+        self._current_preprocessing_panel = None
+
+    def current_preprocessing_panel(self) -> QWidget | None:
+        return self._current_preprocessing_panel
+
+    def current_preprocessing_key(self) -> str | None:
+        return self._current_preprocessing_key
+
+    def set_instrument_profiles(self, profiles: list[tuple[str, str]], active_id: str = "") -> None:
+        self.instrument_profile_combo.blockSignals(True)
+        try:
+            self.instrument_profile_combo.clear()
+            for profile_id, name in profiles:
+                self.instrument_profile_combo.addItem(name, profile_id)
+            index = self.instrument_profile_combo.findData(active_id)
+            self.instrument_profile_combo.setCurrentIndex(index if index >= 0 else 0)
+        finally:
+            self.instrument_profile_combo.blockSignals(False)
+
+    def current_instrument_profile_id(self) -> str:
+        return str(self.instrument_profile_combo.currentData() or "")
+
+    def _emit_instrument_profile(self, _index: int) -> None:
+        profile_id = self.current_instrument_profile_id()
+        if profile_id:
+            self.instrumentProfileSelected.emit(profile_id)
+
+    def _add_preprocessing_section(
+        self,
+        layout: QVBoxLayout,
+        key: str,
+        title: str,
+        placeholder_text: str,
+    ) -> QToolButton:
+        host = QWidget()
+        host_layout = QVBoxLayout(host)
+        host_layout.setContentsMargins(8, 8, 8, 8)
+        host_layout.setSpacing(8)
+        placeholder = QLabel(placeholder_text)
+        placeholder.setObjectName("processingPlaceholder")
+        placeholder.setWordWrap(True)
+        host_layout.addWidget(placeholder)
+        section = CollapsibleSection(title, host, expanded=False)
+        section.toggle.clicked.connect(lambda checked, item_key=key: self._preprocessing_section_toggled(item_key, checked))
+        self._preprocessing_hosts[key] = host
+        self._preprocessing_host_layouts[key] = host_layout
+        self._preprocessing_placeholders[key] = placeholder
+        self._preprocessing_sections[key] = section
+        layout.addWidget(section)
+        return section.toggle
+
+    def _section_from_layout(self, title: str, source_layout: QHBoxLayout) -> CollapsibleSection:
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(8, 8, 8, 8)
+        content_layout.setSpacing(8)
+        content_layout.addLayout(source_layout)
+        return CollapsibleSection(title, content, expanded=False)
+
+    def _preprocessing_section_toggled(self, key: str, checked: bool) -> None:
+        if not checked:
+            return
+        if key == "smooth":
+            self.smoothRequested.emit()
+        elif key == "background":
+            self.subtractBackgroundRequested.emit()
+        elif key == "xrd_crop":
+            self.cropRequested.emit()

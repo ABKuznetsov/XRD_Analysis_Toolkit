@@ -254,6 +254,10 @@ class PhaseFinderProjectTreeActionsMixin:
     def _on_project_tree_selection_changed(self) -> None:
         if not hasattr(self, "match_plot"):
             return
+        if hasattr(self, "_ensure_active_instrument_profile"):
+            self._ensure_active_instrument_profile()
+        if hasattr(self, "_refresh_instrument_profile_selector"):
+            self._refresh_instrument_profile_selector()
         if hasattr(self, "_activate_current_profile_state"):
             self._activate_current_profile_state()
         self._clear_probability_caches()

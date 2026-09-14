@@ -288,13 +288,15 @@ if errorlevel 1 (
 exit /b 0
 
 :write_requirements
-> "%REQ_FILE%" echo gemmi
+> "%REQ_FILE%" echo certifi
+>> "%REQ_FILE%" echo cristma==0.1.0b9
+>> "%REQ_FILE%" echo gemmi
 >> "%REQ_FILE%" echo numpy
 >> "%REQ_FILE%" echo pybaselines
->> "%REQ_FILE%" echo pyqtgraph
+>> "%REQ_FILE%" echo pyqtgraph==0.14.0
 >> "%REQ_FILE%" echo PySide6==6.7.3
+>> "%REQ_FILE%" echo rfc8785==0.1.4
 >> "%REQ_FILE%" echo scipy
->> "%REQ_FILE%" echo certifi
 >> "%REQ_FILE%" echo pandas^>=2,^<3
 >> "%REQ_FILE%" echo mp-api
 >> "%REQ_FILE%" echo pymatgen
@@ -323,7 +325,7 @@ exit /b 0
 :describe
 echo XRD Phase Finder standalone runtime repair %SCRIPT_VERSION%
 echo SCI_ENV=%%LocalAppData%%\Sci\env
-echo MANDATORY=gemmi numpy pybaselines pyqtgraph PySide6==6.7.3 scipy certifi pandas^>=2,^<3 mp-api pymatgen
+echo MANDATORY=certifi cristma==0.1.0b9 gemmi numpy pybaselines pyqtgraph==0.14.0 PySide6==6.7.3 rfc8785==0.1.4 scipy pandas^>=2,^<3 mp-api pymatgen
 echo MAX_REPAIR_ATTEMPTS=%MAX_REPAIR_ATTEMPTS%
 echo LOCK=%%LocalAppData%%\Sci\locks\xrd_runtime_repair.lock
 echo COMPLETE=%%LocalAppData%%\Sci\runtime_complete.flag
@@ -367,6 +369,7 @@ from pathlib import Path
 
 MODULES = {
     "certifi": "certifi",
+    "cristma": "cristma",
     "gemmi": "gemmi",
     "mp-api": "mp_api",
     "numpy": "numpy",
@@ -375,6 +378,7 @@ MODULES = {
     "pymatgen": "pymatgen",
     "pyqtgraph": "pyqtgraph",
     "PySide6": "PySide6",
+    "rfc8785": "rfc8785",
     "scipy": "scipy",
 }
 
@@ -432,6 +436,15 @@ def validate(requirements_path: Path) -> list[str]:
                 f"{package_name} import failed: {type(exc).__name__}: {exc}"
             )
 
+    if "cristma" not in missing:
+        try:
+            from cristma.diffraction import PowderPatternCalculator  # noqa: F401
+        except Exception as exc:
+            failures.append(
+                "CrIStMa powder API import failed: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
     if not failures:
         try:
             import numpy as np
@@ -459,6 +472,7 @@ def validate(requirements_path: Path) -> list[str]:
 
 def self_test() -> int:
     sample = [
+        "cristma==0.1.0b9",
         "gemmi",
         "PySide6==6.7.3",
         "pandas>=2,<3",
@@ -472,7 +486,7 @@ def self_test() -> int:
             print(f"VALIDATOR_SELF_TEST_FAILED: could not parse {line!r}")
             return 1
         names.append(normalized(match.group(1)))
-    expected = ["gemmi", "pyside6", "pandas", "mp-api", "pymatgen"]
+    expected = ["cristma", "gemmi", "pyside6", "pandas", "mp-api", "pymatgen"]
     if names != expected:
         print(f"VALIDATOR_SELF_TEST_FAILED: {names!r}")
         return 1

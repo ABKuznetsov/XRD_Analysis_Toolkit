@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1088" height="820" viewBox="0 0 1088 820">
+<rect width="100%" height="100%" fill="white"/>
+<text x="24" y="35" font-family="Arial, sans-serif" font-size="29" font-weight="700" fill="#276fbf" text-anchor="start" dominant-baseline="middle">Experimental evidence</text>
+<text x="394" y="35" font-family="Arial, sans-serif" font-size="29" font-weight="700" fill="#2f7d5a" text-anchor="start" dominant-baseline="middle">Candidate generation</text>
+<text x="764" y="35" font-family="Arial, sans-serif" font-size="29" font-weight="700" fill="#b23a3a" text-anchor="start" dominant-baseline="middle">Iterative interpretation</text>
+<rect x="24" y="78" width="300" height="130" rx="7" fill="#eaf2fb" stroke="#276fbf" stroke-width="1.1"/>
+<text x="174.0" y="119.6" font-family="Arial, sans-serif" font-size="27" font-weight="700" fill="#20252b" text-anchor="middle" dominant-baseline="middle">Experimental PXRD</text>
+<text x="174.0" y="171.6" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">2theta and intensity</text>
+<rect x="24" y="300" width="300" height="130" rx="7" fill="#ffffff" stroke="#276fbf" stroke-width="1.1"/>
+<text x="174.0" y="341.6" font-family="Arial, sans-serif" font-size="27" font-weight="700" fill="#20252b" text-anchor="middle" dominant-baseline="middle">Preprocessing</text>
+<text x="174.0" y="379.1" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">smoothing • background</text>
+<text x="174.0" y="408.1" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">active range</text>
+<rect x="24" y="522" width="300" height="130" rx="7" fill="#eaf2fb" stroke="#276fbf" stroke-width="1.1"/>
+<text x="174.0" y="563.6" font-family="Arial, sans-serif" font-size="27" font-weight="700" fill="#20252b" text-anchor="middle" dominant-baseline="middle">Experimental lines</text>
+<text x="174.0" y="601.1" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">position • area</text>
+<text x="174.0" y="630.1" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">individual FWHM</text>
+<polyline points="174,208 174,300" fill="none" stroke="#276fbf" stroke-width="2.0"/>
+<polygon points="174,300 170.8,293.0 177.2,293.0" fill="#276fbf"/>
+<polyline points="174,430 174,522" fill="none" stroke="#276fbf" stroke-width="2.0"/>
+<polygon points="174,522 170.8,515.0 177.2,515.0" fill="#276fbf"/>
+<rect x="394" y="78" width="300" height="130" rx="7" fill="#eaf5ef" stroke="#2f7d5a" stroke-width="1.1"/>
+<text x="544.0" y="119.6" font-family="Arial, sans-serif" font-size="27" font-weight="700" fill="#20252b" text-anchor="middle" dominant-baseline="middle">Sources + user CIF</text>
+<text x="544.0" y="157.1" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">COD • MP • AFLOW</text>
+<text x="544.0" y="186.1" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">OQMD • RRUFF</text>
+<rect x="394" y="300" width="300" height="130" rx="7" fill="#ffffff" stroke="#2f7d5a" stroke-width="1.1"/>
+<text x="544.0" y="341.6" font-family="Arial, sans-serif" font-size="27" font-weight="700" fill="#20252b" text-anchor="middle" dominant-baseline="middle">Indexed cache</text>
+<text x="544.0" y="379.1" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">metadata • chemistry</text>
+<text x="544.0" y="408.1" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">reflection lists</text>
+<rect x="394" y="522" width="300" height="130" rx="7" fill="#eaf5ef" stroke="#2f7d5a" stroke-width="1.1"/>
+<text x="544.0" y="563.6" font-family="Arial, sans-serif" font-size="27" font-weight="700" fill="#20252b" text-anchor="middle" dominant-baseline="middle">Candidate patterns</text>
+<text x="544.0" y="601.1" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">calculated profiles</text>
+<text x="544.0" y="630.1" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">or reference lines</text>
+<polyline points="544,208 544,300" fill="none" stroke="#2f7d5a" stroke-width="2.0"/>
+<polygon points="544,300 540.8,293.0 547.2,293.0" fill="#2f7d5a"/>
+<polyline points="544,430 544,522" fill="none" stroke="#2f7d5a" stroke-width="2.0"/>
+<polygon points="544,522 540.8,515.0 547.2,515.0" fill="#2f7d5a"/>
+<polyline points="324,587 394,587" fill="none" stroke="#626b73" stroke-width="2.0"/>
+<polygon points="394,587 387.0,590.2 387.0,583.8" fill="#626b73"/>
+<rect x="764" y="78" width="300" height="130" rx="7" fill="#faeeee" stroke="#b23a3a" stroke-width="1.1"/>
+<text x="914.0" y="119.6" font-family="Arial, sans-serif" font-size="27" font-weight="700" fill="#20252b" text-anchor="middle" dominant-baseline="middle">Match ranking</text>
+<text x="914.0" y="171.6" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">global agreement</text>
+<rect x="764" y="260" width="300" height="130" rx="7" fill="#ffffff" stroke="#b23a3a" stroke-width="1.1"/>
+<text x="914.0" y="301.6" font-family="Arial, sans-serif" font-size="27" font-weight="700" fill="#20252b" text-anchor="middle" dominant-baseline="middle">Selected phases</text>
+<text x="914.0" y="339.1" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">explained peaks</text>
+<text x="914.0" y="368.1" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">and fitted profiles</text>
+<rect x="764" y="442" width="300" height="130" rx="7" fill="#faeeee" stroke="#b23a3a" stroke-width="1.1"/>
+<text x="914.0" y="483.6" font-family="Arial, sans-serif" font-size="27" font-weight="700" fill="#20252b" text-anchor="middle" dominant-baseline="middle">Staged Gain ranking</text>
+<text x="914.0" y="521.1" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">direct • overlap</text>
+<text x="914.0" y="550.1" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">hidden evidence</text>
+<rect x="764" y="624" width="300" height="130" rx="7" fill="#ffffff" stroke="#b23a3a" stroke-width="1.1"/>
+<text x="914.0" y="665.6" font-family="Arial, sans-serif" font-size="27" font-weight="700" fill="#20252b" text-anchor="middle" dominant-baseline="middle">Phase hypothesis</text>
+<text x="914.0" y="703.1" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">inspect • save • export</text>
+<text x="914.0" y="732.1" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="middle" dominant-baseline="middle">revise the phase set</text>
+<polyline points="694,587 714,587 714,143" fill="none" stroke="#626b73" stroke-width="2.0"/>
+<polyline points="714,143 764,143" fill="none" stroke="#626b73" stroke-width="2.0"/>
+<polygon points="764,143 757.0,146.2 757.0,139.8" fill="#626b73"/>
+<polyline points="914,208 914,260" fill="none" stroke="#b23a3a" stroke-width="2.0"/>
+<polygon points="914,260 910.8,253.0 917.2,253.0" fill="#b23a3a"/>
+<polyline points="914,390 914,442" fill="none" stroke="#b23a3a" stroke-width="2.0"/>
+<polygon points="914,442 910.8,435.0 917.2,435.0" fill="#b23a3a"/>
+<polyline points="914,572 914,624" fill="none" stroke="#b23a3a" stroke-width="2.0"/>
+<polygon points="914,624 910.8,617.0 917.2,617.0" fill="#b23a3a"/>
+<polyline points="764,507 744,507 744,325" fill="none" stroke="#b23a3a" stroke-width="2.0"/>
+<polyline points="744,325 764,325" fill="none" stroke="#b23a3a" stroke-width="2.0"/>
+<polygon points="764,325 757.0,328.2 757.0,321.8" fill="#b23a3a"/>
+<text x="732" y="416" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#b23a3a" text-anchor="middle" dominant-baseline="middle" transform="rotate(-90 732 416)">add phase</text>
+<text x="24" y="790" font-family="Arial, sans-serif" font-size="26" font-weight="400" fill="#626b73" text-anchor="start" dominant-baseline="middle">Candidates are proposed; preprocessing and phase acceptance remain under user control.</text>
+</svg>

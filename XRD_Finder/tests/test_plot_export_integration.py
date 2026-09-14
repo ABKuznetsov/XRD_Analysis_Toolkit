@@ -110,6 +110,16 @@ class PlotExportIntegrationTests(unittest.TestCase):
         self.assertEqual(image.size(), host.match_plot.size())
         host.close()
 
+    def test_new_profile_state_shows_calculated_phase_layers_by_default(self):
+        host = object.__new__(PhaseFinderPlotActionsMixin)
+        host.profile_states = {}
+
+        state = host._ensure_multi_profile_layer_defaults("pattern-1")
+
+        self.assertTrue(state["layer_total_profile_visible"])
+        self.assertTrue(state["layer_phase_profiles_visible"])
+        self.assertTrue(state["layer_phase_ticks_visible"])
+
 
 if __name__ == "__main__":
     unittest.main()

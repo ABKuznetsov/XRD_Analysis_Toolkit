@@ -1,16 +1,24 @@
 from __future__ import annotations
 
 import json
+import ssl
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 import re
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 from xrd_finder.services.network import create_ssl_context
 
 
-COD_SEARCH_URL = "https://www.crystallography.net/cod/result"
-COD_ENTRY_URL = "https://www.crystallography.net/cod/{cod_id}.cif"
+COD_BASE_URLS = (
+    "https://www.crystallography.net/cod",
+    "https://cod.ibt.lt/cod",
+)
+COD_SEARCH_URL = f"{COD_BASE_URLS[0]}/result"
+COD_ENTRY_URL = f"{COD_BASE_URLS[0]}/{{cod_id}}.cif"
+COD_USER_AGENT = "XRD-Phase-Finder/1.5"
 
 
 @dataclass(slots=True)
@@ -24,8 +32,15 @@ class CodEntry:
 
 
 class CodOnlineService:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        status_callback: Callable[[str], None] | None = None,
+        alert_callback: Callable[[str], None] | None = None,
+    ) -> None:
         self._ssl_context = self._create_ssl_context()
+        self._status_callback = status_callback
+        self._alert_callback = alert_callback
+        self._active_base_url = COD_BASE_URLS[0]
 
     def search_text(self, query: str, limit: int = 100, timeout: float = 15.0) -> list[CodEntry]:
         if not query.strip():
@@ -68,7 +83,7 @@ class CodOnlineService:
         return entries[:limit]
 
     def cif_url(self, cod_id: str) -> str:
-        return COD_ENTRY_URL.format(cod_id=cod_id)
+        return f"{self._active_base_url}/{cod_id}.cif"
 
     def download_cif(self, cod_id: str, target_dir: str | Path, timeout: float = 20.0) -> Path:
         target = Path(target_dir)
@@ -76,18 +91,72 @@ class CodOnlineService:
         output_path = target / f"{cod_id}.cif"
         if output_path.exists() and output_path.stat().st_size > 0:
             return output_path
-        with urlopen(self.cif_url(cod_id), timeout=timeout, context=self._ssl_context) as response:
-            output_path.write_bytes(response.read())
+        output_path.write_bytes(self._request_bytes(f"/{cod_id}.cif", timeout=timeout))
         return output_path
 
     def _search(self, params: dict[str, str], limit: int, timeout: float) -> list[CodEntry]:
-        url = f"{COD_SEARCH_URL}?{urlencode(params)}"
-        with urlopen(url, timeout=timeout, context=self._ssl_context) as response:
-            payload = response.read().decode("utf-8", errors="replace")
+        payload = self._request_bytes(
+            f"/result?{urlencode(params)}",
+            timeout=timeout,
+        ).decode("utf-8", errors="replace")
         raw_entries = json.loads(payload)
         if isinstance(raw_entries, dict):
             raw_entries = raw_entries.get("entries", [])
         return [self._to_entry(item) for item in raw_entries[:limit]]
+
+    def _request_bytes(self, path: str, *, timeout: float) -> bytes:
+        bases = [self._active_base_url]
+        bases.extend(base for base in COD_BASE_URLS if base not in bases)
+        last_error: Exception | None = None
+
+        for index, base_url in enumerate(bases):
+            request = Request(
+                f"{base_url}{path}",
+                headers={"User-Agent": COD_USER_AGENT, "Accept": "application/json, */*"},
+            )
+            try:
+                with urlopen(request, timeout=timeout, context=self._ssl_context) as response:
+                    payload = response.read()
+            except (URLError, TimeoutError, ssl.SSLError, OSError) as exc:
+                last_error = exc
+                if index + 1 < len(bases):
+                    next_host = bases[index + 1].split("//", 1)[-1].split("/", 1)[0]
+                    if base_url == COD_BASE_URLS[0]:
+                        self._emit_alert(
+                            f"Primary COD server is unavailable. Trying mirror {next_host}."
+                        )
+                    else:
+                        self._emit_status(f"COD: {next_host} unavailable; trying another server...")
+                continue
+
+            if base_url != COD_BASE_URLS[0] and self._active_base_url != base_url:
+                mirror_host = base_url.split("//", 1)[-1].split("/", 1)[0]
+                self._emit_status(f"COD: connected through mirror {mirror_host}")
+            self._active_base_url = base_url
+            return payload
+
+        if last_error is not None:
+            self._emit_alert(
+                "COD servers are unavailable. Showing local results only."
+            )
+            raise last_error
+        raise RuntimeError("No COD servers are configured.")
+
+    def _emit_status(self, message: str) -> None:
+        if self._status_callback is None:
+            return
+        try:
+            self._status_callback(message)
+        except Exception:
+            pass
+
+    def _emit_alert(self, message: str) -> None:
+        if self._alert_callback is None:
+            return
+        try:
+            self._alert_callback(message)
+        except Exception:
+            pass
 
     def _to_entry(self, item: dict) -> CodEntry:
         cod_id = str(item.get("file") or item.get("cod_id") or item.get("id") or "")

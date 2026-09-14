@@ -5,9 +5,9 @@ import math
 import pyqtgraph as pg
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QSizePolicy, QWidget
+from PySide6.QtWidgets import QDialog, QSizePolicy, QVBoxLayout, QWidget
 
-from xrd_finder.ui.plot_view_settings import PlotViewSettings, PlotViewSettingsWidget, plot_style_from_view_settings
+from xrd_finder.ui.plot_view_settings import PLOT_ASPECTS, PlotViewSettings, PlotViewSettingsWidget, plot_style_from_view_settings
 from xrd_finder.ui.plot_layer_items import sync_plot_export_tags
 from xrd_finder.ui.styled_grid_item import StyledGridItem
 
@@ -65,6 +65,22 @@ class PhaseFinderPlotViewActionsMixin:
         QTimer.singleShot(0, self._update_profile_view_context)
         return self.plot_settings_panel
 
+    def _show_plot_view_settings_window(self) -> None:
+        dialog = getattr(self, "_plot_view_settings_dialog", None)
+        if dialog is None:
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Plot appearance")
+            dialog.setMinimumSize(680, 620)
+            dialog.resize(780, 720)
+            layout = QVBoxLayout(dialog)
+            layout.setContentsMargins(8, 8, 8, 8)
+            layout.addWidget(self._plot_view_tab())
+            self._plot_view_settings_dialog = dialog
+        self._update_profile_view_context()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
     def _active_profile_label_text(self) -> str:
         pattern = self._active_pattern() if hasattr(self, "_active_pattern") else None
         checked = self.tree.checked_pattern_ids() if hasattr(self, "tree") else []
@@ -85,6 +101,53 @@ class PhaseFinderPlotViewActionsMixin:
             panel.set_profile_candidates(list(getattr(self, "match_candidates", [])))
         if hasattr(self, "_sync_profile_layer_controls_to_active"):
             self._sync_profile_layer_controls_to_active()
+
+    def _set_plot_aspect_mode(self, mode: str) -> None:
+        if mode == "Custom":
+            height = max(float(self.plot_view_settings.custom_aspect_height), 0.1)
+            aspect = max(float(self.plot_view_settings.custom_aspect_width), 0.1) / height
+        else:
+            aspect = PLOT_ASPECTS.get(mode)
+        self.plot_view_settings.aspect_ratio = aspect
+        panel = getattr(self, "plot_settings_panel", None)
+        aspect_combo = getattr(panel, "aspect_combo", None)
+        if aspect_combo is not None and aspect_combo.currentText() != mode:
+            signals_were_blocked = aspect_combo.blockSignals(True)
+            try:
+                aspect_combo.setCurrentText(mode)
+            finally:
+                aspect_combo.blockSignals(signals_were_blocked)
+        self._apply_plot_view_aspect()
+        if hasattr(self, "project"):
+            self.project.touch()
+        if hasattr(self, "project_changed"):
+            self.project_changed.emit()
+
+    def _sync_plot_aspect_control(self, settings: PlotViewSettings) -> None:
+        control_bar = getattr(self, "finder_plot_control_bar", None)
+        combo = getattr(control_bar, "plot_aspect_mode", None)
+        if combo is None:
+            return
+        mode = "Custom"
+        for name, aspect in PLOT_ASPECTS.items():
+            if name == "Custom":
+                continue
+            if aspect is None and settings.aspect_ratio is None:
+                mode = name
+                break
+            if aspect is not None and settings.aspect_ratio is not None and math.isclose(
+                float(aspect),
+                float(settings.aspect_ratio),
+                rel_tol=0.0,
+                abs_tol=1.0e-9,
+            ):
+                mode = name
+                break
+        signals_were_blocked = combo.blockSignals(True)
+        try:
+            combo.setCurrentText(mode)
+        finally:
+            combo.blockSignals(signals_were_blocked)
 
     def _apply_plot_view_settings(self, settings: PlotViewSettings) -> None:
         previous_settings = getattr(self, "plot_view_settings", None)
@@ -141,6 +204,7 @@ class PhaseFinderPlotViewActionsMixin:
                 ):
                     setattr(settings, field, getattr(previous_settings, field))
         self.plot_view_settings = settings
+        self._sync_plot_aspect_control(settings)
         self.plot_style = plot_style_from_view_settings(settings)
         self.plot_marker_size = self.plot_style.marker.size
         if quick_only:

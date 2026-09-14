@@ -48,6 +48,9 @@ def prepare_structure_overlay(
     observed_peak_positions: Callable[..., np.ndarray],
     estimate_profile_fwhm: Callable[..., float],
     estimate_phase_alignment: Callable[..., PhaseAlignmentEstimate],
+    wavelength: float | None = None,
+    include_kalpha2: bool = True,
+    profile_fwhm_override: float | None = None,
 ) -> StructureOverlayData:
     x_grid = None
     observed_ymax = None
@@ -72,17 +75,27 @@ def prepare_structure_overlay(
         x_grid = np.linspace(5.0, 120.0, 5000)
     if background is None:
         background = np.zeros_like(x_grid)
+    if profile_fwhm_override is not None:
+        profile_fwhm = float(profile_fwhm_override)
 
     x, y, peaks = calculate_profile_for_structure(
         calculated_pattern_service,
         structure,
         x_grid,
         fwhm=profile_fwhm,
+        wavelength=wavelength,
+        include_kalpha2=include_kalpha2,
     )
     alignment = estimate_phase_alignment(peaks, peak_positions, structure)
     peaks = shifted_peaks(peaks, alignment.zero_shift)
-    wavelength = getattr(structure, "wavelength", None) or CU_KA1_WAVELENGTH
-    x, y = calculated_profile_from_peaks(peaks, x_grid, fwhm=profile_fwhm, wavelength=wavelength)
+    effective_wavelength = wavelength or getattr(structure, "wavelength", None) or CU_KA1_WAVELENGTH
+    x, y = calculated_profile_from_peaks(
+        peaks,
+        x_grid,
+        fwhm=profile_fwhm,
+        wavelength=effective_wavelength,
+        include_kalpha2=include_kalpha2,
+    )
     if observed_ymax is not None:
         baseline = float(np.nanpercentile(background, 50))
         y = scale_profile_to_reference(y, max(observed_ymax - baseline, 1.0))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from xrd_finder.core.base import ProjectObject, new_id
 
@@ -11,6 +12,7 @@ class Pattern(ProjectObject):
     x_unit: str = "2theta"
     y_unit: str = "intensity"
     wavelength: float | None = None
+    instrument_profile: dict[str, Any] = field(default_factory=dict)
     linked_phase_ids: list[str] = field(default_factory=list)
     processed_points: list[list[float]] = field(default_factory=list)
     processed_label: str = ""

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import QColor
@@ -10,6 +11,13 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateTableContext:
+    candidate_key: tuple[str, str] | None
+    horizontal_scroll: int
+    vertical_scroll: int
 
 
 class CandidateTableWidget(QTableWidget):
@@ -56,7 +64,11 @@ class CandidateTableWidget(QTableWidget):
         self,
         rows: list[list[str]],
         normalize_row: Callable[[list[str]], list[str]],
+        *,
+        preserve_context: bool = True,
+        select_first_if_missing: bool = False,
     ) -> None:
+        context = self.capture_context() if preserve_context else None
         previous_block_state = self.blockSignals(True)
         self.setUpdatesEnabled(False)
         self.setSortingEnabled(False)
@@ -70,10 +82,60 @@ class CandidateTableWidget(QTableWidget):
                     self.setItem(row_index, col_index, QTableWidgetItem(value))
             self._apply_score_arrows()
             self._resize_columns()
+            if context is not None:
+                self.restore_context(
+                    context,
+                    select_first_if_missing=select_first_if_missing,
+                )
+            elif select_first_if_missing and self.rowCount() > 0:
+                self.setCurrentCell(0, 0)
+                self.selectRow(0)
         finally:
             self.blockSignals(previous_block_state)
             self.setUpdatesEnabled(True)
         self.viewport().update()
+
+    def capture_context(self) -> CandidateTableContext:
+        values = self.selected_row_values()
+        candidate_key = None
+        if values:
+            source = values.get("Source", "").strip().upper()
+            entry_id = values.get("Entry", "").strip()
+            if source and entry_id:
+                candidate_key = source, entry_id
+        return CandidateTableContext(
+            candidate_key=candidate_key,
+            horizontal_scroll=self.horizontalScrollBar().value(),
+            vertical_scroll=self.verticalScrollBar().value(),
+        )
+
+    def restore_context(
+        self,
+        context: CandidateTableContext,
+        *,
+        select_first_if_missing: bool = False,
+    ) -> None:
+        selected_row = self._row_for_candidate_key(context.candidate_key)
+        if selected_row < 0 and select_first_if_missing and self.rowCount() > 0:
+            selected_row = 0
+        if selected_row >= 0:
+            self.setCurrentCell(selected_row, 0)
+            self.selectRow(selected_row)
+        self.horizontalScrollBar().setValue(context.horizontal_scroll)
+        self.verticalScrollBar().setValue(context.vertical_scroll)
+
+    def _row_for_candidate_key(self, candidate_key: tuple[str, str] | None) -> int:
+        if candidate_key is None:
+            return -1
+        for row in range(self.rowCount()):
+            values = self.row_values(row)
+            key = (
+                values.get("Source", "").strip().upper(),
+                values.get("Entry", "").strip(),
+            )
+            if key == candidate_key:
+                return row
+        return -1
 
     def row_values(self, row: int) -> dict[str, str]:
         if row < 0 or row >= self.rowCount():
@@ -301,7 +363,7 @@ class SelectedCandidatesTableWidget(QTableWidget):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        self.setColumnWidth(0, 82)
-        self.setColumnWidth(2, 96)
-        self.setColumnWidth(3, 92)
-        self.setColumnWidth(4, 72)
+        self.setColumnWidth(0, 56)
+        self.setColumnWidth(2, 86)
+        self.setColumnWidth(3, 76)
+        self.setColumnWidth(4, 54)

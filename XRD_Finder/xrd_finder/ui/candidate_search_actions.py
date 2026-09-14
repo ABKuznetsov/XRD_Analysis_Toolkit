@@ -5,9 +5,119 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog
 
 from xrd_finder.services.candidate_search_service import CandidateSearchOptions
 from xrd_finder.services.cod_online_service import formula_elements
+from xrd_finder.ui.candidate_batch_updates import CandidateBatchUpdateController
 
 
 class PhaseFinderCandidateSearchActionsMixin:
+    def _rerank_loaded_candidates_for_instrument_change(self) -> None:
+        table = getattr(self, "candidate_table", None)
+        if table is None:
+            return
+        candidates = [
+            candidate
+            for candidate in table.all_row_values()
+            if candidate.get("Source", "").strip()
+            and candidate.get("Entry", "").strip()
+        ]
+        if not candidates:
+            return
+        if getattr(self, "match_candidates", None):
+            self._schedule_candidate_gain_ranking()
+            return
+
+        rows = self._candidate_state_rows(candidates)
+        label = getattr(self, "candidate_list_label", None)
+
+        def progress(value: int, maximum: int) -> None:
+            if label is not None:
+                label.setText(f"Candidate list: Match {value}/{maximum}")
+            QApplication.processEvents()
+
+        try:
+            self._set_candidate_rows(
+                rows,
+                force_rank=True,
+                rank_progress=progress,
+            )
+        finally:
+            if label is not None:
+                label.setText("Candidate list")
+
+    def _initialize_candidate_batch_updates(self) -> None:
+        self._candidate_batch_updates = CandidateBatchUpdateController(
+            row_loader=self._load_prepared_candidate_row,
+            rows_ready=self._merge_prepared_candidate_rows,
+            status_callback=self.background_status_changed.emit,
+            title_callback=self.candidate_list_label.setText,
+            parent=self,
+        )
+        self.candidate_prepared.connect(self._candidate_batch_updates.accept_notice)
+        self.candidate_preparation_progress.connect(
+            self._candidate_batch_updates.accept_progress
+        )
+        self.cod_server_alert.connect(self._set_candidate_search_notice)
+
+    def _set_candidate_search_notice(self, message: str) -> None:
+        controller = getattr(self, "_candidate_batch_updates", None)
+        if controller is None:
+            return
+        text = str(message or "")
+        if "Primary COD server is unavailable" in text:
+            controller.set_notice("COD primary unavailable; trying mirror")
+            return
+        if "COD" in text:
+            controller.set_notice("COD server unavailable; local data shown")
+
+    def _load_prepared_candidate_row(self, source: str, entry_id: str) -> list[str] | None:
+        entry = self.local_phase_cache.get(source, entry_id)
+        if entry is None:
+            return None
+        rows = self.candidate_search_service.cache_rows([entry])
+        return rows[0] if rows else None
+
+    def _merge_prepared_candidate_rows(self, prepared_rows: list[list[str]]) -> None:
+        current_rows = []
+        for values in self.candidate_table.all_row_values():
+            if not values.get("Source", "").strip() or not values.get("Entry", "").strip():
+                continue
+            current_rows.append(
+                [
+                    values.get("Source", ""),
+                    values.get("Entry", ""),
+                    values.get("Formula", ""),
+                    values.get("Phase", ""),
+                    values.get("Sp. gr.", ""),
+                    values.get("Match (%)", ""),
+                    values.get("Gain (%)", ""),
+                    values.get("I/Ic", ""),
+                ]
+            )
+        merged = self.candidate_search_service.dedupe_candidate_rows(
+            current_rows + prepared_rows
+        )
+        self._set_candidate_rows(merged)
+
+    def _stop_candidate_batch_updates(self) -> None:
+        controller = getattr(self, "_candidate_batch_updates", None)
+        if controller is not None:
+            controller.stop()
+
+    def _record_initial_candidate_rows(self, rows: list[list[str]]) -> None:
+        controller = getattr(self, "_candidate_batch_updates", None)
+        if controller is None:
+            return
+        count = sum(
+            1
+            for row in rows
+            if len(row) > 1 and str(row[0]).strip() and str(row[1]).strip()
+        )
+        controller.set_local_rows(count)
+
+    def _finalize_candidate_search(self, search_token: int) -> None:
+        controller = getattr(self, "_candidate_batch_updates", None)
+        if controller is not None:
+            controller.mark_search_complete(search_token)
+
     def _auto_search_candidates(self) -> None:
         if self._active_pattern() is None:
             QMessageBox.information(self, "Auto search", "Import or select an XRD pattern first.")
@@ -44,7 +154,7 @@ class PhaseFinderCandidateSearchActionsMixin:
         search_token = self._prepare_candidate_database_search()
         auto_search_token = int(getattr(self, "_auto_search_token", 0)) + 1
         self._auto_search_token = auto_search_token
-        self.finder_action_bar.set_auto_search_busy(True)
+        self._set_auto_search_busy(True)
         label = " ".join(elements) if elements else "observed peak positions"
 
         def partial(result) -> None:
@@ -55,6 +165,7 @@ class PhaseFinderCandidateSearchActionsMixin:
                 return
             rows = result or []
             if rows:
+                self._record_initial_candidate_rows(rows)
                 self._set_candidate_rows(rows, skip_rank=True)
 
         def success(result) -> None:
@@ -63,9 +174,11 @@ class PhaseFinderCandidateSearchActionsMixin:
                 or auto_search_token != getattr(self, "_auto_search_token", 0)
             ):
                 return
+            self._finalize_candidate_search(search_token)
             rows = result or []
+            self._record_initial_candidate_rows(rows)
             if not rows:
-                self.finder_action_bar.set_auto_search_busy(False)
+                self._set_auto_search_busy(False)
                 self._set_candidate_rows([["", "", "", "No candidates found by automatic peak search", "", ""]])
                 return
             ranking_total = min(len(rows), 1000)
@@ -92,7 +205,7 @@ class PhaseFinderCandidateSearchActionsMixin:
                     self.candidate_table.scrollToTop()
             finally:
                 ranking_dialog.close()
-                self.finder_action_bar.set_auto_search_busy(False)
+                self._set_auto_search_busy(False)
 
         def failure(message: str, details: str) -> None:
             if (
@@ -100,7 +213,8 @@ class PhaseFinderCandidateSearchActionsMixin:
                 or auto_search_token != getattr(self, "_auto_search_token", 0)
             ):
                 return
-            self.finder_action_bar.set_auto_search_busy(False)
+            self._finalize_candidate_search(search_token)
+            self._set_auto_search_busy(False)
             QMessageBox.warning(self, "Auto search failed", message or details)
 
         self._run_background_task(
@@ -111,6 +225,7 @@ class PhaseFinderCandidateSearchActionsMixin:
                 options,
                 progress=progress,
                 partial_results=partial_results,
+                session_token=search_token,
             ),
             success,
             failure,
@@ -123,12 +238,13 @@ class PhaseFinderCandidateSearchActionsMixin:
     def _prepare_candidate_database_search(self) -> int:
         search_token = int(getattr(self, "_candidate_search_request_token", 0)) + 1
         self._candidate_search_request_token = search_token
+        controller = getattr(self, "_candidate_batch_updates", None)
+        if controller is not None:
+            controller.start_session(search_token)
         if hasattr(self, "_clear_transient_candidate_preview"):
             self._clear_transient_candidate_preview()
         if hasattr(self, "_clear_probability_caches"):
             self._clear_probability_caches()
-        if hasattr(self, "candidate_search_service"):
-            self.candidate_search_service.cancel_background_downloads()
         return search_token
 
     def _search_pdf2_text(self) -> None:
@@ -148,12 +264,15 @@ class PhaseFinderCandidateSearchActionsMixin:
                 return
             rows = result or []
             if rows:
+                self._record_initial_candidate_rows(rows)
                 self._set_candidate_rows(rows, skip_rank=True)
 
         def success(result) -> None:
             if search_token != getattr(self, "_candidate_search_request_token", 0):
                 return
+            self._finalize_candidate_search(search_token)
             rows = result or []
+            self._record_initial_candidate_rows(rows)
             if rows:
                 self._set_candidate_rows(rows)
             else:
@@ -162,6 +281,7 @@ class PhaseFinderCandidateSearchActionsMixin:
         def failure(message: str, details: str) -> None:
             if search_token != getattr(self, "_candidate_search_request_token", 0):
                 return
+            self._finalize_candidate_search(search_token)
             QMessageBox.warning(self, "Find candidates", message or details)
 
         self._run_background_task(
@@ -172,6 +292,7 @@ class PhaseFinderCandidateSearchActionsMixin:
                 options,
                 progress=progress,
                 partial_results=partial_results,
+                session_token=search_token,
             ),
             success,
             failure,
@@ -201,12 +322,15 @@ class PhaseFinderCandidateSearchActionsMixin:
                 return
             rows = result or []
             if rows:
+                self._record_initial_candidate_rows(rows)
                 self._set_candidate_rows(rows, skip_rank=True)
 
         def success(result) -> None:
             if search_token != getattr(self, "_candidate_search_request_token", 0):
                 return
+            self._finalize_candidate_search(search_token)
             rows = result or []
+            self._record_initial_candidate_rows(rows)
             if self.search_input is not None and self.formula_sum_input is not None:
                 self.search_input.setText(self.formula_sum_input.text().strip())
             if not rows:
@@ -217,6 +341,7 @@ class PhaseFinderCandidateSearchActionsMixin:
         def failure(message: str, details: str) -> None:
             if search_token != getattr(self, "_candidate_search_request_token", 0):
                 return
+            self._finalize_candidate_search(search_token)
             QMessageBox.warning(self, "Find candidates", message or details)
 
         self._run_background_task(
@@ -227,6 +352,7 @@ class PhaseFinderCandidateSearchActionsMixin:
                 options,
                 progress=progress,
                 partial_results=partial_results,
+                session_token=search_token,
             ),
             success,
             failure,

@@ -532,11 +532,22 @@ class CalculatedPatternService:
         two_theta_max = float(kwargs.pop("two_theta_max", 120.0))
         fwhm = float(kwargs.pop("fwhm", 0.12))
         eta = float(kwargs.pop("eta", 0.0))
+        include_kalpha2 = bool(kwargs.pop("include_kalpha2", True))
         wavelength = float(kwargs.get("wavelength", CU_KA1_WAVELENGTH))
-        primary_wavelength = radiation_lines_from_wavelength(wavelength, include_kalpha2=True)[0][0]
+        primary_wavelength = radiation_lines_from_wavelength(
+            wavelength,
+            include_kalpha2=include_kalpha2,
+        )[0][0]
         kwargs["wavelength"] = primary_wavelength
         peaks = calculate_hkl_sticks(structure, two_theta_min=two_theta_min, two_theta_max=two_theta_max, **kwargs)
         if x_grid is None:
             x_grid = np.linspace(two_theta_min, two_theta_max, 5000)
-        x, y = calculated_profile_from_peaks(peaks, x_grid, fwhm=fwhm, eta=eta, wavelength=wavelength)
+        x, y = calculated_profile_from_peaks(
+            peaks,
+            x_grid,
+            fwhm=fwhm,
+            eta=eta,
+            wavelength=wavelength,
+            include_kalpha2=include_kalpha2,
+        )
         return x, y, peaks

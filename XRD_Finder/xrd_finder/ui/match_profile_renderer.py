@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable
@@ -95,22 +96,78 @@ def _safe_int(value, default: int = 0) -> int:
         return int(round(float(value)))
     except Exception:
         return default
+
+
+def _store_estimated_cell_state(candidate: dict[str, object], candidate_result) -> None:
+    for key in (
+        "_EstimatedCell",
+        "_CellFitPeaks",
+        "_CellFitInitialRmsDeg",
+        "_CellFitRmsDeg",
+    ):
+        candidate.pop(key, None)
+    estimated_cell = getattr(candidate_result, "estimated_cell", None)
+    if not isinstance(estimated_cell, dict) or not estimated_cell:
+        return
+    candidate["_EstimatedCell"] = {
+        str(key): float(value)
+        for key, value in estimated_cell.items()
+        if np.isfinite(float(value))
+    }
+    candidate["_CellFitPeaks"] = int(getattr(candidate_result, "cell_fit_peaks", 0) or 0)
+    candidate["_CellFitInitialRmsDeg"] = float(
+        getattr(candidate_result, "cell_fit_initial_rms_deg", 0.0) or 0.0
+    )
+    candidate["_CellFitRmsDeg"] = float(
+        getattr(candidate_result, "cell_fit_rms_deg", 0.0) or 0.0
+    )
+
+
+@dataclass(slots=True)
+class FinderCandidateBuildResult:
+    ready: list[FinderCandidateInput]
+    candidate_by_key: dict[str, dict[str, str]]
+    needs_index: list[dict[str, str]]
+
+
 def build_finder_candidate_inputs(
     candidates: list[dict[str, str]],
     candidate_cif_path: Callable[[dict[str, str]], Path],
     candidate_key: Callable[[dict[str, str]], str],
     candidate_phase_name: Callable[[dict[str, str]], str],
     candidate_source: Callable[[dict[str, str]], str],
-) -> tuple[list[FinderCandidateInput], dict[str, dict[str, str]]]:
+    *,
+    line_resolver: Callable[[dict[str, str]], object] | None = None,
+) -> FinderCandidateBuildResult:
     finder_candidates = []
     candidate_by_key = {}
+    needs_index = []
     for candidate in candidates:
+        key = candidate_key(candidate)
+        candidate_by_key[key] = candidate
+        source = str(candidate_source(candidate) or "").upper()
+        resolution = line_resolver(candidate) if line_resolver is not None else None
+        line_set = getattr(resolution, "line_set", None)
+        if line_set is not None:
+            finder_candidates.append(
+                FinderCandidateInput(
+                    entry_id=key,
+                    name=candidate_phase_name(candidate) or candidate.get("Entry", ""),
+                    formula=candidate.get("Formula", ""),
+                    source=source,
+                    reference_lines=line_set,
+                )
+            )
+            continue
+        if bool(getattr(resolution, "needs_index", False)) and source != "USER":
+            needs_index.append(candidate)
+            continue
         try:
             cif_path = candidate_cif_path(candidate)
         except Exception:
+            if bool(getattr(resolution, "needs_index", False)):
+                needs_index.append(candidate)
             continue
-        key = candidate_key(candidate)
-        candidate_by_key[key] = candidate
         finder_candidates.append(
             FinderCandidateInput(
                 cif_path=str(cif_path),
@@ -120,7 +177,7 @@ def build_finder_candidate_inputs(
                 source=candidate_source(candidate),
             )
         )
-    return finder_candidates, candidate_by_key
+    return FinderCandidateBuildResult(finder_candidates, candidate_by_key, needs_index)
 
 
 def draw_match_profile_result(
@@ -183,6 +240,20 @@ def draw_match_profile_result(
     observed_ymin_plot = observed_ymin + active_plot_offset
     background_plot = background + active_plot_offset
     calculated_total_plot = calculated_total + active_plot_offset
+    marker_observed_y_plot = observed_y_plot
+    try:
+        display_x = np.asarray(active_plot_context.get("display_x", []), dtype=float)
+        display_y = np.asarray(active_plot_context.get("display_y", []), dtype=float)
+        display_mask = np.isfinite(display_x) & np.isfinite(display_y)
+        display_x = display_x[display_mask]
+        display_y = display_y[display_mask]
+        if display_x.size >= 2 and display_x.size == display_y.size:
+            order = np.argsort(display_x)
+            display_x = display_x[order]
+            display_y = display_y[order]
+            marker_observed_y_plot = np.interp(x, display_x, display_y)
+    except (TypeError, ValueError):
+        marker_observed_y_plot = observed_y_plot
     residual = observed_y - calculated_total
     fit_quality = profile_fit_quality(observed_y, background, calculated_total)
     if len(x) > 2 and len(residual):
@@ -203,6 +274,7 @@ def draw_match_profile_result(
         candidate = candidate_by_key.get(candidate_result.entry_id)
         if candidate is None:
             continue
+        _store_estimated_cell_state(candidate, candidate_result)
         key = candidate_key(candidate)
         color = phase_color(candidate, index)
         phase_label = phase_legend_label(candidate)
@@ -318,7 +390,8 @@ def draw_match_profile_result(
             preview_height,
             f"preview peaks {phase_label}",
             width=style.stick.width,
-            ceiling=calculated_total_plot,
+            ceiling=marker_observed_y_plot,
+            reach_ceiling=True,
         )
         _tag_plot_item(
             stick_item,
@@ -376,20 +449,6 @@ def draw_match_profile_result(
         )
         _tag_plot_item(difference_item, pattern_id, object_id="difference-profile")
         plot_layers["difference"].append(difference_item)
-    marker_observed_y_plot = observed_y_plot
-    try:
-        display_x = np.asarray(active_plot_context.get("display_x", []), dtype=float)
-        display_y = np.asarray(active_plot_context.get("display_y", []), dtype=float)
-        display_mask = np.isfinite(display_x) & np.isfinite(display_y)
-        display_x = display_x[display_mask]
-        display_y = display_y[display_mask]
-        if display_x.size >= 2 and display_x.size == display_y.size:
-            order = np.argsort(display_x)
-            display_x = display_x[order]
-            display_y = display_y[order]
-            marker_observed_y_plot = np.interp(x, display_x, display_y)
-    except (TypeError, ValueError):
-        marker_observed_y_plot = observed_y_plot
     marker_layer_counts = {layer: len(plot_layers.get(layer, [])) for layer in ("coverage_markers", "peak_labels", "unknown_peaks")}
     explained, total_observed = add_peak_coverage_markers(
         x,

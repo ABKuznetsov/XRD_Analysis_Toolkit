@@ -30,3 +30,7 @@ def default_diagnostic_log_root() -> Path:
 
 def default_xrd_import_root() -> Path:
     return default_data_root() / "imports" / "xrd"
+
+
+def default_instrument_profile_library_path() -> Path:
+    return default_data_root() / "settings" / "instrument_profiles.json"

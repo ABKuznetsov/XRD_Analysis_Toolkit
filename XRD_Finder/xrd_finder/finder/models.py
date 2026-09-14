@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from xrd_finder.instrument.models import InstrumentProfile
+from xrd_finder.finder.reference_lines import ReferenceLineSet
+
 
 class PeakStatus(str, Enum):
     MATCHED = "matched"
@@ -31,12 +34,13 @@ class ObservedPeak:
 
 @dataclass(slots=True)
 class FinderCandidateInput:
-    cif_path: str
+    cif_path: str = ""
     entry_id: str = ""
     name: str = ""
     formula: str = ""
     source: str = ""
     structure: object | None = None
+    reference_lines: ReferenceLineSet | None = None
 
 
 def candidate_structure_override(
@@ -55,6 +59,8 @@ class FinderInput:
     pattern_path: str
     candidates: list[FinderCandidateInput]
     wavelength: float | None = None
+    include_kalpha2: bool = True
+    instrument_profile: InstrumentProfile | None = None
     two_theta_min: float | None = None
     two_theta_max: float | None = None
     fwhm: float | None = None
@@ -82,6 +88,10 @@ class FinderCandidateResult:
     mean_delta_two_theta: float = 0.0
     status: str = "unmatched"
     cell_scale: float = 1.0
+    estimated_cell: dict[str, float] = field(default_factory=dict)
+    cell_fit_peaks: int = 0
+    cell_fit_initial_rms_deg: float = 0.0
+    cell_fit_rms_deg: float = 0.0
     fwhm: float = 0.0
     profile_eta: float = 0.0
     two_theta: list[float] = field(default_factory=list)

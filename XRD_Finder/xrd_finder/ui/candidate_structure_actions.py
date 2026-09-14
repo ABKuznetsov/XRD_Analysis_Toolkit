@@ -4,7 +4,9 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QMessageBox, QTableWidgetItem
 
+from xrd_finder.finder.context import CalculationContext
 from xrd_finder.io.cif_loader import create_phase_from_cif
+from xrd_finder.services.calculated_pattern_service import radiation_lines_from_wavelength
 
 
 class PhaseFinderCandidateStructureActionsMixin:
@@ -176,6 +178,9 @@ class PhaseFinderCandidateStructureActionsMixin:
     def _candidate_peaks_for_gain(self, candidate: dict[str, str]) -> list:
         if self._candidate_source(candidate) == "PDF2":
             return self._pdf2_peaks_for_candidate(candidate)
+        indexed_peaks = self._candidate_indexed_peaks(candidate)
+        if indexed_peaks:
+            return indexed_peaks
         if self._candidate_embedded_cif_path(candidate) is not None:
             return self._candidate_cif_peaks_for_gain(candidate)
         pattern = self._active_pattern()
@@ -201,6 +206,32 @@ class PhaseFinderCandidateStructureActionsMixin:
         if not peaks:
             peaks = self._candidate_cif_peaks_for_gain(candidate)
         return peaks
+
+    def _candidate_indexed_peaks(self, candidate: dict[str, str]) -> list:
+        provider = getattr(self, "candidate_line_provider", None)
+        if provider is None:
+            return []
+        resolution = provider.resolve(candidate)
+        if resolution.line_set is None:
+            return []
+        wavelength = float(self._active_wavelength())
+        primary_wavelength = radiation_lines_from_wavelength(
+            wavelength,
+            include_kalpha2=False,
+        )[0][0]
+        context = CalculationContext(
+            wavelength=wavelength,
+            primary_wavelength=float(primary_wavelength),
+            fwhm=0.18,
+            two_theta_min=5.0,
+            two_theta_max=120.0,
+            x_grid_fingerprint=(0, 0.0, 0.0, 0),
+            include_kalpha2=False,
+        )
+        return self.finder_service.profile_calculator.peaks_from_reference_lines(
+            resolution.line_set,
+            context,
+        )
 
     def _add_selected_cif_to_project(self) -> None:
         candidate = self._selected_candidate_row()

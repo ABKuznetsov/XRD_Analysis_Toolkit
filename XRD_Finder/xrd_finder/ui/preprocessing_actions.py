@@ -19,6 +19,13 @@ from xrd_finder.ui.theme import preprocessing_panel_style
 class PhaseFinderPreprocessingActionsMixin:
     def _close_preprocessing_panel(self) -> None:
         panel = getattr(self, "_preprocessing_panel", None)
+        action_bar = getattr(self, "finder_action_bar", None)
+        close_embedded = getattr(action_bar, "close_preprocessing_panel", None)
+        if callable(close_embedded):
+            close_embedded()
+            self._preprocessing_panel = None
+            self._preprocessing_panel_key = None
+            return
         if panel is not None:
             panel.hide()
             panel.deleteLater()
@@ -36,21 +43,17 @@ class PhaseFinderPreprocessingActionsMixin:
     ) -> None:
         if getattr(self, "_preprocessing_panel", None) is not None:
             if getattr(self, "_preprocessing_panel_key", None) == key:
-                self._close_preprocessing_panel()
                 return
             self._close_preprocessing_panel()
 
-        panel.setParent(self)
+        action_bar = getattr(self, "finder_action_bar", None)
+        embedded_host = getattr(action_bar, "show_preprocessing_panel", None)
+        panel_parent = action_bar if callable(embedded_host) else self
+        panel.setParent(panel_parent)
         panel.setWindowFlags(Qt.WindowType.Widget)
         panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         panel.setAutoFillBackground(True)
         panel.setStyleSheet(preprocessing_panel_style(self._is_dark_theme()))
-        panel.adjustSize()
-        position = button.mapTo(self, button.rect().bottomLeft())
-        max_x = max(0, self.width() - panel.width() - 8)
-        max_y = max(0, self.height() - panel.height() - 8)
-        panel.move(min(max(position.x(), 8), max_x), min(max(position.y() + 4, 8), max_y))
-        panel.raise_()
 
         def accept_panel() -> None:
             preview_callback()
@@ -67,6 +70,20 @@ class PhaseFinderPreprocessingActionsMixin:
         panel.cancelRequested.connect(cancel_panel)
         self._preprocessing_panel = panel
         self._preprocessing_panel_key = key
+        if callable(embedded_host):
+            title = {
+                "smooth": "Smoothing",
+                "background": "Background",
+                "xrd_crop": "Crop XRD",
+            }.get(key, "Preprocessing")
+            embedded_host(key, panel, title)
+            return
+        panel.adjustSize()
+        position = button.mapTo(self, button.rect().bottomLeft())
+        max_x = max(0, self.width() - panel.width() - 8)
+        max_y = max(0, self.height() - panel.height() - 8)
+        panel.move(min(max(position.x(), 8), max_x), min(max(position.y() + 4, 8), max_y))
+        panel.raise_()
         panel.show()
 
     def _smooth_active_pattern_plot(self) -> None:

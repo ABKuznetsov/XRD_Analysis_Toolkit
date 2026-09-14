@@ -18,6 +18,11 @@ from xrd_finder.core.project import Project
 from xrd_finder.core.result import AnalysisResult
 from xrd_finder.core.series import SeriesAnalysis, SeriesPoint
 from xrd_finder.core.structure import AtomSite, CellParameters, Structure
+from xrd_finder.instrument.models import (
+    InstrumentIdentity,
+    InstrumentProfile,
+    RadiationProfile,
+)
 from xrd_finder.io.analysis_summary import finalize_analysis_summary, verify_analysis_summary
 
 
@@ -57,6 +62,7 @@ def load_project_manifest(path: str | Path) -> Project:
         raise ValueError("Project manifest must contain a JSON object.")
     verify_analysis_summary(data.get("analysis_summary", {}))
     project = _from_dataclass(Project, data)
+    _upgrade_legacy_instrument_profiles(project)
     project.root_path = str(source)
     project.prune_series_memberships()
     return project
@@ -249,9 +255,28 @@ def _load_portable_project(source: Path) -> Project:
             extraction_root,
             allowed_prefix="previews/",
         )
+    _upgrade_legacy_instrument_profiles(project)
     project.root_path = str(source)
     project.prune_series_memberships()
     return project
+
+
+def _upgrade_legacy_instrument_profiles(project: Project) -> None:
+    for pattern in project.patterns:
+        if pattern.instrument_profile or pattern.wavelength is None:
+            continue
+        wavelength = float(pattern.wavelength)
+        if wavelength <= 0.0:
+            continue
+        profile = InstrumentProfile(
+            profile_id=f"legacy-wavelength-{wavelength:.8g}",
+            identity=InstrumentIdentity(name=f"Legacy wavelength {wavelength:.6g} A"),
+            radiation=RadiationProfile.custom_monochromatic(
+                wavelength,
+                label="Legacy wavelength",
+            ),
+        )
+        pattern.instrument_profile = profile.to_dict()
 
 
 def _portable_extraction_root(source: Path) -> Path:

@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from copy import deepcopy
-from pathlib import Path
 import zlib
 
 import numpy as np
 
 from xrd_finder.finder.context import CalculationContext
-from xrd_finder.io.cif_loader import create_phase_from_cif
+from xrd_finder.finder.line_calculator import CachedLineCalculator, CandidateLineData
+from xrd_finder.finder.profile_backend import FinderPeakProfileBackend, PeakProfileBackend
+from xrd_finder.finder.reference_lines import ReferenceLineSet
+from xrd_finder.instrument.models import InstrumentProfile
 from xrd_finder.services.calculated_pattern_service import (
     CalculatedPatternService,
     HKLPeak,
-    calculated_profile_from_peaks,
 )
 
 
@@ -31,29 +31,33 @@ class CachedProfileCalculator:
         sticks_cache_limit: int = 256,
         profile_cache_limit: int = 256,
         profile_cache_max_bytes: int = 128 * 1024 * 1024,
+        cristma_adapter=None,
+        line_calculator: CachedLineCalculator | None = None,
+        profile_backend: PeakProfileBackend | None = None,
     ) -> None:
         self.calculated_pattern_service = calculated_pattern_service or CalculatedPatternService()
-        self._sticks_cache: OrderedDict[tuple[str, int, float, float, float, bool], list[HKLPeak]] = OrderedDict()
-        self._structure_cache: OrderedDict[tuple[str, int], object] = OrderedDict()
-        self._sticks_cache_limit = max(0, int(sticks_cache_limit))
+        self.line_calculator = line_calculator or CachedLineCalculator(
+            calculated_pattern_service=self.calculated_pattern_service,
+            cache_limit=sticks_cache_limit,
+            cristma_adapter=cristma_adapter,
+        )
+        self.profile_backend = profile_backend or FinderPeakProfileBackend()
         self._profile_cache: OrderedDict[tuple[object, ...], np.ndarray] = OrderedDict()
         self._profile_cache_limit = max(0, int(profile_cache_limit))
         self._profile_cache_max_bytes = max(0, int(profile_cache_max_bytes))
         self._profile_cache_bytes = 0
-        self._sticks_hits = 0
-        self._sticks_misses = 0
         self._profile_hits = 0
         self._profile_misses = 0
+        self._cristma_profiles = 0
 
     def cache_info(self) -> dict[str, int]:
         return {
-            "sticks": len(self._sticks_cache),
+            **self.line_calculator.cache_info(),
             "profiles": len(self._profile_cache),
             "profile_bytes": int(self._profile_cache_bytes),
-            "sticks_hits": int(self._sticks_hits),
-            "sticks_misses": int(self._sticks_misses),
             "profile_hits": int(self._profile_hits),
             "profile_misses": int(self._profile_misses),
+            "cristma_profiles": int(self._cristma_profiles),
         }
 
     def candidate_sticks(
@@ -61,85 +65,64 @@ class CachedProfileCalculator:
         cif_path: str,
         context: CalculationContext,
         use_lp: bool,
+        instrument_profile: InstrumentProfile | None = None,
     ) -> list[HKLPeak]:
-        _structure, peaks = self.candidate_structure_and_sticks(cif_path, context, use_lp)
-        return peaks
+        return self.line_calculator.candidate_sticks(
+            cif_path,
+            context,
+            use_lp,
+            instrument_profile=instrument_profile,
+        )
 
     def candidate_structure_and_sticks(
         self,
         cif_path: str,
         context: CalculationContext,
         use_lp: bool,
+        instrument_profile: InstrumentProfile | None = None,
     ) -> tuple[object, list[HKLPeak]]:
-        path = Path(cif_path)
-        stat = path.stat()
-        structure_key = (str(path.resolve()), int(stat.st_mtime_ns))
-        wavelength, two_theta_min, two_theta_max = context.sticks_key
-        cache_key = (
-            *structure_key,
-            wavelength,
-            two_theta_min,
-            two_theta_max,
-            bool(use_lp),
+        return self.line_calculator.candidate_structure_and_sticks(
+            cif_path,
+            context,
+            use_lp,
+            instrument_profile=instrument_profile,
         )
-        cached = self._sticks_cache.get(cache_key)
-        structure = self._structure_cache.get(structure_key)
-        if cached is not None:
-            self._sticks_hits += 1
-            self._sticks_cache.move_to_end(cache_key)
-            if structure is None:
-                _phase, structure = create_phase_from_cif(str(path))
-                self._cache_structure(structure_key, structure)
-            else:
-                self._structure_cache.move_to_end(structure_key)
-            return deepcopy(structure), list(cached)
-        self._sticks_misses += 1
-        if structure is None:
-            _phase, structure = create_phase_from_cif(str(path))
-            self._cache_structure(structure_key, structure)
-        else:
-            self._structure_cache.move_to_end(structure_key)
-        peaks = self.calculated_pattern_service.calculate_sticks(
-            structure,
-            two_theta_min=two_theta_min,
-            two_theta_max=two_theta_max,
-            wavelength=wavelength,
-            use_lp=use_lp,
-        )
-        if self._sticks_cache_limit > 0:
-            self._sticks_cache[cache_key] = list(peaks)
-            self._trim_sticks_cache()
-        return deepcopy(structure), peaks
-
-    def _cache_structure(self, key: tuple[str, int], structure: object) -> None:
-        if self._sticks_cache_limit <= 0:
-            return
-        self._structure_cache[key] = structure
-        self._structure_cache.move_to_end(key)
-        while len(self._structure_cache) > self._sticks_cache_limit:
-            self._structure_cache.popitem(last=False)
 
     def profile_from_peaks(
         self,
         peaks: list[HKLPeak],
         x_grid: np.ndarray,
         context: CalculationContext,
+        source_fingerprint: tuple[object, ...] | None = None,
+        *,
+        instrument_profile: InstrumentProfile | None = None,
     ) -> np.ndarray:
-        cache_key = self._profile_cache_key(peaks, context)
+        cache_key = self._profile_cache_key(
+            peaks,
+            context,
+            source_fingerprint,
+            instrument_profile=instrument_profile,
+        )
         cached = self._profile_cache.get(cache_key)
         if cached is not None:
             self._profile_hits += 1
             self._profile_cache.move_to_end(cache_key)
             return cached
         self._profile_misses += 1
-        _x, profile = calculated_profile_from_peaks(
-            peaks,
-            x_grid,
-            fwhm=context.fwhm,
-            eta=context.profile_eta,
-            wavelength=context.wavelength,
-            include_kalpha2=True,
-        )
+        instrument_calculator = getattr(self.profile_backend, "calculate_with_instrument", None)
+        if instrument_profile is not None and callable(instrument_calculator):
+            profile = instrument_calculator(
+                peaks,
+                x_grid,
+                context,
+                instrument_profile,
+            )
+        else:
+            profile = self.profile_backend.calculate(
+                peaks,
+                x_grid,
+                context,
+            )
         profile = np.asarray(profile, dtype=float)
         profile.setflags(write=False)
         if self._profile_cache_limit > 0 and self._profile_cache_max_bytes > 0:
@@ -148,9 +131,57 @@ class CachedProfileCalculator:
             self._trim_profile_cache()
         return profile
 
-    def _trim_sticks_cache(self) -> None:
-        while len(self._sticks_cache) > self._sticks_cache_limit:
-            self._sticks_cache.popitem(last=False)
+    def profile_from_lines(
+        self,
+        lines: CandidateLineData,
+        x_grid: np.ndarray,
+        context: CalculationContext,
+        *,
+        instrument_profile: InstrumentProfile,
+    ) -> np.ndarray:
+        adapter = self.line_calculator.cristma_adapter
+        if lines.cristma_lines is None or adapter is None:
+            return self.profile_from_peaks(
+                list(lines.peaks),
+                x_grid,
+                context,
+                source_fingerprint=lines.fingerprint,
+                instrument_profile=instrument_profile,
+            )
+        cache_key = (
+            "cristma-lines-v1",
+            lines.fingerprint,
+            instrument_profile.calculation_key(),
+            context.profile_key,
+        )
+        cached = self._profile_cache.get(cache_key)
+        if cached is not None:
+            self._profile_hits += 1
+            self._profile_cache.move_to_end(cache_key)
+            return cached
+        self._profile_misses += 1
+        result = adapter.profile_from_lines(
+            lines.cristma_lines,
+            x_grid=x_grid,
+            instrument_profile=instrument_profile,
+            zero_shift_deg=context.global_zero_shift,
+            d_spacing_scale=context.cell_scale,
+        )
+        profile = np.asarray(result.profile_y, dtype=float)
+        profile.setflags(write=False)
+        self._cristma_profiles += 1
+        if self._profile_cache_limit > 0 and self._profile_cache_max_bytes > 0:
+            self._profile_cache[cache_key] = profile
+            self._profile_cache_bytes += int(profile.nbytes)
+            self._trim_profile_cache()
+        return profile
+
+    def peaks_from_reference_lines(
+        self,
+        lines: ReferenceLineSet,
+        context: CalculationContext,
+    ) -> list[HKLPeak]:
+        return self.line_calculator.peaks_from_reference_lines(lines, context)
 
     def _trim_profile_cache(self) -> None:
         while self._profile_cache and (
@@ -165,9 +196,15 @@ class CachedProfileCalculator:
         self,
         peaks: list[HKLPeak],
         context: CalculationContext,
+        source_fingerprint: tuple[object, ...] | None = None,
+        *,
+        instrument_profile: InstrumentProfile | None = None,
     ) -> tuple[object, ...]:
         return (
+            str(self.profile_backend.cache_key),
             context.profile_key,
+            source_fingerprint,
+            None if instrument_profile is None else instrument_profile.calculation_key(),
             tuple(
                 (
                     int(peak.h),

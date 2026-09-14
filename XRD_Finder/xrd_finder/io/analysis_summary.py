@@ -51,6 +51,7 @@ def scientific_projection(summary: Mapping[str, Any]) -> dict[str, Any]:
 
 def compute_result_sha256(summary: Mapping[str, Any]) -> str:
     """Hash the RFC 8785/JCS representation of the scientific projection."""
+    _validate_measurement_contract(summary)
     projection = scientific_projection(summary)
     try:
         canonical_json = rfc8785.dumps(projection)
@@ -120,3 +121,35 @@ def _finite_sort_number(value: Any) -> float:
     except (TypeError, ValueError):
         return math.inf
     return number if math.isfinite(number) else math.inf
+
+
+def _validate_measurement_contract(summary: Mapping[str, Any]) -> None:
+    """Validate the optional measurement context without rejecting legacy summaries."""
+    patterns = summary.get("patterns")
+    if not isinstance(patterns, list):
+        return
+    for index, pattern in enumerate(patterns):
+        if not isinstance(pattern, Mapping) or "measurement" not in pattern:
+            continue
+        measurement = pattern.get("measurement")
+        if not isinstance(measurement, Mapping):
+            raise ValueError(f"patterns[{index}].measurement must be a JSON object")
+        for key in ("x_unit", "y_unit"):
+            if key in measurement and not isinstance(measurement.get(key), str):
+                raise ValueError(f"patterns[{index}].measurement.{key} must be a string")
+        if "wavelength_angstrom" in measurement:
+            wavelength = measurement.get("wavelength_angstrom")
+            if isinstance(wavelength, bool) or not isinstance(wavelength, (int, float)):
+                raise ValueError(
+                    f"patterns[{index}].measurement.wavelength_angstrom must be a number"
+                )
+            if not math.isfinite(float(wavelength)) or float(wavelength) <= 0.0:
+                raise ValueError(
+                    f"patterns[{index}].measurement.wavelength_angstrom must be positive and finite"
+                )
+        if "instrument_profile" in measurement and not isinstance(
+            measurement.get("instrument_profile"), Mapping
+        ):
+            raise ValueError(
+                f"patterns[{index}].measurement.instrument_profile must be a JSON object"
+            )

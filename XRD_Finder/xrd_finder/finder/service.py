@@ -10,6 +10,7 @@ from scipy.optimize import nnls
 from scipy.signal import find_peaks
 
 from xrd_finder.finder.assignment_builder import AssignmentBuilder, nearest_index as nearest_peak_index, nearest_phase_peak
+from xrd_finder.finder.cell_parameter_estimator import CellParameterEstimate, FastCellParameterEstimator
 from xrd_finder.finder.context import CalculationContext
 from xrd_finder.finder.models import (
     FinderCandidateInput,
@@ -53,6 +54,7 @@ class FinderHeuristics:
     snap_min_delta: float = 0.08
     snap_max_delta: float = 0.45
     snap_intensity_min: float = 4.0
+    cell_parameter_peak_tolerance: float = 0.55
 
 
 class FinderService:
@@ -71,6 +73,7 @@ class FinderService:
         profile_cache_max_bytes: int = 128 * 1024 * 1024,
         observed_cache_limit: int = 64,
         heuristics: FinderHeuristics | None = None,
+        cell_parameter_estimator: FastCellParameterEstimator | None = None,
     ) -> None:
         self.calculated_pattern_service = calculated_pattern_service or CalculatedPatternService()
         self.heuristics = heuristics or FinderHeuristics()
@@ -81,6 +84,7 @@ class FinderService:
             profile_cache_max_bytes=profile_cache_max_bytes,
         )
         self.assignment_builder = AssignmentBuilder()
+        self.cell_parameter_estimator = cell_parameter_estimator or FastCellParameterEstimator()
         self.observed_processor = ObservedPatternProcessor()
         self._observed_cache: OrderedDict[tuple[object, ...], ObservedPatternData] = OrderedDict()
         self._observed_cache_limit = max(0, int(observed_cache_limit))
@@ -91,7 +95,10 @@ class FinderService:
         observed = self._prepare_observed_cached(finder_input)
         x_grid = observed.x_grid
         wavelength = finder_input.wavelength or CU_KA1_WAVELENGTH
-        primary_wavelength = radiation_lines_from_wavelength(wavelength)[0][0]
+        primary_wavelength = radiation_lines_from_wavelength(
+            wavelength,
+            include_kalpha2=finder_input.include_kalpha2,
+        )[0][0]
 
         candidate_data = []
         two_theta_min = finder_input.two_theta_min or float(np.nanmin(x_grid))
@@ -103,11 +110,18 @@ class FinderService:
             two_theta_min=float(two_theta_min),
             two_theta_max=float(two_theta_max),
             x_grid_fingerprint=array_fingerprint(x_grid),
+            include_kalpha2=bool(finder_input.include_kalpha2),
+            instrument_profile_key=(
+                ""
+                if finder_input.instrument_profile is None
+                else finder_input.instrument_profile.calculation_key()
+            ),
         )
         for candidate in finder_input.candidates:
             try:
                 if candidate.structure is not None:
                     structure = candidate.structure
+                    line_data = None
                     peaks = self.calculated_pattern_service.calculate_sticks(
                         structure,
                         two_theta_min=context.two_theta_min,
@@ -115,17 +129,29 @@ class FinderService:
                         wavelength=context.primary_wavelength,
                         use_lp=True,
                     )
+                elif candidate.reference_lines is not None:
+                    structure = None
+                    line_data = None
+                    peaks = self.profile_calculator.peaks_from_reference_lines(
+                        candidate.reference_lines,
+                        context,
+                    )
                 else:
-                    structure, peaks = self.profile_calculator.candidate_structure_and_sticks(
+                    structure, line_data = self.profile_calculator.line_calculator.candidate_structure_and_lines(
                         candidate.cif_path,
                         context=context,
                         use_lp=True,
+                        instrument_profile=finder_input.instrument_profile,
                     )
+                    peaks = list(line_data.peaks)
             except Exception:
                 continue
-            candidate_data.append((candidate, structure, peaks))
+            candidate_data.append((candidate, structure, peaks, line_data))
 
-        alignment_data = [(candidate, peaks) for candidate, _structure, peaks in candidate_data]
+        alignment_data = [
+            (candidate, peaks)
+            for candidate, _structure, peaks, _line_data in candidate_data
+        ]
         # Adding an impurity candidate must not move the instrument alignment
         # already established by the primary phase.
         primary_alignment_data = alignment_data[:1]
@@ -139,14 +165,39 @@ class FinderService:
             else self._estimate_global_zero_shift(primary_alignment_data, observed.peak_positions)
         )
         prepared_profiles = []
-        for candidate, structure, peaks in candidate_data:
+        for candidate_index, (candidate, structure, peaks, line_data) in enumerate(candidate_data):
+            cell_estimate = None
+            if candidate.cif_path and self._has_indexed_cell(structure, peaks):
+                cell_estimate = self.cell_parameter_estimator.estimate(
+                    initial_cell=structure.cell,
+                    calculated_peaks=peaks,
+                    observed_peaks=observed.peaks,
+                    wavelength=context.primary_wavelength,
+                    zero_shift_deg=global_zero,
+                    tolerance_deg=self.heuristics.cell_parameter_peak_tolerance,
+                    refine_zero_shift=candidate_index == 0,
+                )
+                if cell_estimate is not None:
+                    try:
+                        structure, line_data = self.profile_calculator.line_calculator.candidate_structure_and_lines(
+                            candidate.cif_path,
+                            context=context,
+                            use_lp=True,
+                            instrument_profile=finder_input.instrument_profile,
+                            cell_override=cell_estimate.cell,
+                        )
+                        peaks = list(line_data.peaks)
+                        if candidate_index == 0:
+                            global_zero = float(cell_estimate.zero_shift_deg)
+                    except Exception:
+                        cell_estimate = None
             # Indexed CIF phases keep their crystallographic metric. Applying one
             # scalar to every d-spacing makes distinct anisotropic cells converge
-            # to the same apparent pattern. Their a/b/c/angles are refined later
-            # from matched hkl values by RefinementService.
+            # to the same apparent pattern. Their independent a/b/c/angles are
+            # estimated below from matched hkl values instead.
             cell_scale = (
                 1.0
-                if self._has_indexed_cell(structure, peaks)
+                if candidate.reference_lines is not None or self._has_indexed_cell(structure, peaks)
                 else self._estimate_phase_cell_scale(
                     peaks,
                     observed.peak_positions,
@@ -158,15 +209,26 @@ class FinderService:
             reference_peaks = self._apply_peak_model(peaks, phase_context)
             adjusted = (
                 self._snap_peaks_to_observed(reference_peaks, observed.peak_positions)
-                if finder_input.snap_peak_positions
+                if finder_input.snap_peak_positions and cell_estimate is None
                 else reference_peaks
             )
-            prepared_profiles.append((candidate, reference_peaks, adjusted, phase_context, cell_scale))
+            prepared_profiles.append(
+                (
+                    candidate,
+                    structure,
+                    reference_peaks,
+                    adjusted,
+                    phase_context,
+                    cell_scale,
+                    line_data,
+                    cell_estimate,
+                )
+            )
 
         # Keep the primary phase shape stable while later phases are tested
         # against the positive residual.
         primary_peak_sets = (
-            [prepared_profiles[0][2]]
+            [prepared_profiles[0][3]]
             if prepared_profiles
             else []
         )
@@ -177,7 +239,16 @@ class FinderService:
             context,
         )
         profiles = []
-        for candidate, reference_peaks, adjusted, phase_context, cell_scale in prepared_profiles:
+        for (
+            candidate,
+            structure,
+            reference_peaks,
+            adjusted,
+            phase_context,
+            cell_scale,
+            line_data,
+            cell_estimate,
+        ) in prepared_profiles:
             phase_fwhm = self._estimate_phase_fwhm_from_signal(
                 adjusted,
                 observed.x_grid,
@@ -197,11 +268,29 @@ class FinderService:
                 )
                 for peak in adjusted
             ]
-            profile = self.profile_calculator.profile_from_peaks(
-                absolute_peaks,
-                x_grid,
-                context=fitted_context,
-            )
+            if (
+                line_data is not None
+                and finder_input.instrument_profile is not None
+                and (cell_estimate is not None or not finder_input.snap_peak_positions)
+            ):
+                profile = self.profile_calculator.profile_from_lines(
+                    line_data,
+                    x_grid,
+                    fitted_context,
+                    instrument_profile=finder_input.instrument_profile,
+                )
+            else:
+                profile = self.profile_calculator.profile_from_peaks(
+                    absolute_peaks,
+                    x_grid,
+                    context=fitted_context,
+                    source_fingerprint=(
+                        None
+                        if candidate.reference_lines is None
+                        else candidate.reference_lines.fingerprint
+                    ),
+                    instrument_profile=finder_input.instrument_profile,
+                )
             profiles.append(
                 (
                     candidate,
@@ -212,6 +301,7 @@ class FinderService:
                     cell_scale,
                     phase_fwhm,
                     phase_eta,
+                    cell_estimate,
                 )
             )
 
@@ -219,7 +309,7 @@ class FinderService:
             observed.target_y,
             [
                 profile
-                for _candidate, _structure, _reference_peaks, _peaks, profile, _cell_scale, _phase_fwhm, _phase_eta
+                for _candidate, _structure, _reference_peaks, _peaks, profile, _cell_scale, _phase_fwhm, _phase_eta, _cell_estimate
                 in profiles
             ],
         )
@@ -241,6 +331,7 @@ class FinderService:
             cell_scale,
             phase_fwhm,
             phase_eta,
+            cell_estimate,
         ), scale, quantity_fraction in zip(profiles, scales, quantity_fractions):
             scaled_profile = profile * float(scale)
             calculated_total += scaled_profile
@@ -261,6 +352,14 @@ class FinderService:
                 mean_delta_two_theta=match_result.mean_delta_two_theta,
                 status=match_result.status,
                 cell_scale=float(cell_scale),
+                estimated_cell=self._cell_payload(cell_estimate),
+                cell_fit_peaks=(0 if cell_estimate is None else int(cell_estimate.matched_peaks)),
+                cell_fit_initial_rms_deg=(
+                    0.0 if cell_estimate is None else float(cell_estimate.initial_rms_deg)
+                ),
+                cell_fit_rms_deg=(
+                    0.0 if cell_estimate is None else float(cell_estimate.fitted_rms_deg)
+                ),
                 fwhm=float(phase_fwhm),
                 profile_eta=float(phase_eta),
                 two_theta=x_grid.tolist(),
@@ -298,9 +397,22 @@ class FinderService:
         )
 
     @staticmethod
+    def _cell_payload(estimate: CellParameterEstimate | None) -> dict[str, float]:
+        if estimate is None:
+            return {}
+        cell = estimate.cell
+        return {
+            name: float(getattr(cell, name))
+            for name in ("a", "b", "c", "alpha", "beta", "gamma", "volume")
+            if getattr(cell, name) is not None
+        }
+
+    @staticmethod
     def _unit_cell_molar_mass(structure) -> float:
         """Return the molar mass of all occupied atoms in one unit cell."""
 
+        if structure is None:
+            return 1.0
         total = 0.0
         for atom in expand_atoms_by_symmetry(structure):
             try:
@@ -408,7 +520,11 @@ class FinderService:
 
     def _candidate_key(self, candidate: FinderCandidateInput) -> str:
         if candidate.entry_id:
-            return f"{candidate.source or 'UNKNOWN'}:{candidate.entry_id}"
+            source = str(candidate.source or "UNKNOWN").upper()
+            entry_id = str(candidate.entry_id)
+            if entry_id.upper().startswith(f"{source}:"):
+                return entry_id
+            return f"{source}:{entry_id}"
         if candidate.source and candidate.formula:
             return f"{candidate.source}:{candidate.formula}"
         return candidate.cif_path

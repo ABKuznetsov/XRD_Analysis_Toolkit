@@ -6,7 +6,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox, QWidget
+from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox, QScrollArea, QVBoxLayout, QWidget
 
 from xrd_finder.services.materials_project_service import MaterialsProjectService
 from xrd_finder.services.network import open_url
@@ -62,10 +62,26 @@ class PhaseFinderDatabaseActionsMixin:
         return self.database_panel
 
     def _show_database_settings_tab(self) -> None:
-        for index in range(self.right_tabs.count()):
-            if self.right_tabs.tabText(index) == "Databases":
-                self.right_tabs.setCurrentIndex(index)
-                return
+        self._show_database_settings_window()
+
+    def _show_database_settings_window(self) -> None:
+        dialog = getattr(self, "_database_settings_dialog", None)
+        if dialog is None:
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Database settings")
+            dialog.setMinimumSize(760, 620)
+            dialog.resize(820, 720)
+            layout = QVBoxLayout(dialog)
+            layout.setContentsMargins(8, 8, 8, 8)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+            scroll.setWidget(self._database_tab())
+            layout.addWidget(scroll)
+            self._database_settings_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _materials_project_status_text(self) -> str:
         status = self.materials_project.status()

@@ -253,6 +253,41 @@ class PortableProjectIoTest(unittest.TestCase):
                 restored_candidate = restored.finder_state.profile_states[pattern.id]["candidates"][0]
                 self.assertEqual(f"{restored_candidate['Source']}:{restored_candidate['Entry']}", candidate_key)
 
+    def test_xpff_preserves_estimated_starting_cell_state(self) -> None:
+        with TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            pattern = Pattern.create("Sample")
+            candidate = {
+                "Source": "COD",
+                "Entry": "1011002",
+                "Phase": "Gehlenite",
+                "_EstimatedCell": {
+                    "a": 7.71,
+                    "b": 7.71,
+                    "c": 5.03,
+                    "alpha": 90.0,
+                    "beta": 90.0,
+                    "gamma": 90.0,
+                },
+                "_CellFitPeaks": 11,
+                "_CellFitInitialRmsDeg": 0.143,
+                "_CellFitRmsDeg": 0.029,
+            }
+            project = Project(name="Starting values", patterns=[pattern])
+            project.finder_state.match_candidates = [candidate]
+            project.finder_state.profile_states = {
+                pattern.id: {"candidates": [candidate]}
+            }
+
+            target = tmp_path / "starting-values.xpff"
+            save_project_manifest(project, target)
+            restored = load_project_manifest(target)
+
+            restored_candidate = restored.finder_state.profile_states[pattern.id]["candidates"][0]
+            self.assertEqual(restored_candidate["_EstimatedCell"]["c"], 5.03)
+            self.assertEqual(restored_candidate["_CellFitPeaks"], 11)
+            self.assertEqual(restored_candidate["_CellFitRmsDeg"], 0.029)
+
     def test_xpff_manifest_without_candidate_cif_paths_uses_empty_mapping(self) -> None:
         with TemporaryDirectory() as directory:
             target = Path(directory) / "legacy.xpff"

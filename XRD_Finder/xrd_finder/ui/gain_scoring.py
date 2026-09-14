@@ -145,6 +145,56 @@ class GainPolicy:
 DEFAULT_GAIN_POLICY = GainPolicy()
 
 
+def fit_residual_candidate_scale(
+    *,
+    target: np.ndarray,
+    selected_total: np.ndarray,
+    profile: np.ndarray,
+    weights: np.ndarray,
+) -> float:
+    """Fit one non-negative candidate scale against the positive residual."""
+
+    target = np.asarray(target, dtype=float)
+    current = np.asarray(selected_total, dtype=float)
+    candidate = np.asarray(profile, dtype=float)
+    fit_weights = np.clip(np.asarray(weights, dtype=float), 0.0, None)
+    usable = (
+        np.isfinite(target)
+        & np.isfinite(current)
+        & np.isfinite(candidate)
+        & np.isfinite(fit_weights)
+        & (fit_weights > 0.0)
+    )
+    if not np.any(usable) or float(np.nanmax(candidate[usable])) <= 0.0:
+        return 0.0
+    residual = np.clip(target - current, 0.0, None)
+    weighted_profile = candidate * fit_weights
+    denominator = float(np.dot(weighted_profile[usable], candidate[usable]))
+    if denominator <= 1.0e-12:
+        return 0.0
+    initial = max(
+        0.0,
+        float(np.dot(weighted_profile[usable], residual[usable])) / denominator,
+    )
+    if initial <= 1.0e-12:
+        return 0.0
+
+    def weighted_error(calculated: np.ndarray) -> float:
+        difference = np.asarray(calculated, dtype=float) - target
+        asymmetric = np.where(difference > 0.0, difference * 5.0, -difference)
+        return float(np.trapezoid(asymmetric * fit_weights, dx=1.0))
+
+    best_scale = 0.0
+    best_error = weighted_error(current)
+    for factor in np.linspace(0.05, 1.35, 27):
+        scale = initial * float(factor)
+        error = weighted_error(current + candidate * scale)
+        if error < best_error:
+            best_error = error
+            best_scale = scale
+    return float(best_scale)
+
+
 def profile_residual_gain(
     *,
     residual_target: np.ndarray,

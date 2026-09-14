@@ -81,16 +81,21 @@ from xrd_finder.ui.database_actions import PhaseFinderDatabaseActionsMixin
 from xrd_finder.ui.database_panel import DatabasePanelWidget
 from xrd_finder.ui.element_filter import PeriodicTableWidget, element_sort_key
 from xrd_finder.ui.finder_action_bar import FinderActionBar
+from xrd_finder.ui.finder_plot_control_bar import FinderPlotControlBar
+from xrd_finder.ui.finder_top_toolbar import FinderTopToolBar
 from xrd_finder.ui.gain_scoring import (
     DEFAULT_GAIN_POLICY,
     GainIndexedEvidence,
     GainStage,
     build_gain_indexed_evidence,
+    fit_residual_candidate_scale,
     profile_residual_gain,
 )
 from xrd_finder.ui.help_text import PHASE_FINDER_HELP_TEXT, PHASE_FINDER_HELP_TITLE
+from xrd_finder.ui.instrument_profile_actions import PhaseFinderInstrumentProfileActionsMixin
 from xrd_finder.ui.layout_state import SplitterLayoutState
 from xrd_finder.ui.match_profile_renderer import build_finder_candidate_inputs, draw_match_profile_result
+from xrd_finder.ui.candidate_line_provider import CandidateLineProvider
 from xrd_finder.ui.observed_pattern_actions import PhaseFinderObservedPatternActionsMixin
 from xrd_finder.ui.peak_marker_renderer import (
     add_peak_coverage_markers,
@@ -116,6 +121,7 @@ from xrd_finder.ui.reference_preview_renderer import draw_pdf2_reference, draw_r
 from xrd_finder.ui.selected_phases_actions import PhaseFinderSelectedPhasesActionsMixin
 from xrd_finder.ui.structure_overlay import draw_structure_overlay, prepare_structure_overlay
 from xrd_finder.ui.theme import is_dark_theme, window_style
+from xrd_finder.ui.visible_profile_calculation_queue import VisibleProfileCalculationQueue
 from xrd_finder.ui.xrd_plot import create_xrd_plot_widget
 from xrd_finder.ui.analysis_preview import capture_analysis_preview
 
@@ -123,6 +129,9 @@ from xrd_finder.ui.analysis_preview import capture_analysis_preview
 class AnalysisWindow(QDialog):
     project_changed = Signal()
     background_status_changed = Signal(str)
+    cod_server_alert = Signal(str)
+    candidate_prepared = Signal(object)
+    candidate_preparation_progress = Signal(object)
     IMPORT_SUFFIXES = {".xy", ".txt", ".dat", ".csv", ".xye", ".cif"}
 
     def __init__(self, project: Project, title: str) -> None:
@@ -209,11 +218,35 @@ class AnalysisWindow(QDialog):
         )
         layout.addWidget(self.background_status_label)
         self.background_status_changed.connect(self._set_background_status)
+        self._cod_server_alert_box: QMessageBox | None = None
+        self.cod_server_alert.connect(self._show_cod_server_alert)
 
     def _set_background_status(self, message: str) -> None:
         text = str(message or "Ready")
         self.background_status_label.setText(text)
         self.background_status_label.setToolTip(text)
+
+    def _show_cod_server_alert(self, message: str) -> None:
+        if self._cod_server_alert_box is not None and self._cod_server_alert_box.isVisible():
+            self._cod_server_alert_box.setText(message)
+            self._cod_server_alert_box.raise_()
+            return
+
+        alert = QMessageBox(self)
+        alert.setIcon(QMessageBox.Icon.Warning)
+        alert.setWindowTitle("COD server unavailable")
+        alert.setText(message)
+        alert.setInformativeText(
+            "The search will continue automatically. No action is required."
+        )
+        alert.setStandardButtons(QMessageBox.StandardButton.Ok)
+        alert.setModal(False)
+        alert.finished.connect(self._clear_cod_server_alert)
+        self._cod_server_alert_box = alert
+        alert.open()
+
+    def _clear_cod_server_alert(self, _result: int) -> None:
+        self._cod_server_alert_box = None
 
     def _is_dark_theme(self) -> bool:
         return is_dark_theme(self)
@@ -720,6 +753,7 @@ class AnalysisWindow(QDialog):
 
 
 class PhaseFinderWindow(
+    PhaseFinderInstrumentProfileActionsMixin,
     PhaseFinderProjectStateActionsMixin,
     PhaseFinderProjectTreeActionsMixin,
     PhaseFinderSelectedPhasesActionsMixin,
@@ -742,11 +776,18 @@ class PhaseFinderWindow(
         self._init_filter_state()
         self._init_services()
         self._init_runtime_state()
+        self._init_instrument_profile_state()
         self._create_cursor_readout_panel()
         self._create_action_bar()
+        self._create_top_toolbar()
         self._create_match_plot(project)
         self._create_candidate_tables()
+        self._initialize_candidate_batch_updates()
         self._create_center_splitter()
+        self.visible_profile_calculation_queue = VisibleProfileCalculationQueue(
+            self._calculate_visible_profile,
+            self,
+        )
         self._create_right_tabs()
         self.post_match_pipeline = PostMatchPipeline(
             refresh_selected_profile=self._recalculate_match_profile,
@@ -765,9 +806,13 @@ class PhaseFinderWindow(
 
     def _init_services(self) -> None:
         self.settings = QSettings("Xrdfinder", "Standalone")
-        self.cod_online = CodOnlineService()
+        self.cod_online = CodOnlineService(
+            status_callback=self.background_status_changed.emit,
+            alert_callback=self.cod_server_alert.emit,
+        )
         self.ccdc = CcdcService()
         self.local_phase_cache = LocalPhaseCache()
+        self.candidate_line_provider = CandidateLineProvider(self.local_phase_cache)
         self.rruff = RruffService(self.local_phase_cache.root / "rruff")
         self.match_pdf2 = MatchPdf2Service(str(self.settings.value("match_pdf2/root", "", type=str) or "") or None)
         self.materials_project = MaterialsProjectService(
@@ -789,6 +834,8 @@ class PhaseFinderWindow(
             self.aflow,
             self.oqmd,
             status_callback=self.background_status_changed.emit,
+            prepared_callback=self.candidate_prepared.emit,
+            preparation_progress_callback=self.candidate_preparation_progress.emit,
         )
         self._background_tasks: set[BackgroundTaskHandle] = set()
         self._start_match_pdf2_preload()
@@ -993,22 +1040,36 @@ class PhaseFinderWindow(
             )
         candidate_signature = []
         for candidate in candidates:
-            try:
-                cif_path = str(self._candidate_cif_path(candidate))
-            except Exception:
-                cif_path = ""
+            resolution = self.candidate_line_provider.resolve(candidate)
+            line_fingerprint = (
+                None
+                if resolution.line_set is None
+                else resolution.line_set.fingerprint
+            )
+            cif_path = ""
+            if line_fingerprint is None:
+                try:
+                    local_path = self._candidate_local_cif_path(candidate)
+                    cif_path = "" if local_path is None else str(local_path)
+                except Exception:
+                    pass
             candidate_signature.append((
                 self._candidate_source(candidate),
                 candidate.get("Entry", ""),
                 candidate.get("Formula", ""),
                 candidate.get("Phase", "") or candidate.get("Name", ""),
+                line_fingerprint,
                 cif_path,
                 self._structure_cell_signature(structure_overrides.get(self._candidate_key(candidate))),
             ))
+        instrument_profile = self._instrument_profile_for_pattern(pattern)
+        wavelength, include_kalpha2 = self._legacy_radiation_for_pattern(pattern)
         return (
             pattern.id,
             str(getattr(pattern, "source_path", "")),
-            float(getattr(pattern, "wavelength", None) or CU_KA1_WAVELENGTH),
+            float(wavelength),
+            bool(include_kalpha2),
+            instrument_profile.calculation_key(),
             observed_signature,
             background_signature,
             bool(snap_peak_positions),
@@ -1023,13 +1084,17 @@ class PhaseFinderWindow(
         snap_peak_positions: bool = True,
         cache_only: bool = False,
     ):
-        finder_candidates, candidate_by_key = build_finder_candidate_inputs(
+        candidate_build = build_finder_candidate_inputs(
             candidates,
             self._candidate_cif_path,
             self._candidate_key,
             self._candidate_phase_name,
             self._candidate_source,
+            line_resolver=self.candidate_line_provider.resolve,
         )
+        finder_candidates = candidate_build.ready
+        candidate_by_key = candidate_build.candidate_by_key
+        self._finder_candidates_needing_index = list(candidate_build.needs_index)
         if not finder_candidates:
             return None, candidate_by_key
         cache_key = self._finder_cache_key(pattern, candidates, snap_peak_positions=snap_peak_positions)
@@ -1045,11 +1110,15 @@ class PhaseFinderWindow(
             structure = candidate_structure_override(finder_candidate, structure_overrides)
             if structure is not None:
                 finder_candidate.structure = structure
+        wavelength, include_kalpha2 = self._legacy_radiation_for_pattern(pattern)
         result = self.finder_service.run(
             FinderInput(
                 pattern_path=pattern.source_path,
                 candidates=finder_candidates,
-                wavelength=pattern.wavelength,
+                wavelength=wavelength,
+                include_kalpha2=include_kalpha2,
+                instrument_profile=self._instrument_profile_for_pattern(pattern),
+                fwhm=self._legacy_fwhm_for_pattern(pattern),
                 observed_x=processed_observed[:, 0].tolist() if processed_observed is not None else None,
                 observed_y=processed_observed[:, 1].tolist() if processed_observed is not None else None,
                 background_x=background_data[:, 0].tolist() if background_data is not None else None,
@@ -1154,30 +1223,14 @@ class PhaseFinderWindow(
         )
 
     def _create_cursor_readout_panel(self) -> None:
-        status_panel = QWidget()
-        status_layout = QVBoxLayout(status_panel)
-        status_layout.setContentsMargins(0, 0, 0, 0)
-        status_layout.setSpacing(2)
-        self.cursor_position_status_label = QLabel("2theta: -    I: -")
-        self.cursor_position_status_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.cursor_position_status_label.setStyleSheet(
-            "background: #20262d; border: 1px solid #3b4652; border-radius: 3px; "
-            "color: #d7e3f4; font-weight: 700; padding: 6px 8px;"
-        )
-        self.cursor_position_status_label.setMinimumHeight(24)
-        self.scoring_status_label = QLabel(self._scoring_source_status_text())
-        self.scoring_status_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.scoring_status_label.setStyleSheet(
-            "background: #1b3030; border: 1px solid #3f6a6a; border-radius: 3px; "
-            "color: #d7fff4; font-weight: 700; padding: 6px 8px;"
-        )
-        self.scoring_status_label.setMinimumHeight(24)
-        self.scoring_status_label.setToolTip("Profile used for match/gain scoring.")
-        status_layout.addWidget(self.cursor_position_status_label)
-        status_layout.addWidget(self.scoring_status_label)
-        sidebar_layout = self.sidebar.layout()
-        if sidebar_layout is not None:
-            sidebar_layout.addWidget(status_panel)
+        self.finder_plot_control_bar = FinderPlotControlBar()
+        self.cursor_status_panel = self.finder_plot_control_bar
+        self.cursor_position_status_label = self.finder_plot_control_bar.cursor_position_status_label
+        self.scoring_status_label = None
+        self.finder_plot_control_bar.patternDisplayModeChanged.connect(self._set_pattern_display_mode)
+        self.finder_plot_control_bar.plotAspectModeChanged.connect(self._set_plot_aspect_mode)
+        self.finder_plot_control_bar.patternOffsetPercentChanged.connect(self._set_pattern_stack_offset)
+        self.finder_plot_control_bar.normalizePatternsChanged.connect(self._set_pattern_normalization)
 
     def _scoring_source_status_text(self) -> str:
         return f"Score: {getattr(self, '_scoring_source', 'Auto')}"
@@ -1192,15 +1245,30 @@ class PhaseFinderWindow(
         self.finder_action_bar.smoothRequested.connect(self._smooth_active_pattern_plot)
         self.finder_action_bar.cropRequested.connect(self._crop_xrd_patterns_plot)
         self.finder_action_bar.subtractBackgroundRequested.connect(self._subtract_active_background_plot)
-        self.finder_action_bar.resetDataRequested.connect(self._reset_observed_preprocessing)
         self.finder_action_bar.searchRequested.connect(self._search_pdf2_text)
-        self.finder_action_bar.autoSearchRequested.connect(self._auto_search_candidates)
-        self.finder_action_bar.patternDisplayModeChanged.connect(self._set_pattern_display_mode)
-        self.finder_action_bar.patternOffsetPercentChanged.connect(self._set_pattern_stack_offset)
-        self.finder_action_bar.normalizePatternsChanged.connect(self._set_pattern_normalization)
-        self.finder_action_bar.resetViewRequested.connect(self._reset_match_plot_view)
+        self.finder_action_bar.instrumentProfileSelected.connect(self._select_instrument_profile)
+        self.finder_action_bar.instrumentProfileEditRequested.connect(self._open_instrument_profile_editor)
         self.search_input = self.finder_action_bar.search_input
-        self.center_layout.addWidget(self.finder_action_bar)
+        self._refresh_instrument_profile_selector()
+
+    def _set_auto_search_busy(self, busy: bool) -> None:
+        toolbar = getattr(self, "finder_top_toolbar", None)
+        if toolbar is not None:
+            toolbar.set_auto_search_busy(busy)
+
+    def _create_top_toolbar(self) -> None:
+        self.finder_top_toolbar = FinderTopToolBar()
+        self.finder_top_toolbar.newProjectRequested.connect(self._new_project)
+        self.finder_top_toolbar.openProjectRequested.connect(self._load_project)
+        self.finder_top_toolbar.saveProjectRequested.connect(self._save_project)
+        self.finder_top_toolbar.importRequested.connect(self._import_scientific_files)
+        self.finder_top_toolbar.autoSearchRequested.connect(self._auto_search_candidates)
+        self.finder_top_toolbar.resetDataRequested.connect(self._reset_observed_preprocessing)
+        self.finder_top_toolbar.resetViewRequested.connect(self._reset_match_plot_view)
+        self.finder_top_toolbar.databaseSettingsRequested.connect(self._show_database_settings_window)
+        self.finder_top_toolbar.plotAppearanceRequested.connect(self._show_plot_view_settings_window)
+        self.finder_top_toolbar.instrumentSettingsRequested.connect(self._open_instrument_profile_editor)
+        self.layout().insertWidget(0, self.finder_top_toolbar)
 
     def _create_match_plot(self, project: Project) -> None:
         self.match_plot = self._plot_widget("Phase Finder: pattern and candidate phase markers", xrd_navigation=True)
@@ -1232,7 +1300,8 @@ class PhaseFinderWindow(
         candidate_layout = QVBoxLayout(self.candidate_panel)
         candidate_layout.setContentsMargins(0, 0, 0, 0)
         candidate_layout.setSpacing(4)
-        candidate_layout.addWidget(QLabel("Candidate list"))
+        self.candidate_list_label = QLabel("Candidate list")
+        candidate_layout.addWidget(self.candidate_list_label)
         candidate_layout.addWidget(self.candidate_table, 1)
 
     def _create_center_splitter(self) -> None:
@@ -1245,7 +1314,13 @@ class PhaseFinderWindow(
         self.plot_canvas_layout.setContentsMargins(10, 10, 10, 10)
         self.plot_canvas_layout.setSpacing(0)
         self.plot_canvas_layout.addWidget(self.match_plot, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.center_splitter.addWidget(self.plot_canvas)
+        self.plot_area = QWidget()
+        plot_area_layout = QVBoxLayout(self.plot_area)
+        plot_area_layout.setContentsMargins(0, 0, 0, 0)
+        plot_area_layout.setSpacing(0)
+        plot_area_layout.addWidget(self.plot_canvas, 1)
+        plot_area_layout.addWidget(self.cursor_status_panel)
+        self.center_splitter.addWidget(self.plot_area)
         self.center_splitter.addWidget(self.candidate_panel)
         self.center_splitter.setStretchFactor(0, 3)
         self.center_splitter.setStretchFactor(1, 2)
@@ -1254,13 +1329,12 @@ class PhaseFinderWindow(
 
     def _create_right_tabs(self) -> None:
         self.right_tabs.addTab(self._composition_tab(), "Elements")
+        self.right_tabs.addTab(self.finder_action_bar, "Processing")
         self.compound_card = CompoundCardWidget()
         self.compound_card.cellFitRequested.connect(self._fit_active_sample_indexed_cells)
         if hasattr(self, "_update_compound_card_sample"):
             self._update_compound_card_sample()
         self.right_tabs.addTab(self.compound_card, "Card")
-        self.right_tabs.addTab(self._database_tab(), "Databases")
-        self.right_tabs.addTab(self._plot_view_tab(), "View")
         self._layout_state.add_pin_corner(self.right_tabs, self._show_quick_help)
         self._layout_state.restore()
         self._layout_state.apply_lock()
@@ -1290,6 +1364,9 @@ class PhaseFinderWindow(
         reset_plot_range: bool = False,
         refresh_observed: bool = False,
     ) -> None:
+        queue = getattr(self, "visible_profile_calculation_queue", None)
+        if queue is not None:
+            queue.clear()
         self.pattern_display_order_ids = [pattern.id for pattern in self.project.patterns]
         self._clear_probability_caches()
         self.match_candidates.clear()
@@ -1364,6 +1441,10 @@ class PhaseFinderWindow(
             if response == QMessageBox.StandardButton.Save and not self._save_project():
                 event.ignore()
                 return
+        self._stop_candidate_batch_updates()
+        queue = getattr(self, "visible_profile_calculation_queue", None)
+        if queue is not None:
+            queue.clear()
         self.candidate_search_service.shutdown_background_downloads()
         event.accept()
 
@@ -1862,6 +1943,7 @@ class PhaseFinderWindow(
             self._redraw_estimated_background_components_for_current_view(
                 active_pattern_id if incremental else None
             )
+        deferred_pattern_ids: list[str] = []
         try:
             preview_required_pattern_id: str | None = None
             for pattern in patterns:
@@ -1878,6 +1960,8 @@ class PhaseFinderWindow(
                     cache_only=bool(self.show_all_selected_patterns and not is_active),
                 )
                 if result is None:
+                    if self.show_all_selected_patterns and not is_active:
+                        deferred_pattern_ids.append(pattern.id)
                     continue
                 for candidate in candidate_by_key.values():
                     if not isinstance(candidate, dict) or candidate.get("_CifPath"):
@@ -1992,6 +2076,39 @@ class PhaseFinderWindow(
             except Exception:
                 # A preview is supplementary; it must never interrupt analysis.
                 pass
+        queue = getattr(self, "visible_profile_calculation_queue", None)
+        if queue is not None and deferred_pattern_ids:
+            queue.schedule(deferred_pattern_ids)
+
+    def _calculate_visible_profile(self, pattern_id: str) -> None:
+        if not self.show_all_selected_patterns:
+            return
+        visible_by_id = {
+            pattern.id: pattern
+            for pattern in self._patterns_to_display()
+            if pattern is not None
+        }
+        pattern = visible_by_id.get(pattern_id)
+        if pattern is None:
+            return
+        candidates = self._profile_candidates_for_pattern(pattern)
+        if not candidates:
+            return
+        previous_network_suppression = bool(getattr(self, "_suppress_candidate_network", False))
+        self._suppress_candidate_network = True
+        try:
+            result, _candidate_by_key = self._finder_result_for_pattern(
+                pattern,
+                candidates,
+                cache_only=False,
+            )
+        except Exception as exc:
+            self._set_background_status(f"Profile {pattern.name}: {exc}")
+            return
+        finally:
+            self._suppress_candidate_network = previous_network_suppression
+        if result is not None:
+            self._recalculate_match_profile(auto_zoom=False, active_only=False)
 
     def _pattern_has_saved_background_components(self, pattern) -> bool:
         if pattern is None:
@@ -2155,7 +2272,7 @@ class PhaseFinderWindow(
         pattern = self._active_pattern()
         pattern_id = getattr(pattern, "id", "") if pattern is not None else ""
         source_path = getattr(pattern, "source_path", "") if pattern is not None else ""
-        wavelength = round(float(getattr(pattern, "wavelength", None) or CU_KA1_WAVELENGTH), 6)
+        wavelength, include_kalpha2 = self._legacy_radiation_for_pattern(pattern)
         processed = self._active_scoring_observed_data()
         data_len = int(len(processed)) if processed is not None else -1
         data_signature = self._processed_probability_signature(processed)
@@ -2163,7 +2280,8 @@ class PhaseFinderWindow(
         return (
             pattern_id,
             source_path,
-            wavelength,
+            round(float(wavelength), 6),
+            bool(include_kalpha2),
             getattr(self, "_scoring_source", "Auto"),
             self._active_background_removed(),
             data_len,
@@ -2761,9 +2879,7 @@ class PhaseFinderWindow(
             "Formula": row[2] if len(row) > 2 else "",
             "Phase": row[3] if len(row) > 3 else "",
         }
-        peaks = self._candidate_cached_json_peaks(candidate)
-        if not peaks:
-            peaks = self._candidate_cif_peaks_for_gain(candidate)
+        peaks = self._candidate_peaks_for_gain(candidate)
         if not peaks:
             return 0.0
         peaks = self._aligned_candidate_gain_peaks(candidate, peaks, context)
@@ -3203,50 +3319,12 @@ class PhaseFinderWindow(
         profile: np.ndarray,
         weights: np.ndarray,
     ) -> float:
-        target = np.asarray(target, dtype=float)
-        current = np.asarray(selected_total, dtype=float)
-        candidate = np.asarray(profile, dtype=float)
-        fit_weights = np.clip(np.asarray(weights, dtype=float), 0.0, None)
-        usable = (
-            np.isfinite(target)
-            & np.isfinite(current)
-            & np.isfinite(candidate)
-            & np.isfinite(fit_weights)
-            & (fit_weights > 0.0)
+        return fit_residual_candidate_scale(
+            target=target,
+            selected_total=selected_total,
+            profile=profile,
+            weights=weights,
         )
-        if not np.any(usable) or float(np.nanmax(candidate[usable])) <= 0.0:
-            return 0.0
-        residual = np.clip(target - current, 0.0, None)
-        weighted_profile = candidate * fit_weights
-        denominator = float(np.dot(weighted_profile[usable], candidate[usable]))
-        if denominator <= 1.0e-12:
-            return 0.0
-        initial = max(
-            0.0,
-            float(np.dot(weighted_profile[usable], residual[usable])) / denominator,
-        )
-        if initial <= 1.0e-12:
-            return 0.0
-        before_error = self._weighted_gain_error(
-            target,
-            current,
-            fit_weights,
-            excess_penalty=5.0,
-        )
-        best_scale = 0.0
-        best_error = before_error
-        for factor in np.linspace(0.05, 1.35, 27):
-            scale = initial * float(factor)
-            error = self._weighted_gain_error(
-                target,
-                current + candidate * scale,
-                fit_weights,
-                excess_penalty=5.0,
-            )
-            if error < best_error:
-                best_error = error
-                best_scale = scale
-        return float(best_scale)
 
     def _adjusted_gain_peaks(self, candidate: dict[str, str], peaks: list[HKLPeak]) -> list[HKLPeak]:
         if not peaks:
@@ -3502,13 +3580,14 @@ class PhaseFinderWindow(
 
     def _profile_from_gain_peaks(self, peaks: list[HKLPeak], x: np.ndarray, fwhm: float, eta: float = 0.0) -> np.ndarray | None:
         try:
+            wavelength, include_kalpha2 = self._legacy_radiation_for_pattern(self._active_pattern())
             _grid, profile = calculated_profile_from_peaks(
                 peaks,
                 x,
                 fwhm=fwhm,
                 eta=eta,
-                wavelength=self._active_wavelength(),
-                include_kalpha2=True,
+                wavelength=wavelength,
+                include_kalpha2=include_kalpha2,
             )
         except Exception:
             return None
@@ -3623,8 +3702,15 @@ class PhaseFinderWindow(
         source = self._candidate_source(candidate)
         if source not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD", "PDF2"}:
             return 0.0
-        peaks = self._pdf2_peaks_for_candidate(candidate) if source == "PDF2" else self._candidate_cached_json_peaks(candidate)
-        cif_path = None if peaks else self._candidate_local_cif_path(candidate)
+        if source == "PDF2":
+            peaks = self._pdf2_peaks_for_candidate(candidate)
+        else:
+            peaks = self._candidate_indexed_peaks(candidate)
+            if not peaks and allow_cif_fallback:
+                peaks = self._candidate_cached_json_peaks(candidate)
+        cif_path = None
+        if not peaks and allow_cif_fallback:
+            cif_path = self._candidate_local_cif_path(candidate)
         if not peaks and cif_path is None:
             return 0.0
         probability_key = self._candidate_probability_key(candidate, cif_path)
@@ -3718,14 +3804,20 @@ class PhaseFinderWindow(
         if cif_path is None:
             source = self._candidate_source(candidate)
             entry_id = candidate.get("Entry", "")
-            entry = self.local_phase_cache.get(source, entry_id) if source and entry_id else None
-            peaks_json = getattr(entry, "peaks_json", "") if entry is not None else ""
-            file_key = (
-                "cached-peaks",
-                int(getattr(entry, "derived_version", 0) or 0) if entry is not None else 0,
-                len(peaks_json),
-                peaks_json[:32],
-            )
+            provider = getattr(self, "candidate_line_provider", None)
+            resolution = provider.resolve(candidate) if provider is not None else None
+            line_set = getattr(resolution, "line_set", None)
+            if line_set is not None:
+                file_key = ("indexed-lines", line_set.fingerprint)
+            else:
+                entry = self.local_phase_cache.get(source, entry_id) if source and entry_id else None
+                peaks_json = getattr(entry, "peaks_json", "") if entry is not None else ""
+                file_key = (
+                    "cached-peaks",
+                    int(getattr(entry, "derived_version", 0) or 0) if entry is not None else 0,
+                    len(peaks_json),
+                    peaks_json[:32],
+                )
         else:
             try:
                 stat = cif_path.stat()
@@ -3905,6 +3997,8 @@ class PhaseFinderWindow(
             cif_path = self._candidate_cif_path(candidate)
             _phase, structure = create_phase_from_cif(cif_path)
             observed = self._active_observed_data()
+            active_pattern = self._active_pattern()
+            wavelength, include_kalpha2 = self._legacy_radiation_for_pattern(active_pattern)
             self._clear_transient_candidate_preview()
             before_counts = self._transient_candidate_preview_counts()
             overlay = prepare_structure_overlay(
@@ -3915,6 +4009,9 @@ class PhaseFinderWindow(
                 observed_peak_positions=self._observed_peak_positions,
                 estimate_profile_fwhm=self._estimate_profile_fwhm,
                 estimate_phase_alignment=self._estimate_phase_alignment,
+                wavelength=wavelength,
+                include_kalpha2=include_kalpha2,
+                profile_fwhm_override=self._legacy_fwhm_for_pattern(active_pattern),
             )
             draw_structure_overlay(
                 overlay=overlay,
@@ -4035,6 +4132,8 @@ class PhaseFinderWindow(
         else:
             self._clear_calculated_overlay()
         observed = self._active_observed_data()
+        active_pattern = self._active_pattern()
+        wavelength, include_kalpha2 = self._legacy_radiation_for_pattern(active_pattern)
         overlay = prepare_structure_overlay(
             structure=structure,
             observed=observed,
@@ -4043,6 +4142,9 @@ class PhaseFinderWindow(
             observed_peak_positions=self._observed_peak_positions,
             estimate_profile_fwhm=self._estimate_profile_fwhm,
             estimate_phase_alignment=self._estimate_phase_alignment,
+            wavelength=wavelength,
+            include_kalpha2=include_kalpha2,
+            profile_fwhm_override=self._legacy_fwhm_for_pattern(active_pattern),
         )
         draw_structure_overlay(
             overlay=overlay,
@@ -4115,8 +4217,13 @@ class PhaseFinderWindow(
 
     def _reset_candidate_search_table(self) -> None:
         self._auto_search_token = int(getattr(self, "_auto_search_token", 0)) + 1
-        if self.finder_action_bar is not None:
-            self.finder_action_bar.set_auto_search_busy(False)
+        self._candidate_search_request_token = int(
+            getattr(self, "_candidate_search_request_token", 0)
+        ) + 1
+        controller = getattr(self, "_candidate_batch_updates", None)
+        if controller is not None:
+            controller.stop()
+        self._set_auto_search_busy(False)
         self._reset_selected_elements()
         if self.search_input is not None:
             self.search_input.clear()
@@ -4260,5 +4367,10 @@ class PhaseFinderWindow(
         self.candidate_table.set_rows(rows, lambda row: row)
         if hasattr(self, "_update_profile_view_context"):
             self._update_profile_view_context()
-        if rows and normalize_candidate_row(rows[0])[0]:
-            self._update_compound_card(self._candidate_row_values(0))
+        active_row = self.candidate_table.currentRow()
+        if active_row < 0 and rows and normalize_candidate_row(rows[0])[0]:
+            active_row = 0
+        if active_row >= 0:
+            candidate = self._candidate_row_values(active_row)
+            if candidate.get("Source", "").strip():
+                self._update_compound_card(candidate)

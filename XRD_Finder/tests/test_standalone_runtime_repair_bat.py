@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import os
+import shutil
 import sys
 import unittest
 from pathlib import Path
@@ -27,6 +28,7 @@ def run_bat(*arguments: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+@unittest.skipUnless(shutil.which("cmd.exe"), "Windows cmd.exe is required")
 class StandaloneRuntimeRepairBatTests(unittest.TestCase):
     def test_describe_reports_complete_mandatory_repair_contract(self) -> None:
         result = run_bat("--describe")
@@ -34,6 +36,7 @@ class StandaloneRuntimeRepairBatTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         output = result.stdout
         self.assertIn(r"SCI_ENV=%LocalAppData%\Sci\env", output)
+        self.assertIn("cristma==0.1.0b9", output)
         self.assertIn("gemmi", output)
         self.assertIn("numpy", output)
         self.assertIn("pybaselines", output)

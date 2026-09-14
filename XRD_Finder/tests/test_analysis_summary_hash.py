@@ -4,7 +4,12 @@ from copy import deepcopy
 import math
 import unittest
 
-from xrd_finder.io.analysis_summary import compute_result_sha256, scientific_projection
+from xrd_finder.io.analysis_summary import (
+    compute_result_sha256,
+    finalize_analysis_summary,
+    scientific_projection,
+    verify_analysis_summary,
+)
 
 
 def _summary() -> dict:
@@ -63,6 +68,22 @@ def _summary() -> dict:
 
 
 class AnalysisSummaryHashTest(unittest.TestCase):
+    def test_legacy_summary_without_measurement_remains_valid(self) -> None:
+        summary = finalize_analysis_summary(_summary())
+
+        verify_analysis_summary(summary)
+
+    def test_measurement_rejects_non_positive_wavelength(self) -> None:
+        summary = _summary()
+        summary["patterns"][0]["measurement"] = {
+            "x_unit": "2theta",
+            "y_unit": "intensity",
+            "wavelength_angstrom": 0.0,
+        }
+
+        with self.assertRaisesRegex(ValueError, "wavelength_angstrom"):
+            finalize_analysis_summary(summary)
+
     def test_excluded_metadata_and_array_order_do_not_change_result_hash(self) -> None:
         first = _summary()
         second = deepcopy(first)

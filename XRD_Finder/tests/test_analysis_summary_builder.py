@@ -8,10 +8,57 @@ import hashlib
 
 from xrd_finder.core.pattern import Pattern
 from xrd_finder.core.project import Project
+from xrd_finder.instrument.models import InstrumentProfile
 from xrd_finder.io.analysis_summary_builder import build_analysis_summary, result_snapshot
 
 
 class AnalysisSummaryBuilderTest(unittest.TestCase):
+    def test_pattern_measurement_preserves_full_instrument_profile(self) -> None:
+        pattern = Pattern.create("Instrument sample")
+        profile = InstrumentProfile.default_cu_kalpha()
+        pattern.instrument_profile = profile.to_dict()
+        project = Project(name="Instrument project", patterns=[pattern])
+        project.finder_state.profile_states = {
+            pattern.id: {"result_snapshot": _snapshot([])}
+        }
+
+        summary = build_analysis_summary(
+            project,
+            "1.5.0",
+            generated_at="2026-09-10T00:00:00Z",
+            revision_id="REV-INSTRUMENT",
+        )
+
+        measurement = summary["patterns"][0]["measurement"]
+        self.assertEqual(measurement["x_unit"], "2theta")
+        self.assertEqual(measurement["y_unit"], "intensity")
+        self.assertEqual(measurement["wavelength_angstrom"], 1.54056)
+        self.assertEqual(measurement["instrument_profile"], profile.to_dict())
+
+    def test_legacy_pattern_measurement_uses_stored_wavelength_without_profile(self) -> None:
+        pattern = Pattern.create("Legacy wavelength sample")
+        pattern.wavelength = 1.78897
+        project = Project(name="Legacy project", patterns=[pattern])
+        project.finder_state.profile_states = {
+            pattern.id: {"result_snapshot": _snapshot([])}
+        }
+
+        summary = build_analysis_summary(
+            project,
+            "1.5.0",
+            generated_at="2026-09-10T00:00:00Z",
+            revision_id="REV-LEGACY",
+        )
+
+        self.assertEqual(
+            summary["patterns"][0]["measurement"],
+            {
+                "x_unit": "2theta",
+                "y_unit": "intensity",
+                "wavelength_angstrom": 1.78897,
+            },
+        )
+
     def test_result_snapshot_identifies_the_actual_cif_content(self) -> None:
         with TemporaryDirectory() as directory:
             cif_path = Path(directory) / "phase.cif"
@@ -76,6 +123,85 @@ class AnalysisSummaryBuilderTest(unittest.TestCase):
         self.assertEqual(snapshot["unknown_peaks"], [
             {"two_theta": 31.7, "intensity": 20.0, "significance": None}
         ])
+
+    def test_estimated_cell_is_stored_as_a_pattern_specific_starting_value(self) -> None:
+        candidate = {
+            "Source": "COD",
+            "Entry": "1011002",
+            "Phase": "Gehlenite",
+            "Formula": "Al2 Ca2 O7 Si",
+        }
+        result = SimpleNamespace(
+            candidates=[
+                SimpleNamespace(
+                    entry_id="COD:1011002",
+                    quantity_percent=72.0,
+                    estimated_cell={
+                        "a": 7.71,
+                        "b": 7.71,
+                        "c": 5.03,
+                        "alpha": 90.0,
+                        "beta": 90.0,
+                        "gamma": 90.0,
+                        "volume": 298.96,
+                    },
+                    cell_fit_peaks=11,
+                    cell_fit_initial_rms_deg=0.143,
+                    cell_fit_rms_deg=0.029,
+                    fwhm=0.184,
+                    profile_eta=0.31,
+                )
+            ],
+            observed_peaks=[],
+            global_zero_shift=0.076,
+            fwhm=0.172,
+            profile_eta=0.28,
+        )
+
+        snapshot = result_snapshot(
+            result,
+            {"COD:1011002": candidate},
+            fit_score_percent=87.0,
+            explained_peaks=24,
+            total_peaks=27,
+        )
+
+        phase = snapshot["phases"][0]
+        self.assertEqual(phase["estimated_starting_cell"]["a"], 7.71)
+        self.assertEqual(
+            phase["cell_fit"],
+            {
+                "method": "indexed_peak_least_squares",
+                "is_estimate": True,
+                "indexed_peaks": 11,
+                "initial_rms_deg": 0.143,
+                "rms_deg": 0.029,
+            },
+        )
+        self.assertEqual(
+            phase["profile_starting_values"],
+            {"fwhm_deg": 0.184, "pseudo_voigt_eta": 0.31},
+        )
+        self.assertEqual(snapshot["fit"]["zero_shift_deg"], 0.076)
+        self.assertEqual(snapshot["fit"]["fwhm_deg"], 0.172)
+        self.assertEqual(snapshot["fit"]["pseudo_voigt_eta"], 0.28)
+
+        pattern = Pattern.create("Gehlenite sample")
+        project = Project(name="Starting values", patterns=[pattern])
+        project.finder_state.profile_states = {
+            pattern.id: {"result_snapshot": snapshot}
+        }
+        summary = build_analysis_summary(
+            project,
+            "1.5.0",
+            generated_at="2026-09-10T00:00:00Z",
+            revision_id="REV-CELL",
+        )
+
+        phase_reference = summary["patterns"][0]["phases"][0]
+        self.assertEqual(phase_reference["estimated_starting_cell"]["c"], 5.03)
+        self.assertEqual(phase_reference["cell_fit"]["indexed_peaks"], 11)
+        self.assertEqual(phase_reference["profile_starting_values"]["fwhm_deg"], 0.184)
 
     def test_shared_phase_is_catalogued_once_and_referenced_by_each_pattern(self) -> None:
         first = Pattern.create("003-00125")

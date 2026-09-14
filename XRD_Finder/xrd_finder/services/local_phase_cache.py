@@ -20,6 +20,7 @@ from xrd_finder.services.cod_online_service import CodEntry, CodOnlineService, f
 
 DEFAULT_CACHE_ROOT = default_phase_cache_root()
 DERIVED_CACHE_VERSION = 9
+INCOMPLETE_SEARCH_MAX_AGE_SECONDS = 30 * 60
 
 
 def _embedded_source_dir_name(source: str) -> str:
@@ -88,23 +89,67 @@ class LocalPhaseCache:
     def search_is_fresh(self, source: str, query_key: str, max_age_seconds: float = 7 * 24 * 60 * 60) -> bool:
         with self._connect() as connection:
             row = connection.execute(
-                "select updated_at from search_cache where source = ? and query_key = ?",
+                "select updated_at, complete from search_cache where source = ? and query_key = ?",
                 (source, query_key),
             ).fetchone()
         if not row:
             return False
-        return (time.time() - float(row["updated_at"])) < max_age_seconds
+        freshness = (
+            float(max_age_seconds)
+            if bool(row["complete"])
+            else float(INCOMPLETE_SEARCH_MAX_AGE_SECONDS)
+        )
+        return (time.time() - float(row["updated_at"])) < freshness
 
     def mark_search(self, source: str, query_key: str) -> None:
+        self.record_search_attempt(source, query_key, result_limit=0, complete=True)
+
+    def record_search_attempt(
+        self,
+        source: str,
+        query_key: str,
+        *,
+        result_limit: int,
+        complete: bool,
+    ) -> None:
         with self._connect() as connection:
             connection.execute(
                 """
-                insert into search_cache(source, query_key, updated_at)
-                values(?, ?, ?)
-                on conflict(source, query_key) do update set updated_at = excluded.updated_at
+                insert into search_cache(source, query_key, updated_at, result_limit, complete)
+                values(?, ?, ?, ?, ?)
+                on conflict(source, query_key) do update set
+                    updated_at = excluded.updated_at,
+                    result_limit = excluded.result_limit,
+                    complete = excluded.complete
                 """,
-                (source, query_key, time.time()),
+                (
+                    str(source),
+                    str(query_key),
+                    time.time(),
+                    max(0, int(result_limit)),
+                    int(bool(complete)),
+                ),
             )
+
+    def next_search_limit(
+        self,
+        source: str,
+        query_key: str,
+        *,
+        base_limit: int,
+        maximum_limit: int,
+    ) -> int:
+        base = max(1, int(base_limit))
+        maximum = max(base, int(maximum_limit))
+        with self._connect() as connection:
+            row = connection.execute(
+                "select result_limit, complete from search_cache where source = ? and query_key = ?",
+                (source, query_key),
+            ).fetchone()
+        if not row or bool(row["complete"]):
+            return base
+        previous = max(0, int(row["result_limit"] or 0))
+        return min(maximum, max(base, previous + base))
 
     def upsert_cod_entries(self, entries: list[CodEntry]) -> None:
         with self._connect() as connection:
@@ -467,6 +512,20 @@ class LocalPhaseCache:
             ).fetchone()
         return self._row_to_entry(row) if row else None
 
+    def peak_records(self, source: str, entry_id: str) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                select peak_index, two_theta, d, intensity, norm_intensity, top_rank,
+                       raw_intensity, h, k, l, multiplicity
+                from phase_peaks
+                where source = ? and entry_id = ?
+                order by peak_index
+                """,
+                (str(source or "").upper(), str(entry_id or "")),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def entries_with_peaks(self, sources: list[str] | None = None, limit: int | None = None) -> list[CachedPhaseEntry]:
         where = ["peaks_json != ''"]
         params: list[object] = []
@@ -787,6 +846,8 @@ class LocalPhaseCache:
                     source text not null,
                     query_key text not null,
                     updated_at real not null,
+                    result_limit integer not null default 0,
+                    complete integer not null default 1,
                     primary key (source, query_key)
                 )
                 """
@@ -839,6 +900,17 @@ class LocalPhaseCache:
             if "formula_key" not in existing:
                 connection.execute("alter table phases add column formula_key text not null default ''")
                 connection.execute("update phases set formula_key = lower(replace(formula, ' ', '')) where formula_key = ''")
+            search_existing = {
+                row[1] for row in connection.execute("pragma table_info(search_cache)").fetchall()
+            }
+            if "result_limit" not in search_existing:
+                connection.execute(
+                    "alter table search_cache add column result_limit integer not null default 0"
+                )
+            if "complete" not in search_existing:
+                connection.execute(
+                    "alter table search_cache add column complete integer not null default 1"
+                )
             peak_existing = {row[1] for row in connection.execute("pragma table_info(phase_peaks)").fetchall()}
             rebuild_peak_index = False
             if "norm_intensity" not in peak_existing:

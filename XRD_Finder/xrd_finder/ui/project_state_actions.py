@@ -155,20 +155,21 @@ class PhaseFinderProjectStateActionsMixin:
         self.normalize_observed_patterns = bool(getattr(state, "normalize_observed_patterns", False))
         self.grid_visible = bool(state.grid_visible)
         self.show_hkl_labels = bool(state.show_hkl_labels)
-        if self.finder_action_bar is not None:
+        control_bar = getattr(self, "finder_plot_control_bar", None)
+        if control_bar is not None:
             mode = "All selected" if self.show_all_selected_patterns else "One"
             controls = (
-                self.finder_action_bar.pattern_display_mode,
-                self.finder_action_bar.pattern_offset_slider,
-                self.finder_action_bar.normalize_patterns_checkbox,
+                control_bar.pattern_display_mode,
+                control_bar.pattern_offset_slider,
+                control_bar.normalize_patterns_checkbox,
             )
             previous_signal_states = [control.blockSignals(True) for control in controls]
             try:
-                self.finder_action_bar.pattern_display_mode.setCurrentText(mode)
-                self.finder_action_bar.pattern_offset_slider.setValue(
+                control_bar.pattern_display_mode.setCurrentText(mode)
+                control_bar.pattern_offset_slider.setValue(
                     max(0, min(150, self.pattern_stack_offset_percent))
                 )
-                self.finder_action_bar.normalize_patterns_checkbox.setChecked(
+                control_bar.normalize_patterns_checkbox.setChecked(
                     self.normalize_observed_patterns
                 )
             finally:

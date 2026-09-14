@@ -52,6 +52,27 @@ def result_snapshot(
         structure_sha256 = _candidate_structure_sha256(candidate)
         if structure_sha256:
             phase_record["structure_sha256"] = structure_sha256
+        estimated_cell = _estimated_cell_payload(
+            getattr(candidate_result, "estimated_cell", None)
+        )
+        if estimated_cell:
+            phase_record["estimated_starting_cell"] = estimated_cell
+            phase_record["cell_fit"] = {
+                "method": "indexed_peak_least_squares",
+                "is_estimate": True,
+                "indexed_peaks": max(
+                    0, int(getattr(candidate_result, "cell_fit_peaks", 0) or 0)
+                ),
+                "initial_rms_deg": _nullable_finite_float(
+                    getattr(candidate_result, "cell_fit_initial_rms_deg", None)
+                ),
+                "rms_deg": _nullable_finite_float(
+                    getattr(candidate_result, "cell_fit_rms_deg", None)
+                ),
+            }
+        profile_values = _profile_starting_values(candidate_result)
+        if profile_values:
+            phase_record["profile_starting_values"] = profile_values
         phases.append(phase_record)
 
     unknown_peaks = []
@@ -70,18 +91,28 @@ def result_snapshot(
             }
         )
 
+    fit_record = {
+        "score_percent": float(fit_score_percent),
+        "explained_peaks": int(explained_peaks),
+        "total_peaks": int(total_peaks),
+        "unknown_peak_count": len(unknown_peaks),
+    }
+    for key, attribute in (
+        ("zero_shift_deg", "global_zero_shift"),
+        ("fwhm_deg", "fwhm"),
+        ("pseudo_voigt_eta", "profile_eta"),
+    ):
+        number = _nullable_finite_float(getattr(result, attribute, None))
+        if number is not None:
+            fit_record[key] = number
+
     return {
         "phases": phases,
         "quantification": {
             "method": "profile_scale_cell_mass",
             "is_estimate": True,
         },
-        "fit": {
-            "score_percent": float(fit_score_percent),
-            "explained_peaks": int(explained_peaks),
-            "total_peaks": int(total_peaks),
-            "unknown_peak_count": len(unknown_peaks),
-        },
+        "fit": fit_record,
         "unknown_peaks": unknown_peaks,
         "preview_path": None,
     }
@@ -125,12 +156,20 @@ def build_analysis_summary(
                 catalog_entry["structure_sha256"] = structure_sha256
             phase_catalog.setdefault(phase_id, catalog_entry)
             fraction = phase.get("fraction_percent")
-            phase_references.append(
-                {
-                    "phase_id": phase_id,
-                    "fraction_percent": None if fraction is None else float(fraction),
-                }
-            )
+            phase_reference = {
+                "phase_id": phase_id,
+                "fraction_percent": None if fraction is None else float(fraction),
+            }
+            estimated_cell = phase.get("estimated_starting_cell")
+            if isinstance(estimated_cell, dict) and estimated_cell:
+                phase_reference["estimated_starting_cell"] = deepcopy(estimated_cell)
+            cell_fit = phase.get("cell_fit")
+            if isinstance(cell_fit, dict) and cell_fit:
+                phase_reference["cell_fit"] = deepcopy(cell_fit)
+            profile_values = phase.get("profile_starting_values")
+            if isinstance(profile_values, dict) and profile_values:
+                phase_reference["profile_starting_values"] = deepcopy(profile_values)
+            phase_references.append(phase_reference)
 
         sample_ref = sample_refs.get(pattern_id)
         pattern = pattern_by_id[pattern_id]
@@ -139,6 +178,7 @@ def build_analysis_summary(
                 "pattern_id": pattern_id,
                 "title": pattern.name,
                 "sample_ref": deepcopy(sample_ref) if isinstance(sample_ref, dict) else None,
+                "measurement": _measurement_payload(pattern),
                 "phases": phase_references,
                 "quantification": deepcopy(
                     snapshot.get(
@@ -175,6 +215,29 @@ def build_analysis_summary(
     return finalized
 
 
+def _measurement_payload(pattern: Any) -> dict[str, Any]:
+    """Return the saved measurement context needed to reuse Finder estimates."""
+    payload: dict[str, Any] = {
+        "x_unit": str(getattr(pattern, "x_unit", "") or ""),
+        "y_unit": str(getattr(pattern, "y_unit", "") or ""),
+    }
+    instrument_profile = getattr(pattern, "instrument_profile", None)
+    if isinstance(instrument_profile, dict) and instrument_profile:
+        payload["instrument_profile"] = deepcopy(instrument_profile)
+
+    wavelength = _positive_finite_float(getattr(pattern, "wavelength", None))
+    if wavelength is None and isinstance(instrument_profile, dict):
+        radiation = instrument_profile.get("radiation")
+        components = radiation.get("components") if isinstance(radiation, dict) else None
+        if isinstance(components, list) and components and isinstance(components[0], dict):
+            wavelength = _positive_finite_float(
+                components[0].get("wavelength_angstrom")
+            )
+    if wavelength is not None:
+        payload["wavelength_angstrom"] = wavelength
+    return payload
+
+
 def _stable_phase_id(phase: dict[str, Any]) -> str:
     source = str(phase.get("source", "") or "").strip().upper()
     source_id = str(phase.get("source_id", "") or "").strip()
@@ -195,6 +258,33 @@ def _nullable_finite_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if number == number and abs(number) != float("inf") else None
+
+
+def _positive_finite_float(value: Any) -> float | None:
+    number = _nullable_finite_float(value)
+    return number if number is not None and number > 0.0 else None
+
+
+def _estimated_cell_payload(value: Any) -> dict[str, float]:
+    if not isinstance(value, dict):
+        return {}
+    payload = {}
+    for key in ("a", "b", "c", "alpha", "beta", "gamma", "volume"):
+        number = _nullable_finite_float(value.get(key))
+        if number is not None:
+            payload[key] = number
+    return payload
+
+
+def _profile_starting_values(candidate_result: Any) -> dict[str, float]:
+    payload = {}
+    fwhm = _nullable_finite_float(getattr(candidate_result, "fwhm", None))
+    eta = _nullable_finite_float(getattr(candidate_result, "profile_eta", None))
+    if fwhm is not None and fwhm > 0.0:
+        payload["fwhm_deg"] = fwhm
+    if eta is not None and 0.0 <= eta <= 1.0:
+        payload["pseudo_voigt_eta"] = eta
+    return payload
 
 
 def _candidate_structure_sha256(candidate: dict[str, Any]) -> str:
