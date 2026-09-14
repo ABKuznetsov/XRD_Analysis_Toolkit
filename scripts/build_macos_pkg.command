@@ -34,53 +34,60 @@ fi
 
 echo "Building macOS PKG: $PKG_PATH"
 rm -rf "$STAGE_ROOT"
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$APP_PAYLOAD_DIR" "$SCRIPTS_DIR" "$DIST_DIR"
+mkdir -p \
+    "$MACOS_DIR" \
+    "$RESOURCES_DIR" \
+    "$APP_PAYLOAD_DIR/XRD_Finder/xrd_finder" \
+    "$APP_PAYLOAD_DIR/toolkit" \
+    "$SCRIPTS_DIR" \
+    "$DIST_DIR"
 
 rsync -a \
-    --exclude ".git/" \
     --exclude ".DS_Store" \
     --exclude "._*" \
-    --exclude "__MACOSX/" \
     --exclude "__pycache__/" \
     --exclude "*.pyc" \
     --exclude "*.pyo" \
-    --exclude ".venv/" \
-    --exclude ".pytest_cache/" \
-    --exclude ".ruff_cache/" \
-    --exclude "build/" \
-    --exclude "dist/" \
-    --exclude "*.egg-info/" \
-    --exclude "PORTABLE_CHANGES.md" \
-    --exclude "PORTABLE_README.md" \
-    --exclude "docs/superpowers/" \
-    --exclude "manuscript_assets/" \
-    --exclude "manuscript_work/" \
-    --exclude "install_xrd_finder_windows_runtime.bat" \
-    --exclude "scripts/" \
-    --exclude "scripts/manuscript/" \
-    --exclude "XRD_Finder/benchmark_results/" \
-    --exclude "XRD_Finder/install_windows_runtime_direct.bat" \
-    --exclude "XRD_Finder/requirements-dev.txt" \
-    --exclude "XRD_Finder/scripts/" \
-    --exclude "XRD_Finder/tests/" \
-    --exclude "XRD_Finder/data/" \
-    --exclude "XRD_Craft/" \
-    --exclude "installer/craft_setup/" \
-    --exclude "XRD_Finder/xrd_finder.zip" \
-    --exclude "XRD_Finder/xrd_finder/app.py" \
-    --exclude "XRD_Finder/xrd_finder/io/exporters.py" \
-    --exclude "XRD_Finder/xrd_finder/services/thermo_service.py" \
-    --exclude "XRD_Finder/xrd_finder/services/solid_solution_service.py" \
-    --exclude "XRD_Finder/xrd_finder/services/structure_service.py" \
-    --exclude "XRD_Finder/xrd_finder/ui/legacy_windows.py" \
-    --exclude "XRD_Finder/xrd_finder/ui/main_window.py" \
-    "$ROOT/" "$APP_PAYLOAD_DIR/"
+    --exclude "app.py" \
+    --exclude "io/exporters.py" \
+    --exclude "services/thermo_service.py" \
+    --exclude "services/solid_solution_service.py" \
+    --exclude "services/structure_service.py" \
+    --exclude "ui/legacy_windows.py" \
+    --exclude "ui/main_window.py" \
+    "$ROOT/XRD_Finder/xrd_finder/" \
+    "$APP_PAYLOAD_DIR/XRD_Finder/xrd_finder/"
+
+for runtime_file in \
+    "XRD_Finder/app.json" \
+    "XRD_Finder/Entry_96-100-0018.cif" \
+    "XRD_Finder/requirements.txt" \
+    "XRD_Finder/icon.png" \
+    "toolkit/launch_xrd_finder_preview.command" \
+    "toolkit/launch_xrd_finder_preview_macos.py" \
+    "toolkit/setup_sci_env.command" \
+    "toolkit/manifest.json" \
+    "LICENSE"
+do
+    target="$APP_PAYLOAD_DIR/$runtime_file"
+    mkdir -p "$(dirname "$target")"
+    cp -p "$ROOT/$runtime_file" "$target"
+done
 
 FORBIDDEN_PAYLOAD="$(find "$APP_PAYLOAD_DIR" \
     \( -iname '*xrd_craft*' -o -iname '*xrd craft*' -o -iname '*crystal_viewer*' \) \
     -print -quit)"
 if [ -n "$FORBIDDEN_PAYLOAD" ]; then
     echo "Forbidden CRAFT payload in Finder package: $FORBIDDEN_PAYLOAD"
+    exit 1
+fi
+
+FORBIDDEN_NON_RUNTIME="$(find "$APP_PAYLOAD_DIR" \
+    \( -type d \( -name docs -o -name tests -o -name installer \) \
+    -o -type f \( -name 'RELEASE_NOTES_*' -o -name 'requirements-dev.txt' \) \) \
+    -print -quit)"
+if [ -n "$FORBIDDEN_NON_RUNTIME" ]; then
+    echo "Forbidden non-runtime payload in Finder package: $FORBIDDEN_NON_RUNTIME"
     exit 1
 fi
 
@@ -94,7 +101,7 @@ do
     fi
 done
 
-chmod +x "$APP_PAYLOAD_DIR"/install_macos.command "$APP_PAYLOAD_DIR"/update_macos.command "$APP_PAYLOAD_DIR"/toolkit/*.command "$APP_PAYLOAD_DIR"/XRD_Finder/*.command 2>/dev/null || true
+chmod +x "$APP_PAYLOAD_DIR"/toolkit/*.command
 
 if [ -f "$APP_PAYLOAD_DIR/XRD_Finder/icon.png" ]; then
     cp "$APP_PAYLOAD_DIR/XRD_Finder/icon.png" "$RESOURCES_DIR/icon.png"

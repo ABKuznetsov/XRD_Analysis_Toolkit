@@ -20,31 +20,41 @@ def test_macos_pkg_keeps_and_validates_required_finder_modules() -> None:
         assert module in script
 
 
-def test_macos_pkg_excludes_local_development_artifacts() -> None:
+def test_macos_pkg_uses_a_runtime_payload_allowlist() -> None:
     script = BUILD_SCRIPT.read_text(encoding="utf-8")
-    excluded_paths = (
-        ".ruff_cache/",
-        "PORTABLE_CHANGES.md",
-        "PORTABLE_README.md",
-        "docs/superpowers/",
-        "manuscript_work/",
-        "scripts/",
-        "XRD_Finder/benchmark_results/",
-        "XRD_Finder/requirements-dev.txt",
-        "XRD_Finder/scripts/",
-        "XRD_Finder/xrd_finder.zip",
-        "XRD_Finder/install_windows_runtime_direct.bat",
-        "install_xrd_finder_windows_runtime.bat",
+    required_sources = (
+        "XRD_Finder/xrd_finder/",
+        "XRD_Finder/app.json",
+        "XRD_Finder/Entry_96-100-0018.cif",
+        "XRD_Finder/requirements.txt",
+        "XRD_Finder/icon.png",
+        "toolkit/launch_xrd_finder_preview.command",
+        "toolkit/launch_xrd_finder_preview_macos.py",
+        "toolkit/setup_sci_env.command",
+        "toolkit/manifest.json",
+        "LICENSE",
     )
-    for path in excluded_paths:
-        assert f'--exclude "{path}"' in script
+    for path in required_sources:
+        assert path in script
+
+    assert '"$ROOT/" "$APP_PAYLOAD_DIR/"' not in script
+    assert "Forbidden non-runtime payload" in script
+    for legacy_module in (
+        "app.py",
+        "io/exporters.py",
+        "services/thermo_service.py",
+        "services/solid_solution_service.py",
+        "services/structure_service.py",
+        "ui/legacy_windows.py",
+        "ui/main_window.py",
+    ):
+        assert f'--exclude "{legacy_module}"' in script
 
 
 def test_macos_pkg_explicitly_rejects_craft_payload() -> None:
     script = BUILD_SCRIPT.read_text(encoding="utf-8")
 
-    assert '--exclude "XRD_Craft/"' in script
-    assert '--exclude "installer/craft_setup/"' in script
+    assert '"$ROOT/" "$APP_PAYLOAD_DIR/"' not in script
     assert "Forbidden CRAFT payload" in script
 
 

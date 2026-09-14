@@ -205,12 +205,6 @@ Manual update from a source checkout:
 update_macos.command
 ```
 
-Optional maintainer-only DMG build on macOS:
-
-```text
-scripts/build_macos_dmg.command
-```
-
 ## Linux
 
 Linux is currently source-checkout based:
@@ -338,7 +332,6 @@ to return to the full view.
 XRD_Analysis_Toolkit/
     README.md
     CHANGELOG.md
-    PROJECT_HEALTH.md
     THIRD_PARTY_DATA_SOURCES.md
         Project documentation, release history and data-source notes
 

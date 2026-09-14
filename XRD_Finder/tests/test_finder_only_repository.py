@@ -31,3 +31,26 @@ def test_finder_release_surfaces_do_not_reference_craft() -> None:
     for path in paths:
         source = path.read_text(encoding="utf-8-sig").casefold()
         assert all(token not in source for token in forbidden_tokens), path
+
+
+def test_obsolete_manager_scaffolding_is_absent() -> None:
+    obsolete = (
+        "PROJECT_HEALTH.md",
+        "scripts/build_macos_dmg.command",
+        "XRD_Finder/xrd_finder/app.py",
+        "XRD_Finder/xrd_finder/io/exporters.py",
+        "XRD_Finder/xrd_finder/services/thermo_service.py",
+        "XRD_Finder/xrd_finder/services/solid_solution_service.py",
+        "XRD_Finder/xrd_finder/services/structure_service.py",
+        "XRD_Finder/xrd_finder/ui/legacy_windows.py",
+        "XRD_Finder/xrd_finder/ui/main_window.py",
+        "XRD_Finder/tests/solid_solution_probe.py",
+    )
+
+    assert [path for path in obsolete if (ROOT / path).exists()] == []
+
+
+def test_only_current_finder_release_notes_remain() -> None:
+    notes = sorted(path.name for path in (ROOT / "XRD_Finder").glob("RELEASE_NOTES_*.md"))
+
+    assert notes == ["RELEASE_NOTES_1.5.0.md"]
