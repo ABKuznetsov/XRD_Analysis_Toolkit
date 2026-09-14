@@ -117,6 +117,16 @@ def download_file(url: str, target: Path, expected_sha256: str = "") -> None:
         raise RuntimeError("Downloaded installer checksum does not match the manifest.")
 
 
+def exception_message(exc: BaseException) -> str:
+    detail = str(exc).strip()
+    if detail:
+        return detail
+    reason = getattr(exc, "reason", None)
+    if reason:
+        return str(reason).strip() or exc.__class__.__name__
+    return exc.__class__.__name__
+
+
 def runtime_is_usable(python: Path) -> tuple[bool, str]:
     if not python.exists():
         return False, "Python executable is missing"
@@ -390,15 +400,37 @@ class PreviewApp:
             if not target.name:
                 target = self.update_root / f"XRD_Phase_Finder_macOS_{latest}.pkg"
             self.set_step(3, "Downloading", "Downloading macOS installer")
-            download_file(installer_url, target, sha256)
-            (self.update_root / f"{APP_ID}.json").write_text(json.dumps(update_status, indent=2), encoding="utf-8")
-            self.set_step(3, "Ready", "Starting macOS installer", "green")
-            subprocess.Popen(["open", str(target)])
-            self.root.after(300, self.root.destroy)
-            return True
+            try:
+                download_file(installer_url, target, sha256)
+                (self.update_root / f"{APP_ID}.json").write_text(json.dumps(update_status, indent=2), encoding="utf-8")
+                self.set_step(3, "Ready", "Starting macOS installer", "green")
+                subprocess.Popen(["open", str(target)])
+                self.root.after(300, self.root.destroy)
+                return True
+            except Exception as download_error:
+                detail = exception_message(download_error)
+                update_status["error"] = detail
+                try:
+                    (self.update_root / f"{APP_ID}.json").write_text(json.dumps(update_status, indent=2), encoding="utf-8")
+                except OSError:
+                    pass
+                self.set_step(3, "Failed", "Update download failed", "red")
+                fallback_url = str(remote_app.get("release_url") or release_url or "")
+                fallback = messagebox.askyesno(
+                    "XRD Phase Finder update failed",
+                    "The update was found, but the macOS installer could not be downloaded or started.\n\n"
+                    f"Reason:\n{detail}\n\n"
+                    "Open the GitHub release page instead?",
+                    parent=self.root,
+                )
+                if fallback and fallback_url:
+                    subprocess.Popen(["open", fallback_url])
+                    self.root.after(300, self.root.destroy)
+                    return True
+                return False
         except Exception as exc:
-            update_status["error"] = str(exc)
-            self.set_step(3, "Offline", "No network; continuing with the installed version", "muted")
+            update_status["error"] = exception_message(exc)
+            self.set_step(3, "Offline", "Update check unavailable", "muted")
             try:
                 (self.update_root / f"{APP_ID}.json").write_text(json.dumps(update_status, indent=2), encoding="utf-8")
             except OSError:
