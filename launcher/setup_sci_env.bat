@@ -103,9 +103,14 @@ if exist "%PYTHON_EXE%" (
         echo Existing Sci Python can be launched. Repairing packages in place.>> "%LOG_FILE%"
         exit /b 0
     )
-    echo ERROR: Existing Sci Python cannot be launched or uses an unsupported version.
-    echo Existing Sci environment was preserved and requires explicit repair: %SCI_ENV%>> "%LOG_FILE%"
-    exit /b 1
+    echo Existing Sci Python cannot be launched or uses an unsupported version.
+    echo Removing broken Sci environment: %SCI_ENV%>> "%LOG_FILE%"
+    rmdir /s /q "%SCI_ENV%" >> "%LOG_FILE%" 2>&1
+    if exist "%SCI_ENV%" (
+        echo ERROR: Broken Sci environment could not be removed.
+        echo Broken Sci environment could not be removed: %SCI_ENV%>> "%LOG_FILE%"
+        exit /b 1
+    )
 )
 
 call :find_python

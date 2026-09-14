@@ -7,7 +7,7 @@ import sys
 import time
 
 from PySide6.QtGui import QIcon
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from xrd_finder import __version__
@@ -87,7 +87,12 @@ def _run_gui() -> int:
         while not signal_path.exists() and time.monotonic() < deadline:
             app.processEvents()
             time.sleep(0.05)
-    window.show()
+    window.setWindowState(window.windowState() & ~Qt.WindowState.WindowMinimized)
+    window.showNormal()
+    window.raise_()
+    window.activateWindow()
+    QTimer.singleShot(250, window.raise_)
+    QTimer.singleShot(250, window.activateWindow)
     if load_error:
         QTimer.singleShot(0, lambda: QMessageBox.warning(window, "Open project failed", load_error))
     app.processEvents()

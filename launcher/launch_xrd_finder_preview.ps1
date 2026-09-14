@@ -764,7 +764,10 @@ try {
     } else {
         $env:PYTHONPATH = $appPackageRoot
     }
-    $startupLog = ""
+    Ensure-Folder $logsRoot
+    $startupLog = Join-Path $logsRoot "xrd_finder_console.log"
+    $startupLogHeader = "[" + (Get-Date).ToString("s") + "] Starting XRD Phase Finder"
+    $startupLogHeader | Set-Content -LiteralPath $startupLog -Encoding UTF8
     $readyFile = Join-Path $logsRoot "xrd_finder_ready.flag"
     $preparedFile = Join-Path $logsRoot "xrd_finder_prepared.flag"
     $showSignalFile = Join-Path $logsRoot "xrd_finder_show.signal"
@@ -781,6 +784,8 @@ try {
     $startInfo.WorkingDirectory = $appRoot
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
     $startInfo.EnvironmentVariables["PYTHONDONTWRITEBYTECODE"] = "1"
     $startInfo.EnvironmentVariables["XRD_FINDER_DATA_DIR"] = $dataRoot
     $startInfo.EnvironmentVariables["XRD_FINDER_LOG_DIR"] = $logsRoot
@@ -796,6 +801,14 @@ try {
     $appProcess = New-Object System.Diagnostics.Process
     $appProcess.StartInfo = $startInfo
     $null = $appProcess.Start()
+    $appProcess.add_OutputDataReceived({
+        if ($_.Data) { Add-Content -LiteralPath $startupLog -Value $_.Data -Encoding UTF8 }
+    })
+    $appProcess.add_ErrorDataReceived({
+        if ($_.Data) { Add-Content -LiteralPath $startupLog -Value $_.Data -Encoding UTF8 }
+    })
+    $appProcess.BeginOutputReadLine()
+    $appProcess.BeginErrorReadLine()
 
 
     Pause-PreviewStep

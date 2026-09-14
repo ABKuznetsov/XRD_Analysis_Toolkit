@@ -34,7 +34,77 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: checkedonce
 
 [Files]
-Source: "..\..\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: ".git\*,.venv\*,build\*,dist\*,docs\*,tests\*,installer\*,scripts\*,data\*,__pycache__\*,*.pyc,*.pyo,*.log,.pytest_cache\*,.ruff_cache\*,*.pkg,*.zip,*.7z,requirements-dev.txt"
+Source: "..\..\app.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\icon.png"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\launch_xrd_finder.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\launch_xrd_finder_silent.vbs"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\launcher\check_sci_runtime.py"; DestDir: "{app}\launcher"; Flags: ignoreversion
+Source: "..\..\launcher\first_run_showcase.ps1"; DestDir: "{app}\launcher"; Flags: ignoreversion
+Source: "..\..\launcher\launch_xrd_finder_preview.ps1"; DestDir: "{app}\launcher"; Flags: ignoreversion
+Source: "..\..\launcher\manifest.json"; DestDir: "{app}\launcher"; Flags: ignoreversion
+Source: "..\..\launcher\register_xpff_file_type.ps1"; DestDir: "{app}\launcher"; Flags: ignoreversion
+Source: "..\..\launcher\sci_runtime_setup_ui.ps1"; DestDir: "{app}\launcher"; Flags: ignoreversion
+Source: "..\..\launcher\setup_sci_env.bat"; DestDir: "{app}\launcher"; Flags: ignoreversion
+Source: "..\..\launcher\showcase\*"; DestDir: "{app}\launcher\showcase"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "__pycache__\*,*.pyc,*.pyo,*.log,*.pkg,*.zip,*.7z"
+Source: "..\..\launcher\updates\xrd_finder.json"; DestDir: "{app}\launcher\updates"; Flags: ignoreversion
+Source: "..\..\xrd_finder\*"; DestDir: "{app}\xrd_finder"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "__pycache__\*,*.pyc,*.pyo,*.log,*.pkg,*.zip,*.7z"
+
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\.agents"
+Type: filesandordirs; Name: "{app}\.codex"
+Type: filesandordirs; Name: "{app}\.git"
+Type: filesandordirs; Name: "{app}\.pytest_cache"
+Type: filesandordirs; Name: "{app}\.ruff_cache"
+Type: filesandordirs; Name: "{app}\.venv"
+Type: filesandordirs; Name: "{app}\.worktrees"
+Type: filesandordirs; Name: "{app}\benchmark_data"
+Type: filesandordirs; Name: "{app}\build"
+Type: filesandordirs; Name: "{app}\diagnostics_runtime"
+Type: filesandordirs; Name: "{app}\dist"
+Type: filesandordirs; Name: "{app}\docs"
+Type: filesandordirs; Name: "{app}\document_sync"
+Type: filesandordirs; Name: "{app}\document_work"
+Type: filesandordirs; Name: "{app}\docx_render_check"
+Type: filesandordirs; Name: "{app}\installer"
+Type: filesandordirs; Name: "{app}\render_check_50case"
+Type: filesandordirs; Name: "{app}\scripts"
+Type: filesandordirs; Name: "{app}\toolkit"
+Type: filesandordirs; Name: "{app}\tmp"
+Type: filesandordirs; Name: "{app}\XRD_Finder"
+Type: files; Name: "{app}\.gitattributes"
+Type: files; Name: "{app}\.gitignore"
+Type: files; Name: "{app}\CHANGELOG.md"
+Type: files; Name: "{app}\install_macos.command"
+Type: files; Name: "{app}\install_windows_runtime_direct.bat"
+Type: files; Name: "{app}\install_xrd_finder_windows_runtime.bat"
+Type: files; Name: "{app}\LICENSE"
+Type: files; Name: "{app}\MANIFEST.in"
+Type: files; Name: "{app}\PROJECT_HEALTH.md"
+Type: files; Name: "{app}\pyproject.toml"
+Type: files; Name: "{app}\README.md"
+Type: files; Name: "{app}\RELEASE_NOTES_1.6.0.md"
+Type: files; Name: "{app}\repair_xrd_finder_windows_runtime.bat"
+Type: files; Name: "{app}\requirements-dev.txt"
+Type: files; Name: "{app}\run_finder.bat"
+Type: files; Name: "{app}\run_finder.command"
+Type: files; Name: "{app}\run_finder.sh"
+Type: files; Name: "{app}\run_finder_cli.bat"
+Type: files; Name: "{app}\run_finder_cli.command"
+Type: files; Name: "{app}\run_finder_cli.sh"
+Type: files; Name: "{app}\run_finder_silent.vbs"
+Type: files; Name: "{app}\setup_env.bat"
+Type: files; Name: "{app}\setup_env.command"
+Type: files; Name: "{app}\setup_env.sh"
+Type: files; Name: "{app}\THIRD_PARTY_DATA_SOURCES.md"
+Type: files; Name: "{app}\update_from_github.bat"
+Type: files; Name: "{app}\update_macos.command"
+Type: files; Name: "{app}\launcher\catalog.json"
+Type: files; Name: "{app}\launcher\launch_xrd_finder_preview.command"
+Type: files; Name: "{app}\launcher\launch_xrd_finder_preview_macos.py"
+Type: files; Name: "{app}\launcher\setup_sci_env.command"
+Type: files; Name: "{app}\launcher\updates\xrd_finder_macos.json"
 
 [Icons]
 Name: "{group}\XRD Phase Finder"; Filename: "{win}\System32\wscript.exe"; Parameters: """{app}\launch_xrd_finder_silent.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"
