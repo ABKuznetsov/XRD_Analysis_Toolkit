@@ -28,43 +28,8 @@ def test_finder_installer_excludes_development_payload() -> None:
     assert "%LocalAppData%\\Sci\\env" not in source
 
 
-def test_finder_installer_offers_verified_craft_install_without_bundling_it() -> None:
+def test_finder_installer_has_no_companion_application_task() -> None:
     source = INSTALLER.read_text(encoding="utf-8-sig")
 
-    assert 'Name: "installcraft"' in source
-    assert 'Description: "Download and install XRD CRAFT 1.0.1"' in source
-    assert "Tasks: installcraft" in source
-    assert "install_companion_app.ps1" in source
-    assert '-TargetAppId ""xrd_craft""' in source
-    assert "XRD CRAFT provides interactive crystal-structure" in source
-    assert "It is installed and updated independently." in source
-    assert "Source: \"..\\..\\XRD_Craft\\*\"" not in source
-
-
-def test_finder_installer_skips_craft_offer_when_craft_is_already_installed() -> None:
-    source = INSTALLER.read_text(encoding="utf-8-sig")
-
-    assert "CraftIsInstalled" in source
-    assert "{commonpf64}\\XRD CRAFT" in source
-    assert "not CraftIsInstalled" in source
-
-
-def test_companion_loader_verifies_catalogue_size_and_sha256() -> None:
-    loader = ROOT / "toolkit" / "install_companion_app.ps1"
-    source = loader.read_text(encoding="utf-8-sig")
-
-    assert "ConvertFrom-Json" in source
-    assert "size_bytes" in source
-    assert "Get-FileHash" in source
-    assert "sha256" in source
-    assert "Start-Process" in source
-
-
-def test_companion_offer_is_owned_by_a_topmost_window() -> None:
-    loader = ROOT / "toolkit" / "install_companion_app.ps1"
-    source = loader.read_text(encoding="utf-8-sig")
-
-    assert "Show-TopMostMessageBox" in source
-    assert "$owner.TopMost = $true" in source
-    assert "MessageBox]::Show(" in source
-    assert "$owner," in source
+    for token in ("installcraft", "xrd_craft", "xrd craft", "install_companion_app"):
+        assert token not in source.casefold()

@@ -4,6 +4,7 @@ import copy
 import json
 from pathlib import Path
 import sys
+import tomllib
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -16,22 +17,20 @@ def _read_json(relative_path: str) -> dict:
     return json.loads((REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8"))
 
 
-def test_repository_catalog_contains_independent_finder_and_craft_releases() -> None:
+def test_repository_catalog_contains_only_the_finder_release() -> None:
     catalog = _read_json("toolkit/catalog.json")
+    version = tomllib.loads((REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]["version"]
 
     assert validate_catalog(catalog, allow_unbuilt=True) == []
     assert catalog["schema_version"] == 1
 
     applications = {entry["app_id"]: entry for entry in catalog["applications"]}
-    assert set(applications) == {"xrd_finder", "xrd_craft"}
-    assert applications["xrd_finder"]["version"] == "1.5.0"
-    assert applications["xrd_craft"]["version"] == "1.0.1"
-    assert applications["xrd_craft"]["announcement_revision"] == 1
+    assert set(applications) == {"xrd_finder"}
+    assert applications["xrd_finder"]["version"] == version
     assert applications["xrd_finder"]["update_manifest_url"].endswith(
         "/toolkit/updates/xrd_finder.json"
-    )
-    assert applications["xrd_craft"]["update_manifest_url"].endswith(
-        "/toolkit/updates/xrd_craft.json"
     )
 
 
@@ -49,17 +48,16 @@ def test_update_manifests_match_catalog_versions_and_assets() -> None:
     catalog = _read_json("toolkit/catalog.json")
     applications = {entry["app_id"]: entry for entry in catalog["applications"]}
 
-    for app_id in ("xrd_finder", "xrd_craft"):
-        manifest = _read_json(f"toolkit/updates/{app_id}.json")
-        application = applications[app_id]
-        windows_asset = next(
-            asset
-            for asset in manifest["assets"]
-            if asset["platform"] == "windows-x64" and asset["type"] == "installer"
-        )
-        assert manifest["app_id"] == app_id
-        assert manifest["version"] == application["version"]
-        assert windows_asset["name"] == application["installer"]["filename"]
-        assert windows_asset["url"] == application["installer"]["url"]
-        assert windows_asset["sha256"] == application["installer"]["sha256"]
-        assert windows_asset["size_bytes"] == application["installer"]["size_bytes"]
+    manifest = _read_json("toolkit/updates/xrd_finder.json")
+    application = applications["xrd_finder"]
+    windows_asset = next(
+        asset
+        for asset in manifest["assets"]
+        if asset["platform"] == "windows-x64" and asset["type"] == "installer"
+    )
+    assert manifest["app_id"] == "xrd_finder"
+    assert manifest["version"] == application["version"]
+    assert windows_asset["name"] == application["installer"]["filename"]
+    assert windows_asset["url"] == application["installer"]["url"]
+    assert windows_asset["sha256"] == application["installer"]["sha256"]
+    assert windows_asset["size_bytes"] == application["installer"]["size_bytes"]
