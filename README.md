@@ -78,7 +78,7 @@ QT_QPA_PLATFORM=xcb python -m xrd_finder.apps.finder_gui
 
 ## Example project
 
-Use **Help -> Open example project** inside the application. The bundled example opens read-only so that new users can inspect the workflow without overwriting their own projects.
+Use **Help -> Open example project** inside the application. The bundled example opens read-only so that new users can inspect the workflow without overwriting their own projects. It contains an experimental pattern and selected phases configured for the wavelength stored in the project, so it can be used as a compact demonstration of import, processing, search-match and plot inspection.
 
 ## Database search and cache behavior
 
@@ -94,6 +94,18 @@ The local phase cache stores CIF paths, cell metadata, atoms, calculated peak li
 
 Typical search time depends on the number of enabled sources, local cache size, network access and the number of selected elements. Narrow element filters are faster and more specific. If COD is unavailable, the program continues with local results and shows a warning; VPN or institutional network filtering can block COD access.
 
+## Materials Project access
+
+Materials Project search uses the official `mp-api` Python client. The Windows runtime installs `mp-api` during first launch so that the connector is available without manual package installation. A Materials Project API key is still required for online queries; configure it in the database/settings tools before searching Materials Project. If no key is configured, Finder continues to work with user libraries, COD, local caches and other enabled sources.
+
+## Match and Gain scores
+
+Finder uses the scores as practical ranking aids rather than as crystallographic proof of phase presence.
+
+- **Match** estimates how well the candidate reference peaks are covered by the observed pattern at the current wavelength, tolerance and processing settings.
+- **Gain** estimates how much the candidate improves the current interpretation by explaining residual signal that is not already covered by selected phases.
+
+High scores identify candidates worth inspecting. Final phase selection should still consider chemistry, instrument profile, peak positions, relative intensities, residuals and whether the strongest unexplained peaks are accounted for.
 ## Moving settings and local caches between computers
 
 Use **Tools -> Export settings...** and **Tools -> Import settings...** to transfer appearance settings, layout settings and instrument profiles.

@@ -1,6 +1,6 @@
 # XRD Phase Finder 1.6.1
 
-This release focuses on reviewer-facing packaging, reproducible diffraction calculation and practical transfer of user data between computers.
+This release focuses on packaging, reproducible diffraction calculation and practical transfer of user data between computers.
 
 ## Changed
 
