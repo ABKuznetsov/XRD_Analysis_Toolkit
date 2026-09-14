@@ -22,27 +22,6 @@
         "size_bytes": 7638684,
         "sha256": "562a877a186c1fc436c2084f0eaf2085a527feb74f1c685e69a4060de734d6e8"
       }
-    },
-    {
-      "app_id": "xrd_craft",
-      "name": "XRD CRAFT",
-      "description": "Explore crystal structures, structural units, morphology and framework mechanics.",
-      "version": "1.0.1",
-      "icon": "XRD_Craft/assets/crystal_blocks_icon.png",
-      "announcement_revision": 1,
-      "platforms": [
-        "windows"
-      ],
-      "architectures": [
-        "x86_64"
-      ],
-      "update_manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/toolkit/updates/xrd_craft.json",
-      "installer": {
-        "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.5.0/CRAFT_Setup_1.0.1.exe",
-        "filename": "CRAFT_Setup_1.0.1.exe",
-        "size_bytes": 3483527,
-        "sha256": "a23b93ce9ad8ef583da57f1f9f834bdb1b905bc253840ab3062cfa3ac5e43e45"
-      }
     }
   ]
 }
