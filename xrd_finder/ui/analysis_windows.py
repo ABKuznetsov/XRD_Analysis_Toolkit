@@ -4,7 +4,7 @@ from copy import deepcopy
 import json
 import math
 
-from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -32,6 +32,7 @@ import pyqtgraph as pg
 from scipy.signal import find_peaks
 from pathlib import Path
 
+from xrd_finder import __version__
 from xrd_finder.core.pattern import Pattern
 from xrd_finder.core.project import Project
 from xrd_finder.core.finder_state import FinderProjectState
@@ -41,6 +42,7 @@ from xrd_finder.core.structure import CellParameters, Structure
 from xrd_finder.finder import FinderInput, FinderService
 from xrd_finder.finder.models import candidate_structure_override
 from xrd_finder.finder.fingerprint_matching import fingerprint_match_score
+from xrd_finder.instrument.library import BUILTIN_PROFILE_ID, InstrumentProfileLibrary
 from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.io.scientific_folder_import import collect_scientific_folder_groups, unique_series_name
 from xrd_finder.io.xy_loader import load_xy
@@ -112,6 +114,7 @@ from xrd_finder.ui.peak_matching import (
 )
 from xrd_finder.ui.plot_actions import PhaseFinderPlotActionsMixin
 from xrd_finder.ui.plot_view_actions import PhaseFinderPlotViewActionsMixin
+from xrd_finder.ui.plot_view_settings import PlotViewSettings, PlotViewSettingsWidget
 from xrd_finder.ui.post_match_pipeline import PostMatchPipeline
 from xrd_finder.ui.preprocessing_actions import PhaseFinderPreprocessingActionsMixin
 from xrd_finder.ui.project_state_actions import PhaseFinderProjectStateActionsMixin
@@ -125,6 +128,8 @@ from xrd_finder.ui.theme import is_dark_theme, window_style
 from xrd_finder.ui.visible_profile_calculation_queue import VisibleProfileCalculationQueue
 from xrd_finder.ui.xrd_plot import create_xrd_plot_widget
 from xrd_finder.ui.analysis_preview import capture_analysis_preview
+from xrd_finder.ui.app_settings import app_settings
+from xrd_finder.ui.settings_transfer import export_user_settings_bundle, import_user_settings_bundle
 
 
 class AnalysisWindow(QDialog):
@@ -139,8 +144,9 @@ class AnalysisWindow(QDialog):
         super().__init__()
         self.project = project
         self._base_title = title
+        self._project_read_only_example = False
         self.setWindowTitle(f"{title} - {project.name}")
-        self._layout_state = SplitterLayoutState(QSettings("Xrdfinder", "Standalone"))
+        self._layout_state = SplitterLayoutState(app_settings())
         self.setStyleSheet(window_style(self._is_dark_theme()))
         self.setAcceptDrops(True)
         self._drop_targets: list[QWidget] = []
@@ -454,6 +460,7 @@ class AnalysisWindow(QDialog):
         self.project.analyses.clear()
         self.project.series.clear()
         self.project.root_path = ""
+        self._project_read_only_example = False
         self.project.touch()
         self.tree.set_project(self.project)
         self._after_new_project()
@@ -478,6 +485,7 @@ class AnalysisWindow(QDialog):
             return False
         self._remember_directory(str(path))
         self.project = project
+        self._project_read_only_example = False
         self.setWindowTitle(f"{self._base_title} - {project.name}")
         self.tree.set_project(project)
         self._after_project_loaded()
@@ -489,11 +497,17 @@ class AnalysisWindow(QDialog):
         QMessageBox.warning(self, "Project loaded with warnings", details)
 
     def _save_project(self) -> bool:
+        if self._project_read_only_example:
+            self._show_example_read_only_message()
+            return False
         if not self.project.root_path or Path(self.project.root_path).suffix.lower() != PORTABLE_PROJECT_SUFFIX:
             return self._save_project_as()
         return self._write_project(self.project.root_path)
 
     def _save_project_as(self) -> bool:
+        if self._project_read_only_example:
+            self._show_example_read_only_message()
+            return False
         current_path = Path(self.project.root_path) if self.project.root_path else None
         if current_path is not None and current_path.suffix.lower() == PORTABLE_PROJECT_SUFFIX:
             default_path = str(current_path)
@@ -702,7 +716,7 @@ class AnalysisWindow(QDialog):
         return super().eventFilter(watched, event)
 
     def _last_directory(self) -> str:
-        settings = QSettings("Xrdfinder", "Standalone")
+        settings = app_settings()
         path = str(settings.value("files/last_directory", "", type=str) or "")
         return path if path and Path(path).exists() else str(Path.home())
 
@@ -710,7 +724,7 @@ class AnalysisWindow(QDialog):
         source = Path(path)
         directory = source if source.is_dir() else source.parent
         if directory.exists():
-            QSettings("Xrdfinder", "Standalone").setValue("files/last_directory", str(directory))
+            app_settings().setValue("files/last_directory", str(directory))
 
     def _after_cif_import(self, _path: Path, _phase, _structure) -> None:
         """Hook for subclasses that need to cache or index imported CIF files."""
@@ -796,6 +810,7 @@ class PhaseFinderWindow(
             refresh_gain=self._schedule_candidate_gain_ranking,
             should_autozoom=self._should_autozoom_match_profile,
         )
+        QTimer.singleShot(0, self._apply_saved_plot_view_settings)
 
     def _init_filter_state(self) -> None:
         self.element_table: PeriodicTableWidget | None = None
@@ -806,7 +821,7 @@ class PhaseFinderWindow(
         self._last_formula_text = ""
 
     def _init_services(self) -> None:
-        self.settings = QSettings("Xrdfinder", "Standalone")
+        self.settings = app_settings()
         self.cod_online = CodOnlineService(
             status_callback=self.background_status_changed.emit,
             alert_callback=self.cod_server_alert.emit,
@@ -1108,6 +1123,8 @@ class PhaseFinderWindow(
         background_data = self._pattern_finder_background_data(pattern)
         structure_overrides = self._finder_candidate_structure_overrides(pattern, candidates)
         for finder_candidate in finder_candidates:
+            if finder_candidate.cif_path:
+                continue
             structure = candidate_structure_override(finder_candidate, structure_overrides)
             if structure is not None:
                 finder_candidate.structure = structure
@@ -1280,11 +1297,16 @@ class PhaseFinderWindow(
         self.match_plot.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.match_plot.customContextMenuRequested.connect(self._show_plot_context_menu)
         self._ensure_cursor_position_items()
+        self._apply_saved_plot_view_settings()
         if project.patterns and not self._defer_initial_plot:
             try:
                 self._refresh_observed_pattern_plot()
             except Exception:
                 pass
+
+    def _apply_saved_plot_view_settings(self) -> None:
+        if hasattr(self, "match_plot") and hasattr(self, "plot_view_settings"):
+            self._apply_plot_view_settings(self.plot_view_settings, force=True)
 
     def _create_candidate_tables(self) -> None:
         candidate_rows = self._project_phase_candidate_rows()
@@ -1312,7 +1334,7 @@ class PhaseFinderWindow(
         self.plot_canvas.setObjectName("plotCanvas")
         self.plot_canvas.setStyleSheet("QWidget#plotCanvas { background: #d7dadd; border: 1px solid #56616c; }")
         self.plot_canvas_layout = QGridLayout(self.plot_canvas)
-        self.plot_canvas_layout.setContentsMargins(10, 10, 10, 10)
+        self.plot_canvas_layout.setContentsMargins(26, 14, 26, 38)
         self.plot_canvas_layout.setSpacing(0)
         self.plot_canvas_layout.addWidget(self.match_plot, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         self.plot_area = QWidget()
@@ -1339,6 +1361,9 @@ class PhaseFinderWindow(
         self._layout_state.add_pin_corner(self.right_tabs, self._show_quick_help)
         self._layout_state.restore()
         self._layout_state.apply_lock()
+        saved_geometry = self.settings.value("layout/window_geometry", None)
+        if saved_geometry is not None:
+            self.restoreGeometry(saved_geometry)
         self._apply_default_phase_filter()
 
     def _after_new_project(self) -> None:
@@ -1426,7 +1451,7 @@ class PhaseFinderWindow(
 
     def closeEvent(self, event) -> None:
         has_data = bool(self.project.patterns or self.project.phases or self.project.structures)
-        if has_data:
+        if has_data and not self._project_read_only_example:
             response = QMessageBox.question(
                 self,
                 "Close XRD Phase Finder",
@@ -1446,6 +1471,9 @@ class PhaseFinderWindow(
         queue = getattr(self, "visible_profile_calculation_queue", None)
         if queue is not None:
             queue.clear()
+        self._layout_state.save()
+        self.settings.setValue("layout/window_geometry", self.saveGeometry())
+        self.settings.sync()
         self.candidate_search_service.shutdown_background_downloads()
         event.accept()
 
@@ -1557,6 +1585,115 @@ class PhaseFinderWindow(
 
     def _show_quick_help(self) -> None:
         QMessageBox.information(self, PHASE_FINDER_HELP_TITLE, PHASE_FINDER_HELP_TEXT)
+
+    def _show_example_read_only_message(self) -> None:
+        QMessageBox.information(
+            self,
+            "Example project",
+            "This bundled example is for viewing only. Create a new project or open your own .xpff file to save changes.",
+        )
+
+    def _open_example_project(self) -> None:
+        example_path = Path(__file__).resolve().parents[1] / "examples" / "Exemple.xpff"
+        if not example_path.is_file():
+            QMessageBox.warning(
+                self,
+                "Example project",
+                f"Example project is missing:\n{example_path}",
+            )
+            return
+        if self._open_project_path(example_path):
+            self.project.root_path = ""
+            self._project_read_only_example = True
+            self.setWindowTitle(f"{self._base_title} - {self.project.name} (example)")
+            QMessageBox.information(
+                self,
+                "Example project",
+                "The example project is opened in view-only mode. Saving is disabled for bundled examples.",
+            )
+
+    def _show_about_dialog(self) -> None:
+        QMessageBox.about(
+            self,
+            "About XRD Phase Finder",
+            (
+                f"<b>XRD Phase Finder {__version__}</b><br><br>"
+                "Open-source desktop application for powder X-ray diffraction phase identification.<br><br>"
+                "It helps load experimental XRD patterns, search local and online phase sources, "
+                "compare calculated and reference peaks with the experiment, and save the full "
+                "interpretation state in portable .xpff project files.<br><br>"
+                'Project: <a href="https://github.com/ABKuznetsov/XRD_Analysis_Toolkit">'
+                "github.com/ABKuznetsov/XRD_Analysis_Toolkit</a><br>"
+                "License: MIT"
+            ),
+        )
+
+    def _export_user_settings(self) -> None:
+        default_path = Path.home() / "Desktop" / "xrd_phase_finder_settings.json"
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export XRD Phase Finder settings",
+            str(default_path),
+            "XRD Phase Finder settings (*.json);;JSON files (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            export_user_settings_bundle(Path(path))
+        except Exception as exc:
+            QMessageBox.warning(self, "Export settings failed", str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "Export settings",
+            f"Settings were exported to:\n{path}",
+        )
+
+    def _import_user_settings(self) -> None:
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Import XRD Phase Finder settings",
+            str(Path.home()),
+            "XRD Phase Finder settings (*.json);;JSON files (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            import_user_settings_bundle(Path(path))
+            self._reload_imported_user_settings()
+        except Exception as exc:
+            QMessageBox.warning(self, "Import settings failed", str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "Import settings",
+            "Settings were imported. Plot appearance and instrument profiles were refreshed. Window layout is fully applied on the next launch.",
+        )
+
+    def _reload_imported_user_settings(self) -> None:
+        self.settings = app_settings()
+        imported_plot_settings = PlotViewSettingsWidget.load_saved_default_settings() or PlotViewSettings()
+        self.plot_view_settings = imported_plot_settings
+        if getattr(self, "plot_settings_panel", None) is not None:
+            self.plot_settings_panel.set_settings(imported_plot_settings, emit=False)
+        if hasattr(self, "match_plot"):
+            self._apply_plot_view_settings(imported_plot_settings, force=True)
+        if hasattr(self, "instrument_profile_library"):
+            self.instrument_profile_library = InstrumentProfileLibrary()
+            preferred_id = str(
+                self.settings.value("instrument/active_profile_id", BUILTIN_PROFILE_ID, type=str)
+                or BUILTIN_PROFILE_ID
+            )
+            if self.instrument_profile_library.get(preferred_id) is None:
+                preferred_id = BUILTIN_PROFILE_ID
+            self._selected_instrument_profile_id = preferred_id
+            self._refresh_instrument_profile_selector()
+        if getattr(self, "database_panel", None) is not None:
+            self.match_pdf2 = MatchPdf2Service(str(self.settings.value("match_pdf2/root", "", type=str) or "") or None)
+            self.materials_project = MaterialsProjectService(
+                str(self.settings.value("materials_project/api_key", "", type=str) or "")
+            )
+            self._refresh_database_rows()
 
     def _fit_active_sample_indexed_cells(
         self,
@@ -2756,6 +2893,7 @@ class PhaseFinderWindow(
                 positions,
                 excluded_elements=excluded,
                 sources=sources,
+                wavelength=self._active_wavelength(),
                 tolerance_two_theta=max(
                     0.30,
                     min(0.70, float(context.get("fwhm", 0.18) or 0.18) * 2.4),

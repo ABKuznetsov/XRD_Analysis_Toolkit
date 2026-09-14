@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, fields
 
-from PySide6.QtCore import QSettings, Signal, Qt
+from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from xrd_finder.ui.app_settings import app_settings
 from xrd_finder.ui.plot_style import PlotLineStyle, PlotMarkerStyle, PlotStyle
 
 
@@ -1105,23 +1106,32 @@ class PlotViewSettingsWidget(QScrollArea):
         self._emit_settings()
 
     def save_as_default(self) -> None:
-        QSettings("Xrdfinder", "Standalone").setValue(self._DEFAULT_SETTINGS_KEY, json.dumps(asdict(self.settings())))
+        settings = app_settings()
+        settings.setValue(self._DEFAULT_SETTINGS_KEY, json.dumps(asdict(self.settings())))
+        settings.sync()
 
     def _load_saved_default(self, emit: bool = True) -> bool:
-        raw = QSettings("Xrdfinder", "Standalone").value(self._DEFAULT_SETTINGS_KEY, "", type=str)
-        if not raw:
+        settings = self.load_saved_default_settings()
+        if settings is None:
             return False
+        self._apply_settings(settings)
+        if emit:
+            self._emit_settings()
+        return True
+
+    @classmethod
+    def load_saved_default_settings(cls) -> PlotViewSettings | None:
+        raw = app_settings().value(cls._DEFAULT_SETTINGS_KEY, "", type=str)
+        if not raw:
+            return None
         try:
             stored = json.loads(raw)
             defaults = asdict(PlotViewSettings())
             valid_names = {field.name for field in fields(PlotViewSettings)}
             values = {name: stored.get(name, defaults[name]) for name in valid_names}
-            self._apply_settings(PlotViewSettings(**values))
-            if emit:
-                self._emit_settings()
-            return True
+            return PlotViewSettings(**values)
         except Exception:
-            return False
+            return None
 
     def _aspect_name(self, value: float | None) -> str:
         for name, aspect in self._ASPECTS.items():

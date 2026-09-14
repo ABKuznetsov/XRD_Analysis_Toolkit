@@ -1,12 +1,11 @@
 [project]
 name = "xrd-phase-finder"
-version = "1.6.0"
+version = "1.6.1"
 description = "Cross-platform XRD phase finder for powder diffraction search-match workflows."
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "certifi",
     "cristma==0.1.0b9",
-    "gemmi",
     "numpy",
     "packaging",
     "pyqtgraph==0.14.0",
@@ -14,12 +13,7 @@ dependencies = [
     "PySide6==6.7.3",
     "rfc8785==0.1.4",
     "scipy",
-]
-
-[project.optional-dependencies]
-online = [
     "mp-api",
-    "pymatgen",
 ]
 
 [project.scripts]
@@ -44,11 +38,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 package-dir = {"" = "."}
-include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["."]
-exclude = ["xrd_finder.data*"]
-[tool.ruff.lint]
-# Crystallographic Miller indices are conventionally written as h, k, l.
-ignore = ["E741"]
+include = ["xrd_finder*"]

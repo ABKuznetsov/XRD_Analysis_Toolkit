@@ -13,7 +13,7 @@ set "LOG_FILE=%SCI_LOGS%\runtime_install.log"
 set "PYTHON_TEST=import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[:2] < (3, 13) else 1)"
 set "PYTHON_INSTALLER=%SCI_DOWNLOADS%\python-3.11.9-amd64.exe"
 set "PYTHON_URL=https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
-set "OPTIONAL_PACKAGES=mp-api pymatgen"
+set "OPTIONAL_PACKAGES="
 set "INSTALLER_REVISION=3-diagnostic"
 set "FAILED_PACKAGE="
 
@@ -78,7 +78,6 @@ call :install_package "certifi"
 if errorlevel 1 goto failed
 call :install_package "cristma==0.1.0b9"
 if errorlevel 1 goto failed
-call :install_package "gemmi"
 if errorlevel 1 goto failed
 call :install_package "numpy"
 if errorlevel 1 goto failed
@@ -94,8 +93,10 @@ call :install_package "rfc8785==0.1.4"
 if errorlevel 1 goto failed
 call :install_package "scipy"
 if errorlevel 1 goto failed
+call :install_package "mp-api"
+if errorlevel 1 goto failed
 echo Validating installed packages...
-call "%PYTHON_EXE%" -c "import certifi, cristma, gemmi, inspect, numpy, packaging, pybaselines, pyqtgraph, rfc8785, scipy, PySide6; from cristma.crystallography import resolve_space_group_setting; from cristma.diffraction import PowderPatternCalculator, PowderProfileCalculator; assert 'd_spacing_scale' in inspect.signature(PowderProfileCalculator.calculate).parameters; print('Runtime packages are ready')" >> "%LOG_FILE%" 2>&1
+call "%PYTHON_EXE%" -c "import certifi, cristma, inspect, mp_api, numpy, packaging, pybaselines, pyqtgraph, rfc8785, scipy, PySide6; from cristma.crystallography import resolve_space_group_setting; from cristma.diffraction import PowderPatternCalculator, PowderProfileCalculator; assert 'd_spacing_scale' in inspect.signature(PowderProfileCalculator.calculate).parameters; print('Runtime packages are ready')" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 goto failed
 
 if exist "%~dp0xrd_finder\apps\runtime_check.py" (
@@ -105,13 +106,7 @@ if exist "%~dp0xrd_finder\apps\runtime_check.py" (
     if errorlevel 1 goto failed
 )
 
-if /I "%~1"=="--with-online" (
-    echo Installing optional online database connectors...
-    for %%P in (%OPTIONAL_PACKAGES%) do call :install_optional_package "%%~P"
-) else (
-    echo Optional Materials Project connectors were not installed.
-    echo Run this installer with --with-online to add mp-api and pymatgen.
-)
+echo Materials Project support is included through mp-api.
 
 echo.
 echo ============================================================

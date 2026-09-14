@@ -57,6 +57,8 @@ class SplitterLayoutState:
         self._settings.setValue("layout/pinned", pinned)
         if pinned:
             self.save()
+        else:
+            self._settings.sync()
         self.apply_lock()
 
     def apply_lock(self) -> None:
@@ -68,6 +70,7 @@ class SplitterLayoutState:
             splitter = self._splitters.get(name)
             if splitter is not None:
                 self._settings.setValue(f"layout/{name}", splitter.saveState())
+        self._settings.sync()
 
     def restore(self) -> None:
         for name in self._names:

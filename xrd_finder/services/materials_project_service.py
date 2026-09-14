@@ -47,7 +47,7 @@ class MaterialsProjectService:
         client_kind = self._client_kind()
         client_available = bool(client_kind)
         if not client_available:
-            label = "mp-api or pymatgen Materials Project client not installed"
+            label = "mp-api Materials Project client is not installed"
         else:
             label = f"Ready ({client_kind})"
         return MaterialsProjectStatus(
@@ -111,15 +111,9 @@ class MaterialsProjectService:
         return [self._to_entry(doc) for doc in docs[:limit]]
 
     def _mpr(self):
-        try:
-            from mp_api.client import MPRester
-
-            return self._with_request_timeout(MPRester(self.api_key))
-        except Exception:
-            from pymatgen.ext.matproj import MPRester
+        from mp_api.client import MPRester
 
         return self._with_request_timeout(MPRester(self.api_key))
-
     def _with_request_timeout(self, mpr):
         session = getattr(mpr, "session", None)
         if session is None or getattr(session, "_xrd_timeout_wrapped", False):
@@ -141,15 +135,8 @@ class MaterialsProjectService:
         try:
             import mp_api.client  # noqa: F401
         except Exception:
-            pass
-        else:
-            return "mp-api"
-        try:
-            from pymatgen.ext.matproj import MPRester  # noqa: F401
-        except Exception:
             return ""
-        return "pymatgen"
-
+        return "mp-api"
     def _to_entry(self, doc) -> MaterialsProjectEntry:
         def value(name: str, default=""):
             if isinstance(doc, dict):

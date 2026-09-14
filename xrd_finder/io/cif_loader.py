@@ -4,6 +4,10 @@ import math
 import re
 from pathlib import Path
 
+import cristma
+from cristma.chemistry.composition import Composition
+from cristma.symmetry.affine import format_xyz_operation
+
 from xrd_finder.core.phase import Phase
 from xrd_finder.core.structure import AtomSite, CellParameters, Structure
 
@@ -69,27 +73,71 @@ def _best_structure_name(*values: str) -> str:
     return ""
 
 
-def _gemmi_loop_values(block, tag: str, count: int) -> list[str]:
-    loop = block.find_loop(tag)
-    if loop is None:
+def _cif_loop_values(block, tag: str, count: int) -> list[str]:
+    loops = block.loops_with_tag(tag)
+    if not loops:
         return [""] * count
-    return [str(value) for value in loop]
+    loop = loops[0]
+    index = loop.column_index(tag)
+    if index is None:
+        return [""] * count
+    return [str(row[index].value) for row in loop.row_tokens]
 
 
-def _gemmi_atoms(block) -> list[AtomSite]:
-    labels = block.find_loop("_atom_site_label")
-    if labels is None:
+def _cristma_atoms(crystal) -> list[AtomSite]:
+    atoms = []
+    for site in getattr(crystal, "sites", ()) or ():
+        displacement = getattr(site, "displacement", None)
+        biso = None
+        uiso = None
+        if displacement is not None and getattr(displacement, "isotropic", None) is not None:
+            value = getattr(displacement.isotropic, "value", None)
+            if displacement.kind == "B_iso":
+                biso = None if value is None else float(value)
+            elif displacement.kind == "U_iso":
+                uiso = None if value is None else float(value)
+        fractional = [
+            None if getattr(value, "value", None) is None else float(value.value)
+            for value in getattr(site, "fractional", ())
+        ]
+        x, y, z = (fractional + [None, None, None])[:3]
+        for component_index, component in enumerate(getattr(site, "components", ()) or ()):
+            element = getattr(component, "element", None) or str(getattr(component, "species", ""))
+            occupancy = getattr(getattr(component, "occupancy", None), "value", None)
+            label = str(getattr(site, "label", "") or "")
+            if len(getattr(site, "components", ()) or ()) > 1:
+                label = f"{label}:{component_index + 1}"
+            atoms.append(
+                AtomSite(
+                    label=label,
+                    element=_guess_element(label, str(element)),
+                    x=x,
+                    y=y,
+                    z=z,
+                    occupancy=None if occupancy is None else float(occupancy),
+                    biso=biso,
+                    uiso=uiso,
+                    wyckoff=str(getattr(site, "wyckoff", "") or ""),
+                    multiplicity=getattr(site, "reported_multiplicity", None)
+                    or getattr(site, "calculated_multiplicity", None),
+                )
+            )
+    return atoms
+
+
+def _cif_atoms(block) -> list[AtomSite]:
+    labels = _cif_loop_values(block, "_atom_site_label", 0)
+    if not labels:
         return []
-    labels = [str(label) for label in labels]
-    symbols = _gemmi_loop_values(block, "_atom_site_type_symbol", len(labels))
-    xs = _gemmi_loop_values(block, "_atom_site_fract_x", len(labels))
-    ys = _gemmi_loop_values(block, "_atom_site_fract_y", len(labels))
-    zs = _gemmi_loop_values(block, "_atom_site_fract_z", len(labels))
-    occs = _gemmi_loop_values(block, "_atom_site_occupancy", len(labels))
-    bisos = _gemmi_loop_values(block, "_atom_site_B_iso_or_equiv", len(labels))
-    uisos = _gemmi_loop_values(block, "_atom_site_U_iso_or_equiv", len(labels))
-    wyckoffs = _gemmi_loop_values(block, "_atom_site_Wyckoff_symbol", len(labels))
-    multiplicities = _gemmi_loop_values(block, "_atom_site_symmetry_multiplicity", len(labels))
+    symbols = _cif_loop_values(block, "_atom_site_type_symbol", len(labels))
+    xs = _cif_loop_values(block, "_atom_site_fract_x", len(labels))
+    ys = _cif_loop_values(block, "_atom_site_fract_y", len(labels))
+    zs = _cif_loop_values(block, "_atom_site_fract_z", len(labels))
+    occs = _cif_loop_values(block, "_atom_site_occupancy", len(labels))
+    bisos = _cif_loop_values(block, "_atom_site_B_iso_or_equiv", len(labels))
+    uisos = _cif_loop_values(block, "_atom_site_U_iso_or_equiv", len(labels))
+    wyckoffs = _cif_loop_values(block, "_atom_site_Wyckoff_symbol", len(labels))
+    multiplicities = _cif_loop_values(block, "_atom_site_symmetry_multiplicity", len(labels))
 
     atoms = []
     for index, label in enumerate(labels):
@@ -110,35 +158,31 @@ def _gemmi_atoms(block) -> list[AtomSite]:
     return atoms
 
 
-def _gemmi_symops(block) -> list[str]:
+def _cif_symops(block) -> list[str]:
     for tag in ["_space_group_symop_operation_xyz", "_symmetry_equiv_pos_as_xyz"]:
-        loop = block.find_loop(tag)
-        if loop is not None:
-            ops = [_clean_value(str(value)).replace(" ", "") for value in loop]
+        values = _cif_loop_values(block, tag, 0)
+        if values:
+            ops = [_clean_value(str(value)).replace(" ", "") for value in values]
             ops = [op for op in ops if op]
             if ops:
                 return ops
-        value = block.find_value(tag)
-        op = _clean_value(str(value)).replace(" ", "") if value else ""
+        op = _cif_value(block, tag).replace(" ", "")
         if op:
             return [op]
     return ["x,y,z"]
 
 
-def _gemmi_value(block, *tags: str) -> str:
+def _cif_value(block, *tags: str) -> str:
     for tag in tags:
-        value = block.find_value(tag)
-        cleaned = _clean_value(str(value)) if value else ""
+        scalar = block.scalar(tag)
+        cleaned = _clean_value(str(scalar.value)) if scalar is not None else ""
         if cleaned:
             return cleaned
     return ""
 
 
-def _gemmi_loop_clean_values(block, tag: str) -> list[str]:
-    loop = block.find_loop(tag)
-    if loop is None:
-        return []
-    return [value for value in (_clean_value(str(item)) for item in loop) if value]
+def _cif_loop_clean_values(block, tag: str) -> list[str]:
+    return [value for value in (_clean_value(str(item)) for item in _cif_loop_values(block, tag, 0)) if value]
 
 
 def _publication_details(metadata: dict[str, str]) -> str:
@@ -162,28 +206,28 @@ def _publication_details(metadata: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
-def _gemmi_metadata(block) -> dict[str, str]:
+def _cif_metadata(block) -> dict[str, str]:
     pages = ""
-    page_first = _gemmi_value(block, "_journal_page_first")
-    page_last = _gemmi_value(block, "_journal_page_last")
+    page_first = _cif_value(block, "_journal_page_first")
+    page_last = _cif_value(block, "_journal_page_last")
     if page_first and page_last:
         pages = f"{page_first}-{page_last}"
     elif page_first:
         pages = page_first
     metadata = {
-        "chemical_name_mineral": _gemmi_value(block, "_chemical_name_mineral"),
-        "chemical_name_common": _gemmi_value(block, "_chemical_name_common"),
-        "chemical_name_systematic": _gemmi_value(block, "_chemical_name_systematic"),
-        "formula_structural": _gemmi_value(block, "_chemical_formula_structural"),
-        "formula_sum": _gemmi_value(block, "_chemical_formula_sum"),
-        "formula_calculated": _gemmi_value(block, "_chemical_formula_analytical", "_chemical_formula_iupac"),
-        "publication_title": _gemmi_value(block, "_publ_section_title"),
-        "publication_authors": "; ".join(_gemmi_loop_clean_values(block, "_publ_author_name")),
-        "journal": _gemmi_value(block, "_journal_name_full"),
-        "year": _gemmi_value(block, "_journal_year"),
-        "volume": _gemmi_value(block, "_journal_volume"),
+        "chemical_name_mineral": _cif_value(block, "_chemical_name_mineral"),
+        "chemical_name_common": _cif_value(block, "_chemical_name_common"),
+        "chemical_name_systematic": _cif_value(block, "_chemical_name_systematic"),
+        "formula_structural": _cif_value(block, "_chemical_formula_structural"),
+        "formula_sum": _cif_value(block, "_chemical_formula_sum"),
+        "formula_calculated": _cif_value(block, "_chemical_formula_analytical", "_chemical_formula_iupac"),
+        "publication_title": _cif_value(block, "_publ_section_title"),
+        "publication_authors": "; ".join(_cif_loop_clean_values(block, "_publ_author_name")),
+        "journal": _cif_value(block, "_journal_name_full"),
+        "year": _cif_value(block, "_journal_year"),
+        "volume": _cif_value(block, "_journal_volume"),
         "pages": pages,
-        "doi": _gemmi_value(block, "_journal_paper_doi", "_publ_section_references"),
+        "doi": _cif_value(block, "_journal_paper_doi", "_publ_section_references"),
     }
     metadata["publication"] = _publication_details(metadata)
     return {key: value for key, value in metadata.items() if value}
@@ -329,94 +373,83 @@ def _fallback_metadata(text: str, values: dict[str, str]) -> dict[str, str]:
 
 
 def _read_structure_from_cif(path: Path) -> Structure:
-    try:
-        import gemmi
-
-        doc = gemmi.cif.read_file(str(path))
-        block = doc.sole_block()
-        a = _float_or_none(str(block.find_value("_cell_length_a") or ""))
-        b = _float_or_none(str(block.find_value("_cell_length_b") or ""))
-        c = _float_or_none(str(block.find_value("_cell_length_c") or ""))
-        alpha = _float_or_none(str(block.find_value("_cell_angle_alpha") or ""))
-        beta = _float_or_none(str(block.find_value("_cell_angle_beta") or ""))
-        gamma = _float_or_none(str(block.find_value("_cell_angle_gamma") or ""))
-        if None in (a, b, c, alpha, beta, gamma):
-            raise ValueError("CIF cell parameters are incomplete")
-        metadata = _gemmi_metadata(block)
-        formula = metadata.get("formula_sum") or metadata.get("formula_structural") or ""
-        name = _best_structure_name(
-            metadata.get("chemical_name_mineral", ""),
-            metadata.get("chemical_name_common", ""),
-            metadata.get("chemical_name_systematic", ""),
-            str(block.name or ""),
-            path.stem,
-        )
-        if str(name).isdigit() and formula:
-            name = _normalize_formula(str(formula))
-        structure = Structure.create(name=str(name), source_path=str(path), origin="original")
-        structure.formula = _normalize_formula(str(formula))
-        structure.metadata.update(metadata)
-        structure.space_group = str(
-            block.find_value("_symmetry_space_group_name_H-M")
-            or block.find_value("_space_group_name_H-M_alt")
-            or ""
-        ).strip("'\"")
-        structure.space_group_number = str(
-            block.find_value("_symmetry_Int_Tables_number")
-            or block.find_value("_space_group_IT_number")
-            or ""
-        ).strip("'\"")
-        structure.wavelength = _float_or_none(str(block.find_value("_cell_measurement_wavelength") or ""))
-        cell = gemmi.UnitCell(a, b, c, alpha, beta, gamma)
-        structure.cell = CellParameters(a=a, b=b, c=c, alpha=alpha, beta=beta, gamma=gamma, volume=float(cell.volume))
-        structure.atoms = _gemmi_atoms(block)
-        structure.symops = _gemmi_symops(block)
-        structure.atom_count = len(structure.atoms)
-        return structure
-    except Exception:
-        pass
-
-    text = path.read_text(encoding="utf-8", errors="ignore")
-    values = _fallback_values(text)
-
-    def value(*keys: str) -> str:
-        for key in keys:
-            if key in values:
-                return values[key]
-        return ""
-
-    a = _float_or_none(value("_cell_length_a"))
-    b = _float_or_none(value("_cell_length_b"))
-    c = _float_or_none(value("_cell_length_c"))
-    alpha = _float_or_none(value("_cell_angle_alpha"))
-    beta = _float_or_none(value("_cell_angle_beta"))
-    gamma = _float_or_none(value("_cell_angle_gamma"))
-    formula = _normalize_formula(value("_chemical_formula_sum", "_chemical_formula_structural"))
-    metadata = _fallback_metadata(text, values)
+    read_result = cristma.read(path, format="cif")
+    if len(read_result.structures) == 0:
+        raise ValueError("CIF does not contain a mapped crystal structure")
+    crystal = read_result.structures.primary or read_result.structures[0]
+    document = read_result.document
+    block = None
+    block_name = str(getattr(crystal, "name", "") or "")
+    for candidate in getattr(document, "blocks", ()) or ():
+        if candidate.name == block_name:
+            block = candidate
+            break
+    if block is None and getattr(document, "blocks", ()):
+        block = document.blocks[0]
+    a = getattr(crystal.cell.a, "value", None)
+    b = getattr(crystal.cell.b, "value", None)
+    c = getattr(crystal.cell.c, "value", None)
+    alpha = getattr(crystal.cell.alpha, "value", None)
+    beta = getattr(crystal.cell.beta, "value", None)
+    gamma = getattr(crystal.cell.gamma, "value", None)
+    if None in (a, b, c, alpha, beta, gamma):
+        raise ValueError("CIF cell parameters are incomplete")
+    metadata = _cif_metadata(block) if block is not None else {}
+    formula = (
+        metadata.get("formula_sum")
+        or metadata.get("formula_structural")
+        or str(getattr(crystal, "formula", "") or "")
+    )
+    if not formula:
+        formula = Composition.from_structure(crystal).normalized_formula
     name = _best_structure_name(
-        value("_chemical_name_mineral"),
-        value("_chemical_name_common"),
-        value("_chemical_name_systematic"),
-        formula,
+        metadata.get("chemical_name_mineral", ""),
+        metadata.get("chemical_name_common", ""),
+        metadata.get("chemical_name_systematic", ""),
+        str(getattr(crystal, "name", "") or ""),
         path.stem,
     )
-    structure = Structure.create(name=name, source_path=str(path), origin="original")
-    structure.formula = formula
+    if str(name).isdigit() and formula:
+        name = _normalize_formula(str(formula))
+    structure = Structure.create(name=str(name), source_path=str(path), origin="original")
+    structure.formula = _normalize_formula(str(formula))
     structure.metadata.update(metadata)
-    structure.space_group = _clean_value(value("_symmetry_space_group_name_H-M", "_space_group_name_H-M_alt"))
-    structure.space_group_number = _clean_value(value("_symmetry_Int_Tables_number", "_space_group_IT_number"))
-    structure.wavelength = _float_or_none(value("_cell_measurement_wavelength"))
-    structure.cell = CellParameters(
-        a=a,
-        b=b,
-        c=c,
-        alpha=alpha,
-        beta=beta,
-        gamma=gamma,
-        volume=_float_or_none(value("_cell_volume")) or _cell_volume(a, b, c, alpha, beta, gamma),
+    structure.space_group = (
+        _cif_value(block, "_symmetry_space_group_name_H-M", "_space_group_name_H-M_alt")
+        if block is not None
+        else ""
     )
-    structure.atoms = _fallback_atoms(text)
-    structure.symops = _fallback_symops(text)
+    if not structure.space_group and getattr(crystal, "space_group", None) is not None:
+        structure.space_group = str(getattr(crystal.space_group, "symbol", "") or "")
+    structure.space_group_number = (
+        _cif_value(block, "_symmetry_Int_Tables_number", "_space_group_IT_number")
+        if block is not None
+        else ""
+    )
+    structure.wavelength = (
+        _float_or_none(_cif_value(block, "_cell_measurement_wavelength"))
+        if block is not None
+        else None
+    )
+    structure.cell = CellParameters(
+        a=float(a),
+        b=float(b),
+        c=float(c),
+        alpha=float(alpha),
+        beta=float(beta),
+        gamma=float(gamma),
+        volume=float(crystal.cell.volume),
+    )
+    structure.atoms = _cristma_atoms(crystal) or (_cif_atoms(block) if block is not None else [])
+    if block is not None:
+        structure.symops = _cif_symops(block)
+    elif getattr(crystal, "space_group", None) is not None:
+        structure.symops = [
+            format_xyz_operation(operation).replace(" ", "")
+            for operation in getattr(crystal.space_group, "operations", ())
+        ] or ["x,y,z"]
+    else:
+        structure.symops = ["x,y,z"]
     structure.atom_count = len(structure.atoms)
     return structure
 

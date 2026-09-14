@@ -1,6 +1,6 @@
-﻿function Get-ShowcaseSeenMarkerPath {
+function Get-ShowcaseSeenMarkerPath {
     param([string]$Version)
-    $folder = Join-Path $env:LOCALAPPDATA "Sci\XRD_Finder"
+    $folder = Join-Path $env:LOCALAPPDATA "Sci\apps\xrd_phase_finder\state"
     return (Join-Path $folder "showcase-$Version.seen")
 }
 

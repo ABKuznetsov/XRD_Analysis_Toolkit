@@ -21,6 +21,7 @@ from xrd_finder.services.runtime_diagnostics import (
     restore_exception_hooks,
     trace_operation,
 )
+from xrd_finder.ui.app_settings import configure_app_settings_storage
 from xrd_finder.ui.analysis_windows import PhaseFinderWindow
 
 
@@ -47,6 +48,7 @@ def _run_gui() -> int:
     parser.add_argument("project_file", nargs="?", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
+    configure_app_settings_storage()
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("XRD Phase Finder")
     app.setApplicationDisplayName("XRD Phase Finder")

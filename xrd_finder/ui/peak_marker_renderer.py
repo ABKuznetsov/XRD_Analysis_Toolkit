@@ -195,6 +195,73 @@ def _local_observed_peak_y(
     return float(np.max(local_y)) if local_y.size else float(observed_y[y_index])
 
 
+def _nearby_phase_peak_colors(
+    *,
+    obs_x: float,
+    x: np.ndarray,
+    phase_peak_sets: list[tuple[str, str, np.ndarray]] | None,
+    fwhm: float = 0.0,
+) -> list[str]:
+    if not phase_peak_sets:
+        return []
+    x_values = np.asarray(x, dtype=float)
+    if x_values.size >= 2:
+        steps = np.diff(x_values)
+        steps = steps[np.isfinite(steps) & (steps > 0.0)]
+        grid_tolerance = float(np.nanmedian(steps)) * 2.0 if steps.size else 0.0
+    else:
+        grid_tolerance = 0.0
+    tolerance = max(0.22, grid_tolerance, max(float(fwhm or 0.0), 0.0) * 0.75)
+    colors: list[str] = []
+    for color, _label, phase_positions in phase_peak_sets:
+        positions = np.asarray(phase_positions, dtype=float)
+        positions = positions[np.isfinite(positions)]
+        if positions.size == 0:
+            continue
+        if float(np.min(np.abs(positions - float(obs_x)))) <= tolerance:
+            colors.append(color)
+    return colors
+
+
+def _has_nearby_phase_peak(
+    *,
+    obs_x: float,
+    x: np.ndarray,
+    phase_peak_sets: list[tuple[str, str, np.ndarray]] | None,
+    fwhm: float = 0.0,
+) -> bool:
+    return bool(
+        _nearby_phase_peak_colors(
+            obs_x=obs_x,
+            x=x,
+            phase_peak_sets=phase_peak_sets,
+            fwhm=fwhm,
+        )
+    )
+
+
+def _marker_merge_tolerance(x: np.ndarray, fwhm: float = 0.0) -> float:
+    x_values = np.asarray(x, dtype=float)
+    if x_values.size >= 2:
+        steps = np.diff(x_values)
+        steps = steps[np.isfinite(steps) & (steps > 0.0)]
+        grid_tolerance = float(np.nanmedian(steps)) * 3.0 if steps.size else 0.0
+    else:
+        grid_tolerance = 0.0
+    return max(1.0, grid_tolerance, max(float(fwhm or 0.0), 0.0) * 4.0)
+
+
+def _marker_position_available(
+    used_positions: list[float],
+    position: float,
+    *,
+    x: np.ndarray,
+    fwhm: float = 0.0,
+) -> bool:
+    tolerance = _marker_merge_tolerance(x, fwhm)
+    return all(abs(float(existing) - float(position)) > tolerance for existing in used_positions)
+
+
 def add_peak_coverage_markers(
     *,
     plot,
@@ -321,8 +388,14 @@ def add_assignment_markers(
         if np.isfinite(float(getattr(observed_peak, "intensity", 0.0)))
     ]
     unknown_cutoff = float(np.nanpercentile(peak_strengths, 74)) if peak_strengths else float(np.nanpercentile(observed_y, 74))
+    inferred_marker_cutoff = float(np.nanpercentile(peak_strengths, 82)) if peak_strengths else float(np.nanpercentile(observed_y, 82))
     unknown_count = 0
+    coverage_marker_limit = 8
+    inferred_marker_limit = 4
+    inferred_marker_count = 0
     explained = 0
+    coverage_marker_positions: list[float] = []
+    unknown_marker_positions: list[float] = []
     legend_marker_names: set[str] = set()
     peak_records = []
     for observed_peak in observed_peaks:
@@ -335,7 +408,6 @@ def add_assignment_markers(
             peak_height = max(float(observed_y[y_index]) - float(np.nanpercentile(observed_y, 10)), 0.0)
         peak_records.append((peak_height, observed_peak, y_index))
     peak_records = sorted(peak_records, key=lambda item: item[0], reverse=True)[:80]
-    peak_records = sorted(peak_records, key=lambda item: float(item[1].two_theta))
     for _peak_height, observed_peak, y_index in peak_records:
         obs_x = float(observed_peak.two_theta)
         marker_y = _local_observed_peak_y(
@@ -350,6 +422,16 @@ def add_assignment_markers(
         if assignments:
             explained += 1
             if not _is_significant_peak(x, corrected_strength, y_index, noise_sigma):
+                continue
+            peak_fwhm = float(getattr(observed_peak, "fwhm", 0.0) or 0.0)
+            if not _marker_position_available(
+                coverage_marker_positions,
+                obs_x,
+                x=x,
+                fwhm=peak_fwhm,
+            ):
+                continue
+            if len(coverage_marker_positions) >= coverage_marker_limit:
                 continue
             assignments_by_strength = sorted(
                 assignments,
@@ -372,6 +454,7 @@ def add_assignment_markers(
                 size=phase_marker_size,
                 symbol="d" if status == "overlapping" else style.marker.symbol,
             )
+            coverage_marker_positions.append(obs_x)
             if show_peak_labels:
                 label = assignment_marker_label(assignments)
                 if label:
@@ -385,9 +468,50 @@ def add_assignment_markers(
                     plot_layers["peak_labels"].append(text)
         else:
             # Assignment records are authoritative. A merely nearby phase
-            # stick must not recolor an unassigned experimental peak, because
-            # that produced false phase attribution in multiphase patterns.
+            # stick is not a formal assignment. It can suppress a false
+            # "unknown" marker, and for the strongest such peaks we draw a
+            # limited visual hint without letting the plot become all markers.
+            nearby_colors = _nearby_phase_peak_colors(
+                obs_x=obs_x,
+                x=x,
+                phase_peak_sets=phase_peak_sets,
+                fwhm=float(getattr(observed_peak, "fwhm", 0.0) or 0.0),
+            )
+            if nearby_colors:
+                explained += 1
+                peak_fwhm = float(getattr(observed_peak, "fwhm", 0.0) or 0.0)
+                if (
+                    inferred_marker_count < inferred_marker_limit
+                    and len(coverage_marker_positions) < coverage_marker_limit
+                    and _peak_height >= inferred_marker_cutoff
+                    and _is_significant_peak(x, corrected_strength, y_index, noise_sigma)
+                    and _marker_position_available(
+                        coverage_marker_positions,
+                        obs_x,
+                        x=x,
+                        fwhm=peak_fwhm,
+                    )
+                ):
+                    _add_colored_phase_marker(
+                        plot=plot,
+                        plot_layers=plot_layers,
+                        x=obs_x,
+                        y=marker_y + phase_marker_offset,
+                        colors=nearby_colors,
+                        size=phase_marker_size,
+                        symbol=style.marker.symbol,
+                    )
+                    coverage_marker_positions.append(obs_x)
+                    inferred_marker_count += 1
+                continue
             if unknown_count >= 10 or _peak_height < unknown_cutoff:
+                continue
+            if not _marker_position_available(
+                unknown_marker_positions,
+                obs_x,
+                x=x,
+                fwhm=float(getattr(observed_peak, "fwhm", 0.0) or 0.0),
+            ):
                 continue
             item = pg.ScatterPlotItem(
                 [obs_x],
@@ -401,6 +525,7 @@ def add_assignment_markers(
             legend_marker_names.add("unknown peak")
             plot.addItem(item)
             plot_layers["unknown_peaks"].append(item)
+            unknown_marker_positions.append(obs_x)
             unknown_count += 1
     return explained, int(len(peak_records))
 

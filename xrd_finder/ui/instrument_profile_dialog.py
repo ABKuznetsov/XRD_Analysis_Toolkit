@@ -410,6 +410,12 @@ class InstrumentProfileDialog(QDialog):
             "The complete instrument profile is stored in the project."
         )
         note.setWordWrap(True)
+        self.project_profile_note = QLabel(
+            "This instrument profile comes from the opened project. You can edit it for this "
+            "project, or press Save to add it to your personal instrument profiles."
+        )
+        self.project_profile_note.setWordWrap(True)
+        self.project_profile_note.setObjectName("projectInstrumentProfileNote")
         apply_active = QPushButton("Apply to active")
         apply_selected = QPushButton("Apply to selected")
         self.save_profile_button.clicked.connect(self._save_selected_profile)
@@ -434,6 +440,7 @@ class InstrumentProfileDialog(QDialog):
         actions.addWidget(close_buttons)
         layout = QVBoxLayout(self)
         layout.addLayout(selector_row)
+        layout.addWidget(self.project_profile_note)
         layout.addWidget(self.editor, 1)
         layout.addWidget(note)
         layout.addLayout(actions)
@@ -498,7 +505,10 @@ class InstrumentProfileDialog(QDialog):
     def _sync_profile_actions(self) -> None:
         profile_id = self.editor.instrument_profile().profile_id
         is_saved = self._selected_profile_key == profile_id and profile_id in self._profiles
+        is_project_profile = self._selected_profile_key.startswith("__current__:")
         editable = is_saved and profile_id not in self._packaged_profile_ids
+        self.project_profile_note.setVisible(is_project_profile)
+        self.save_profile_button.setText("Add to my profiles" if is_project_profile else "Save")
         self.save_profile_button.setEnabled(True)
         self.delete_button.setEnabled(editable)
 

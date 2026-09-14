@@ -21,7 +21,7 @@ APP_NAME = "XRD Phase Finder"
 MIN_VISIBLE_STEP_SECONDS = 1.0
 RUNTIME_PROBE = (
     "from PySide6 import QtCore; "
-    "import certifi, gemmi, mp_api, numpy, pybaselines, pyqtgraph, pymatgen, rfc8785, scipy"
+    "import certifi, mp_api, numpy, pybaselines, pyqtgraph, rfc8785, scipy"
 )
 
 

@@ -10,20 +10,20 @@ from pathlib import Path
 
 CORE_MODULES = {
     "certifi": "certifi",
-    "gemmi": "gemmi",
+    "cristma": "cristma",
     "numpy": "numpy",
+    "packaging": "packaging",
     "pybaselines": "pybaselines",
     "pyqtgraph": "pyqtgraph",
     "PySide6": "PySide6",
+    "rfc8785": "rfc8785",
     "scipy": "scipy",
 }
 
 FULL_MODULES = {
     **CORE_MODULES,
     "mp-api": "mp_api",
-    "pymatgen": "pymatgen",
 }
-
 REQUIREMENT = re.compile(
     r"^\s*([A-Za-z0-9_.-]+)\s*(?:==\s*([A-Za-z0-9_.+!-]+))?"
 )
@@ -119,7 +119,7 @@ def main() -> int:
     parser.add_argument(
         "--full",
         action="store_true",
-        help="also import optional heavy connectors; intended for installation validation",
+        help="also import Materials Project connector; intended for installation validation",
     )
     args = parser.parse_args()
 

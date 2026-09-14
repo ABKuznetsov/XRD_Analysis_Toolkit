@@ -56,7 +56,7 @@ class FinderTopToolBar(QWidget):
         )
         self.import_button.clicked.connect(self.importRequested)
         self.auto_search_button = self._button(
-            "Auto",
+            "Auto search",
             QStyle.StandardPixmap.SP_MediaPlay,
             "Find and rank phase candidates from the active XRD pattern",
         )
@@ -120,4 +120,4 @@ class FinderTopToolBar(QWidget):
 
     def set_auto_search_busy(self, busy: bool) -> None:
         self.auto_search_button.setEnabled(not busy)
-        self.auto_search_button.setText("Searching..." if busy else "Auto")
+        self.auto_search_button.setText("Searching..." if busy else "Auto search")

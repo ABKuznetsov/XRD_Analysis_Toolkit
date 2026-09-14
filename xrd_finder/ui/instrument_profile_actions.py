@@ -54,8 +54,20 @@ class PhaseFinderInstrumentProfileActionsMixin:
         self._selected_instrument_profile_id = preferred_id
         profile = self.instrument_profile_library.get(preferred_id) or InstrumentProfile.default_cu_kalpha()
         for pattern in self.project.patterns:
-            if not getattr(pattern, "instrument_profile", None):
+            if getattr(pattern, "instrument_profile", None):
+                self._normalize_known_project_instrument_profile(pattern)
+            else:
                 apply_profile_snapshot([pattern], profile)
+
+    def _normalize_known_project_instrument_profile(self, pattern: object) -> None:
+        try:
+            project_profile = InstrumentProfile.from_dict(dict(getattr(pattern, "instrument_profile", {}) or {}))
+        except (TypeError, ValueError):
+            return
+        matching_saved = self._matching_saved_instrument_profile(project_profile)
+        if matching_saved is None or matching_saved.profile_id == project_profile.profile_id:
+            return
+        apply_profile_snapshot([pattern], matching_saved)
 
     def _active_instrument_profile(self) -> InstrumentProfile:
         pattern = self._active_pattern()
@@ -65,7 +77,9 @@ class PhaseFinderInstrumentProfileActionsMixin:
         snapshot = getattr(pattern, "instrument_profile", None) if pattern is not None else None
         if snapshot:
             try:
-                return InstrumentProfile.from_dict(dict(snapshot))
+                project_profile = InstrumentProfile.from_dict(dict(snapshot))
+                matching_saved = self._matching_saved_instrument_profile(project_profile)
+                return matching_saved or project_profile
             except (TypeError, ValueError):
                 pass
         profile = self.instrument_profile_library.get(self._selected_instrument_profile_id)
@@ -93,27 +107,29 @@ class PhaseFinderInstrumentProfileActionsMixin:
             return
         current = self._active_instrument_profile()
         profiles = list(self.instrument_profile_library.list_profiles())
-        matching_saved = next(
-            (profile for profile in profiles if profile.profile_id == current.profile_id),
-            None,
-        )
-        if matching_saved is None:
-            profiles.append(current)
+        matching_saved = self._matching_saved_instrument_profile(current)
+        active_id = matching_saved.profile_id if matching_saved is not None else current.profile_id
+        display_profiles = profiles if matching_saved is not None else [current, *profiles]
         entries = []
-        for profile in profiles:
-            shown = current if profile.profile_id == current.profile_id else profile
-            name = shown.identity.name
-            if (
-                profile.profile_id == current.profile_id
-                and matching_saved is not None
-                and matching_saved.calculation_key() != current.calculation_key()
-            ):
-                name = f"{name} [{current.radiation.target}]"
-            entries.append((shown.profile_id, name))
+        for profile in display_profiles:
+            name = profile.identity.name
+            if matching_saved is None and profile.profile_id == current.profile_id:
+                name = f"Project profile - {name}"
+            entries.append((profile.profile_id, name))
         action_bar.set_instrument_profiles(
             entries,
-            current.profile_id,
+            active_id,
         )
+
+    def _matching_saved_instrument_profile(self, profile: InstrumentProfile) -> InstrumentProfile | None:
+        profile_key = profile.calculation_key()
+        for saved in self.instrument_profile_library.list_profiles():
+            if saved.profile_id == profile.profile_id and saved.calculation_key() == profile_key:
+                return saved
+        for saved in self.instrument_profile_library.list_profiles():
+            if saved.calculation_key() == profile_key:
+                return saved
+        return None
 
     def _select_instrument_profile(self, profile_id: str) -> None:
         profile = self.instrument_profile_library.get(profile_id)
@@ -148,6 +164,22 @@ class PhaseFinderInstrumentProfileActionsMixin:
             self._instrument_profile_dialog = None
 
     def _save_instrument_profile_as_new(self, profile: InstrumentProfile) -> None:
+        existing = self._matching_saved_instrument_profile(profile)
+        if existing is not None:
+            self._selected_instrument_profile_id = existing.profile_id
+            self.settings.setValue("instrument/active_profile_id", existing.profile_id)
+            QMessageBox.information(
+                self,
+                "Instrument profile",
+                f"This instrument profile is already saved as '{existing.identity.name}'.",
+            )
+            if self._instrument_profile_dialog is not None:
+                self._instrument_profile_dialog.set_profiles(
+                    self.instrument_profile_library.list_profiles(),
+                    current_profile=existing,
+                )
+            self._refresh_instrument_profile_selector()
+            return
         saved = replace(profile, profile_id=f"instrument-{uuid4()}")
         try:
             self.instrument_profile_library.save_profile(saved)

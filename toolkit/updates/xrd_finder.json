@@ -1,18 +1,26 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "channel": "stable",
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
-  "published_at": "2026-08-26",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.0",
-  "release_notes_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/RELEASE_NOTES_1.6.0.md",
-  "assets": [],
-  "summary": [
-    "macOS 1.6.0 installer is available.",
-    "Windows 1.6.0 installer will be published separately after it is built."
+  "published_at": "2026-09-14",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.1",
+  "release_notes_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/RELEASE_NOTES_1.6.1.md",
+  "assets": [
+    {
+      "name": "XRD_Phase_Finder_Setup_1.6.1.exe",
+      "type": "installer",
+      "platform": "windows",
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_Setup_1.6.1.exe",
+      "sha256": "9392f828466104f3d2140f6972a13666820969364d2756fd41500f791c0be81a",
+      "size_bytes": 5287561
+    }
   ],
-  "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.0/XRD_Phase_Finder_macOS_1.6.0.pkg",
-  "macos_installer_sha256": "4536722f1d8af65d408514ea4e5c5e61c78003d84b5fa2fa14f459a60dbe1864"
+  "summary": [
+    "Use CRiStMa consistently for CIF-backed Finder diffraction calculations.",
+    "Search local peak indexes by d-spacing for the active wavelength.",
+    "Add example project, settings transfer and USER/COD/Materials Project cache transfer."
+  ]
 }

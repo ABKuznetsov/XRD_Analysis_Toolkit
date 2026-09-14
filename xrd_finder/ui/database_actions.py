@@ -6,7 +6,18 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 from xrd_finder.services.materials_project_service import MaterialsProjectService
 from xrd_finder.services.network import open_url
@@ -44,18 +55,23 @@ class PhaseFinderDatabaseActionsMixin:
         self.database_panel.sourceToggled.connect(self._set_source_enabled)
         self.database_panel.materialsProjectToggled.connect(self._set_materials_project_enabled)
         self.database_panel.saveMaterialsProjectRequested.connect(self._save_materials_project_settings)
+        self.database_panel.manageUserLibraryRequested.connect(self._show_user_phase_library_window)
         self.database_panel.rebuildUserIndexRequested.connect(self._build_local_phase_cache_index)
         self.database_panel.rebuildLocalPeakIndexRequested.connect(self._rebuild_local_peak_index)
         self.database_panel.clearUserLibraryRequested.connect(self._clear_user_phase_library)
         self.database_panel.indexCodFolderRequested.connect(self._index_cod_cif_folder)
         self.database_panel.indexCodZipRequested.connect(self._index_cod_zip_archive)
         self.database_panel.downloadCodArchiveRequested.connect(self._download_cod_archive_from_url)
+        self.database_panel.exportCodRequested.connect(lambda: self._export_phase_cache_sources(["COD"], "COD local/bulk", "xrd_cod_cache.json"))
+        self.database_panel.importCodRequested.connect(lambda: self._import_phase_cache_sources(["COD"], "COD local/bulk"))
         self.database_panel.clearCodRequested.connect(self._clear_cod_cache)
         self.database_panel.updateRruffRequested.connect(self._update_rruff_database)
         self.database_panel.clearRruffRequested.connect(self._clear_rruff_database)
         self.database_panel.chooseMatchPdf2FolderRequested.connect(self._choose_match_pdf2_folder)
         self.database_panel.refreshMatchPdf2Requested.connect(self._refresh_match_pdf2_database)
         self.database_panel.clearMatchPdf2Requested.connect(self._clear_match_pdf2_database)
+        self.database_panel.exportMaterialsProjectRequested.connect(lambda: self._export_phase_cache_sources(["MP"], "Materials Project", "xrd_materials_project_cache.json"))
+        self.database_panel.importMaterialsProjectRequested.connect(lambda: self._import_phase_cache_sources(["MP"], "Materials Project"))
         self.database_panel.clearAflowRequested.connect(self._clear_aflow_cache)
         self.database_panel.clearOqmdRequested.connect(self._clear_oqmd_cache)
         self.database_panel.clearMaterialsProjectRequested.connect(self._clear_materials_project_cache)
@@ -165,6 +181,7 @@ class PhaseFinderDatabaseActionsMixin:
         def success(result) -> None:
             count = int(result or 0)
             self._refresh_database_rows()
+            self._refresh_user_phase_library_window()
             QMessageBox.information(self, "Build local index", f"Indexed {count} saved CIF files.")
 
         self._run_background_task(
@@ -174,6 +191,134 @@ class PhaseFinderDatabaseActionsMixin:
             success,
             lambda message, _details: QMessageBox.warning(self, "Build local index failed", message),
         )
+
+    def _show_user_phase_library_window(self) -> None:
+        dialog = getattr(self, "_user_phase_library_dialog", None)
+        if dialog is None:
+            dialog = QDialog(self)
+            dialog.setWindowTitle("User phase library")
+            dialog.setMinimumWidth(480)
+            layout = QVBoxLayout(dialog)
+            layout.setContentsMargins(12, 12, 12, 12)
+            layout.setSpacing(10)
+            self._user_phase_library_count_label = QLabel()
+            self._user_phase_library_location_label = QLabel()
+            self._user_phase_library_location_label.setWordWrap(True)
+            layout.addWidget(self._user_phase_library_count_label)
+            layout.addWidget(self._user_phase_library_location_label)
+
+            row = QHBoxLayout()
+            import_button = QPushButton("Import...")
+            export_button = QPushButton("Export...")
+            update_button = QPushButton("Update index")
+            clear_button = QPushButton("Clear")
+            close_button = QPushButton("Close")
+            import_button.clicked.connect(self._import_user_phase_library)
+            export_button.clicked.connect(self._export_user_phase_library)
+            update_button.clicked.connect(self._build_local_phase_cache_index)
+            clear_button.clicked.connect(self._clear_user_phase_library)
+            close_button.clicked.connect(dialog.close)
+            for button in (import_button, export_button, update_button, clear_button):
+                row.addWidget(button)
+            row.addStretch(1)
+            row.addWidget(close_button)
+            layout.addLayout(row)
+            self._user_phase_library_dialog = dialog
+        self._refresh_user_phase_library_window()
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _refresh_user_phase_library_window(self) -> None:
+        count_label = getattr(self, "_user_phase_library_count_label", None)
+        location_label = getattr(self, "_user_phase_library_location_label", None)
+        if count_label is not None:
+            count = self.local_phase_cache.source_count("USER")
+            count_label.setText(f"User phase library contains {count} phase(s).")
+        if location_label is not None:
+            location_label.setText(f"Storage: {self.local_phase_cache.root / 'user_cif'}")
+
+    def _export_user_phase_library(self) -> None:
+        default_path = Path.home() / "Desktop" / "xrd_user_phase_library.json"
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export user phase library",
+            str(default_path),
+            "XRD user phase library (*.json);;JSON files (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            count = self.local_phase_cache.export_user_library(path)
+        except Exception as exc:
+            QMessageBox.warning(self, "Export user phase library failed", str(exc))
+            return
+        self._refresh_user_phase_library_window()
+        QMessageBox.information(self, "Export user phase library", f"Exported {count} phase(s).")
+
+    def _import_user_phase_library(self) -> None:
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Import user phase library",
+            str(Path.home()),
+            "XRD user phase library (*.json);;JSON files (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            count = self.local_phase_cache.import_user_library(path)
+            self.settings.setValue("sources/user_library", True)
+            if self.database_panel is not None:
+                self.database_panel.set_source_checked("sources/user_library", True)
+        except Exception as exc:
+            QMessageBox.warning(self, "Import user phase library failed", str(exc))
+            return
+        self._refresh_database_rows()
+        self._refresh_user_phase_library_window()
+        QMessageBox.information(self, "Import user phase library", f"Imported {count} new phase(s).")
+
+    def _export_phase_cache_sources(self, sources: list[str], title: str, default_filename: str) -> None:
+        default_path = Path.home() / "Desktop" / default_filename
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            f"Export {title}",
+            str(default_path),
+            "XRD phase cache (*.json);;JSON files (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            count = self.local_phase_cache.export_phase_library(path, sources=sources)
+        except Exception as exc:
+            QMessageBox.warning(self, f"Export {title} failed", str(exc))
+            return
+        QMessageBox.information(self, f"Export {title}", f"Exported {count} cached phase(s).")
+
+    def _import_phase_cache_sources(self, sources: list[str], title: str) -> None:
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            f"Import {title}",
+            str(Path.home()),
+            "XRD phase cache (*.json);;JSON files (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            count = self.local_phase_cache.import_phase_library(path, allowed_sources=sources)
+            for source in sources:
+                if source == "COD":
+                    self.settings.setValue("sources/cod_local", True)
+                    if self.database_panel is not None:
+                        self.database_panel.set_source_checked("sources/cod_local", True)
+                if source == "MP":
+                    self.settings.setValue("materials_project/enabled", True)
+                    if self.database_panel is not None:
+                        self.database_panel.set_materials_project_checked(True)
+        except Exception as exc:
+            QMessageBox.warning(self, f"Import {title} failed", str(exc))
+            return
+        self._refresh_database_rows()
+        QMessageBox.information(self, f"Import {title}", f"Imported {count} new cached phase(s).")
 
     def _rebuild_local_peak_index(self) -> None:
         def success(result) -> None:
@@ -211,6 +356,7 @@ class PhaseFinderDatabaseActionsMixin:
             QMessageBox.warning(self, "Clear user phase library failed", str(exc))
             return
         self._refresh_database_rows()
+        self._refresh_user_phase_library_window()
         QMessageBox.information(self, "Clear user phase library", "User phase library cache was cleared.")
 
     def _index_cod_cif_folder(self) -> None:

@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$AppId = "xrd_finder",
     [string]$ProjectPath = ""
 )
@@ -170,7 +170,7 @@ function Get-SetupProgressMessage {
     if ($joined -match "RUNTIME_CHECK_FAILED") { return "Installed runtime failed its self-test" }
     if ($joined -match "Installing package:\s*([^`r`n]+)") {
         $packageName = $Matches[1].Trim()
-        if ($packageName -match "^(PySide6(?:==.*)?|pymatgen|mp-api)$") { return "Installing package: $packageName (this can take several minutes)" }
+        if ($packageName -match "^(PySide6(?:==.*)?|mp-api)$") { return "Installing package: $packageName (this can take several minutes)" }
         return "Installing package: $packageName"
     }
     if ($joined -match "Installing XRD Phase Finder requirements") { return "Installing scientific Python packages" }

@@ -20,7 +20,7 @@ find_python() {
         "/usr/bin/python3" \
         "python3"
     do
-        if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c "import certifi, cristma, gemmi, inspect, numpy, packaging, pybaselines, pyqtgraph, PySide6, rfc8785, scipy; from cristma.crystallography import resolve_space_group_setting; from cristma.diffraction import PowderPatternCalculator, PowderProfileCalculator; assert 'd_spacing_scale' in inspect.signature(PowderProfileCalculator.calculate).parameters" >/dev/null 2>&1; then
+        if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c "import certifi, cristma, inspect, numpy, packaging, pybaselines, pyqtgraph, PySide6, rfc8785, scipy; from cristma.crystallography import resolve_space_group_setting; from cristma.diffraction import PowderPatternCalculator, PowderProfileCalculator; assert 'd_spacing_scale' in inspect.signature(PowderProfileCalculator.calculate).parameters" >/dev/null 2>&1; then
             echo "$candidate"
             return 0
         fi

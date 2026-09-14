@@ -1,5 +1,4 @@
 from xrd_finder.instrument.library import InstrumentProfileLibrary
-from xrd_finder.instrument.presets import tongda_td3700_profile
 from xrd_finder.instrument.models import (
     DetectorProfile,
     GeometryProfile,
@@ -19,5 +18,4 @@ __all__ = [
     "RadiationComponentProfile",
     "RadiationProfile",
     "ResolutionProfile",
-    "tongda_td3700_profile",
 ]

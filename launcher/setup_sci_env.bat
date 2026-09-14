@@ -77,10 +77,6 @@ if /I "!REQ:~0,7!"=="PySide6" (
     echo PySide6 is a large package. Downloading can take several minutes on a slow connection.
     echo PySide6 is a large package. Downloading can take several minutes on a slow connection.>> "%LOG_FILE%"
 )
-if /I "!REQ!"=="pymatgen" (
-    echo pymatgen and its scientific dependencies can take several minutes.
-    echo pymatgen and its scientific dependencies can take several minutes.>> "%LOG_FILE%"
-)
 set "INSTALL_ATTEMPT=1"
 :install_current_retry
 "%PYTHON_EXE%" -m pip install --disable-pip-version-check --timeout 300 --retries 10 --resume-retries 30 --prefer-binary "!REQ!" >> "%LOG_FILE%" 2>&1
@@ -271,14 +267,3 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path -LiteralPa
 echo.
 echo Full log: %LOG_FILE%
 exit /b 0
-
-
-
-
-
-
-
-
-
-
-

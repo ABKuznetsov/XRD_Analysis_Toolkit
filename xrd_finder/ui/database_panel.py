@@ -22,18 +22,23 @@ class DatabasePanelWidget(QWidget):
     sourceToggled = Signal(str, bool)
     materialsProjectToggled = Signal(bool)
     saveMaterialsProjectRequested = Signal()
+    manageUserLibraryRequested = Signal()
     rebuildUserIndexRequested = Signal()
     rebuildLocalPeakIndexRequested = Signal()
     clearUserLibraryRequested = Signal()
     indexCodFolderRequested = Signal()
     indexCodZipRequested = Signal()
     downloadCodArchiveRequested = Signal()
+    exportCodRequested = Signal()
+    importCodRequested = Signal()
     clearCodRequested = Signal()
     updateRruffRequested = Signal()
     clearRruffRequested = Signal()
     chooseMatchPdf2FolderRequested = Signal()
     refreshMatchPdf2Requested = Signal()
     clearMatchPdf2Requested = Signal()
+    exportMaterialsProjectRequested = Signal()
+    importMaterialsProjectRequested = Signal()
     clearMaterialsProjectRequested = Signal()
     clearAflowRequested = Signal()
     clearOqmdRequested = Signal()
@@ -171,8 +176,7 @@ class DatabasePanelWidget(QWidget):
             self._management_row(
                 "User phase library",
                 [
-                    ("Update index", self.rebuildUserIndexRequested),
-                    ("Clear", self.clearUserLibraryRequested),
+                    ("Manage", self.manageUserLibraryRequested),
                 ],
             )
         )
@@ -191,6 +195,8 @@ class DatabasePanelWidget(QWidget):
                     ("Update from folder", self.indexCodFolderRequested),
                     ("Update from ZIP", self.indexCodZipRequested),
                     ("Download archive", self.downloadCodArchiveRequested),
+                    ("Export", self.exportCodRequested),
+                    ("Import", self.importCodRequested),
                     ("Clear", self.clearCodRequested),
                 ],
             )
@@ -235,6 +241,8 @@ class DatabasePanelWidget(QWidget):
                 "Materials Project",
                 [
                     ("Update settings", self.saveMaterialsProjectRequested),
+                    ("Export", self.exportMaterialsProjectRequested),
+                    ("Import", self.importMaterialsProjectRequested),
                     ("Clear", self.clearMaterialsProjectRequested),
                 ],
             )

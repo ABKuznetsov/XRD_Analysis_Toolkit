@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QMessageBox, QTableWidgetItem
+from PySide6.QtWidgets import QMessageBox
 
 from xrd_finder.finder.context import CalculationContext
 from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.services.calculated_pattern_service import radiation_lines_from_wavelength
+from xrd_finder.services.local_phase_cache import DERIVED_CACHE_VERSION
 
 
 class PhaseFinderCandidateStructureActionsMixin:
@@ -123,10 +124,24 @@ class PhaseFinderCandidateStructureActionsMixin:
 
     def _with_candidate_cif_ready(self, candidate: dict[str, str], title: str, on_ready) -> None:
         if not self._candidate_needs_remote_cif(candidate):
+            try:
+                self._integrate_ready_candidate_cif(candidate, refresh_rows=False)
+            except Exception as exc:
+                QMessageBox.warning(self, f"{title} failed", str(exc))
+                return
             on_ready(candidate)
             return
         source = self._candidate_source(candidate)
         entry_id = candidate.get("Entry", "")
+
+        def success(path) -> None:
+            try:
+                self._integrate_ready_candidate_cif(candidate, Path(path), refresh_rows=True)
+            except Exception as exc:
+                QMessageBox.warning(self, f"{title} failed", str(exc))
+                return
+            self._refresh_database_rows()
+            on_ready(candidate)
 
         self._run_background_task(
             title,
@@ -135,8 +150,69 @@ class PhaseFinderCandidateStructureActionsMixin:
                 (source, entry_id),
                 lambda: self._candidate_cif_path(candidate),
             ),
-            lambda _path: (self._refresh_database_rows(), on_ready(candidate)),
+            success,
             lambda message, _details: QMessageBox.warning(self, f"{title} failed", message),
+        )
+
+    def _integrate_ready_candidate_cif(
+        self,
+        candidate: dict[str, str],
+        cif_path: Path | str | None = None,
+        *,
+        refresh_rows: bool = True,
+    ) -> None:
+        source = self._candidate_source(candidate)
+        entry_id = candidate.get("Entry", "")
+        if source not in {"COD", "MP", "CCDC", "AFLOW", "OQMD"} or not entry_id:
+            return
+        path = Path(cif_path) if cif_path is not None else self.local_phase_cache.cif_path(source, entry_id)
+        if path is None or not path.is_file():
+            return
+        self.local_phase_cache.index_cif(path, source=source, entry_id=entry_id)
+        source_entry = self.local_phase_cache.get(source, entry_id)
+        if (
+            source_entry is None
+            or int(getattr(source_entry, "derived_version", 0) or 0) != DERIVED_CACHE_VERSION
+            or not self.local_phase_cache.peak_records(source, entry_id)
+        ):
+            raise ValueError(f"{source}:{entry_id} was downloaded but could not be indexed for Match/Gain.")
+        self.local_phase_cache.add_user_cif(path)
+        if refresh_rows:
+            self._refresh_candidate_rows_after_cif_integration(source, entry_id)
+
+    def _refresh_candidate_rows_after_cif_integration(self, source: str, entry_id: str) -> None:
+        table = getattr(self, "candidate_table", None)
+        if table is None:
+            return
+        entry = self.local_phase_cache.get(source, entry_id)
+        if entry is None:
+            return
+        prepared_rows = self.candidate_search_service.cache_rows([entry])
+        if not prepared_rows:
+            return
+        prepared = prepared_rows[0]
+        rows = []
+        replaced = False
+        for values in table.all_row_values():
+            row = [
+                values.get("Source", ""),
+                values.get("Entry", ""),
+                values.get("Formula", ""),
+                values.get("Phase", ""),
+                values.get("Sp. gr.", ""),
+                values.get("Match (%)", ""),
+                values.get("Gain (%)", ""),
+                values.get("I/Ic", ""),
+            ]
+            if row[0] == source and row[1] == entry_id:
+                row = prepared
+                replaced = True
+            rows.append(row)
+        if not replaced:
+            rows.append(prepared)
+        self._set_candidate_rows(
+            self.candidate_search_service.dedupe_candidate_rows(rows),
+            force_rank=True,
         )
 
     def _candidate_embedded_cif_path(self, candidate: dict[str, str]) -> Path | None:
@@ -275,18 +351,16 @@ class PhaseFinderCandidateStructureActionsMixin:
             QMessageBox.information(self, "Download CIF", "Select a COD or Materials Project row first.")
             return
         source = self._candidate_source(candidate)
-        if source in {"USER", "CCDC"}:
+        if source == "USER":
             QMessageBox.information(self, "Download CIF", "This CIF is already in the user phase library.")
             return
-        if source not in {"COD", "MP"} or not candidate.get("Entry"):
-            QMessageBox.information(self, "Download CIF", "Only COD online or Materials Project rows can be saved to the user phase library.")
+        if source not in {"COD", "MP", "CCDC", "AFLOW", "OQMD"} or not candidate.get("Entry"):
+            QMessageBox.information(self, "Download CIF", "Only CIF-backed online rows can be saved to the user phase library.")
             return
         saved_id = candidate.get("Entry", "")
 
         def success(path) -> None:
-            row = self.candidate_table.currentRow()
-            if row >= 0:
-                self.candidate_table.setItem(row, 0, QTableWidgetItem(source))
+            self._integrate_ready_candidate_cif(candidate, Path(path), refresh_rows=True)
             self._refresh_database_rows()
             QMessageBox.information(self, "Download CIF", f"Saved {saved_id}:\n{path}")
 

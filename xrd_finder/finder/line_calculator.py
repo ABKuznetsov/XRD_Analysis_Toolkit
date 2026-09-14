@@ -13,14 +13,10 @@ from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.instrument.models import InstrumentProfile
 from xrd_finder.services.calculated_pattern_service import (
     CU_KA1_WAVELENGTH,
-    CalculatedPatternService,
     HKLPeak,
 )
 
-try:
-    from xrd_finder.services.cristma_powder_adapter import CristmaPowderAdapter
-except ImportError:  # CrIStMa < 0.1.0b8 remains a temporary runtime fallback.
-    CristmaPowderAdapter = None  # type: ignore[assignment,misc]
+from xrd_finder.services.cristma_powder_adapter import CristmaPowderAdapter
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,23 +31,17 @@ class CachedLineCalculator:
 
     def __init__(
         self,
-        calculated_pattern_service: CalculatedPatternService | None = None,
+        calculated_pattern_service=None,
         cache_limit: int = 256,
         cristma_adapter=None,
     ) -> None:
-        self.calculated_pattern_service = calculated_pattern_service or CalculatedPatternService()
         self._sticks_cache: OrderedDict[tuple[object, ...], CandidateLineData] = OrderedDict()
         self._structure_cache: OrderedDict[tuple[str, int], object] = OrderedDict()
         self._cache_limit = max(0, int(cache_limit))
         self._sticks_hits = 0
         self._sticks_misses = 0
-        self._cristma_adapter = (
-            cristma_adapter
-            if cristma_adapter is not None
-            else (None if CristmaPowderAdapter is None else CristmaPowderAdapter())
-        )
+        self._cristma_adapter = cristma_adapter if cristma_adapter is not None else CristmaPowderAdapter()
         self._cristma_sticks = 0
-        self._cristma_fallbacks = 0
 
     @property
     def cristma_adapter(self):
@@ -63,7 +53,6 @@ class CachedLineCalculator:
             "sticks_hits": int(self._sticks_hits),
             "sticks_misses": int(self._sticks_misses),
             "cristma_sticks": int(self._cristma_sticks),
-            "cristma_fallbacks": int(self._cristma_fallbacks),
         }
 
     def candidate_sticks(
@@ -141,31 +130,18 @@ class CachedLineCalculator:
         else:
             self._structure_cache.move_to_end(structure_key)
 
-        peaks = None
-        cristma_lines = None
-        if instrument_profile is not None and self._cristma_adapter is not None:
-            try:
-                cristma_lines = self._cristma_adapter.lines_from_cif(
-                    path,
-                    two_theta_min=two_theta_min,
-                    two_theta_max=two_theta_max,
-                    instrument_profile=instrument_profile,
-                    use_lp=use_lp,
-                    cell_override=cell_override,
-                )
-                peaks = list(cristma_lines.peaks)
-                self._cristma_sticks += 1
-            except Exception:
-                self._cristma_fallbacks += 1
-        if peaks is None:
-            calculation_structure = self._structure_with_cell(structure, cell_override)
-            peaks = self.calculated_pattern_service.calculate_sticks(
-                calculation_structure,
-                two_theta_min=two_theta_min,
-                two_theta_max=two_theta_max,
-                wavelength=wavelength,
-                use_lp=use_lp,
-            )
+        if instrument_profile is None:
+            raise ValueError("CRiStMa powder lines require an instrument profile")
+        cristma_lines = self._cristma_adapter.lines_from_cif(
+            path,
+            two_theta_min=two_theta_min,
+            two_theta_max=two_theta_max,
+            instrument_profile=instrument_profile,
+            use_lp=use_lp,
+            cell_override=cell_override,
+        )
+        peaks = list(cristma_lines.peaks)
+        self._cristma_sticks += 1
         line_data = CandidateLineData(
             peaks=tuple(peaks),
             fingerprint=cache_key,

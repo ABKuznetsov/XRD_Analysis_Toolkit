@@ -33,7 +33,6 @@ class FinderProjectState:
     analysis_preview_paths: dict[str, str] = field(default_factory=dict)
     phase_colors: dict[str, str] = field(default_factory=dict)
     observed_pattern_colors: dict[str, str] = field(default_factory=dict)
-    plot_view_settings: dict[str, Any] = field(default_factory=dict)
     plot_view_range: list[list[float]] = field(default_factory=list)
     selected_elements: list[str] = field(default_factory=list)
     selected_element_order: list[str] = field(default_factory=list)

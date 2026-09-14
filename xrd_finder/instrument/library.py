@@ -6,17 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from xrd_finder.instrument.models import InstrumentProfile
-from xrd_finder.instrument.presets import (
-    TONGDA_TD3700_PROFILE_ID,
-    packaged_instrument_profiles,
-)
+from xrd_finder.instrument.presets import packaged_instrument_profiles
 from xrd_finder.services.cache_paths import default_instrument_profile_library_path
 
 
 LIBRARY_SCHEMA_VERSION = 1
 BUILTIN_PROFILE_ID = "builtin-cu-kalpha"
 PACKAGED_PROFILE_IDS = frozenset(
-    {BUILTIN_PROFILE_ID, TONGDA_TD3700_PROFILE_ID}
+    {BUILTIN_PROFILE_ID}
 )
 
 

@@ -137,7 +137,8 @@ class CodOnlineService:
 
         if last_error is not None:
             self._emit_alert(
-                "COD servers are unavailable. Showing local results only."
+                "COD servers are unavailable. Showing local results only. "
+                "Check whether VPN is blocking the connection."
             )
             raise last_error
         raise RuntimeError("No COD servers are configured.")

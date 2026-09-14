@@ -52,13 +52,17 @@ def _apply_axis_appearance(
 class PhaseFinderPlotViewActionsMixin:
     def _init_plot_view_state(self) -> None:
         self.plot_settings_panel: PlotViewSettingsWidget | None = None
-        self.plot_view_settings = PlotViewSettings()
+        self.plot_view_settings = (
+            PlotViewSettingsWidget.load_saved_default_settings()
+            or PlotViewSettings()
+        )
         self.plot_style = plot_style_from_view_settings(self.plot_view_settings)
         self.plot_marker_size = self.plot_style.marker.size
         self._plot_grid_item = None
 
     def _plot_view_tab(self) -> QWidget:
         self.plot_settings_panel = PlotViewSettingsWidget()
+        self.plot_settings_panel.set_settings(self.plot_view_settings, emit=False)
         self.plot_settings_panel.settingsChanged.connect(self._apply_plot_view_settings)
         self.plot_settings_panel.profileCandidateColorRequested.connect(self._change_profile_candidate_color)
         QTimer.singleShot(0, lambda: self._apply_plot_view_settings(self.plot_settings_panel.settings()))
@@ -149,7 +153,7 @@ class PhaseFinderPlotViewActionsMixin:
         finally:
             combo.blockSignals(signals_were_blocked)
 
-    def _apply_plot_view_settings(self, settings: PlotViewSettings) -> None:
+    def _apply_plot_view_settings(self, settings: PlotViewSettings, *, force: bool = False) -> None:
         previous_settings = getattr(self, "plot_view_settings", None)
         quick_fields = {
             "grid_visible",
@@ -173,7 +177,7 @@ class PhaseFinderPlotViewActionsMixin:
             "layer_peak_labels_visible",
             "layer_unknown_peaks_visible",
         }
-        quick_only = previous_settings is not None and all(
+        quick_only = not force and previous_settings is not None and all(
             getattr(previous_settings, name) == getattr(settings, name)
             for name in settings.__dataclass_fields__
             if name not in quick_fields
@@ -256,6 +260,7 @@ class PhaseFinderPlotViewActionsMixin:
             self.match_plot.setStyleSheet("border: 0;")
         title = settings.title_text if settings.title_visible else ""
         self.match_plot.setTitle(title, color=settings.title_color, size=f"{settings.title_font_size}pt")
+        self._sync_plot_canvas_margins(settings, bool(title.strip()))
         axis_visible = {
             "bottom": settings.bottom_axis_visible,
             "top": settings.top_axis_visible,
@@ -328,6 +333,25 @@ class PhaseFinderPlotViewActionsMixin:
             if getattr(self, "match_candidates", None):
                 self._recalculate_match_profile()
         self._sync_current_plot_export_tags()
+
+    def _sync_plot_canvas_margins(self, settings: PlotViewSettings, title_visible: bool) -> None:
+        layout = getattr(self, "plot_canvas_layout", None)
+        if layout is None:
+            return
+        top_needs_space = title_visible or (
+            settings.top_axis_visible
+            and (settings.top_axis_values_visible or settings.top_axis_label_visible)
+        )
+        bottom_needs_space = settings.bottom_axis_visible and (
+            settings.bottom_axis_values_visible or settings.bottom_axis_label_visible
+        )
+        layout.setContentsMargins(26, 26 if top_needs_space else 14, 26, 38 if bottom_needs_space else 24)
+        title_item = getattr(getattr(self.match_plot, "plotItem", None), "titleLabel", None)
+        if title_item is not None:
+            try:
+                title_item.setVisible(title_visible)
+            except Exception:
+                pass
 
     def _sync_current_plot_export_tags(self) -> None:
         if not hasattr(self, "match_plot") or not hasattr(self, "plot_layers"):

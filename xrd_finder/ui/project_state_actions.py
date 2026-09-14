@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import asdict, fields
 from pathlib import Path
 
 from xrd_finder.core.finder_state import FinderProjectState
 from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.io.analysis_summary_builder import build_analysis_summary
 from xrd_finder.ui.element_filter import element_sort_key
-from xrd_finder.ui.plot_view_settings import PlotViewSettings
 
 
 class PhaseFinderProjectStateActionsMixin:
@@ -103,7 +101,6 @@ class PhaseFinderProjectStateActionsMixin:
             ),
             phase_colors={str(key): str(value) for key, value in self.phase_colors.items()},
             observed_pattern_colors={str(key): str(value) for key, value in self.observed_pattern_colors.items()},
-            plot_view_settings=asdict(self.plot_view_settings),
             plot_view_range=view_range,
             selected_elements=sorted(self.selected_elements, key=element_sort_key),
             selected_element_order=list(self.selected_element_order),
@@ -136,7 +133,6 @@ class PhaseFinderProjectStateActionsMixin:
         self.phase_colors = dict(getattr(state, "phase_colors", {}) or {})
         self.observed_pattern_colors = dict(getattr(state, "observed_pattern_colors", {}) or {})
         self.show_all_selected_patterns = False
-        self._restore_project_plot_view_settings(getattr(state, "plot_view_settings", {}) or {})
         tree_signals_were_blocked = self.tree.blockSignals(True)
         try:
             self.tree.restore_expansion_state(getattr(state, "tree_expansion_state", {}) or {})
@@ -232,18 +228,6 @@ class PhaseFinderProjectStateActionsMixin:
                     f"Could not install embedded CIF {source}:{entry_id} in the local phase library; "
                     f"the project will keep using its embedded copy: {exc}"
                 )
-
-    def _restore_project_plot_view_settings(self, stored: dict) -> None:
-        if not isinstance(stored, dict) or not stored:
-            return
-        defaults = asdict(PlotViewSettings())
-        valid_names = {field.name for field in fields(PlotViewSettings)}
-        values = {name: stored.get(name, defaults[name]) for name in valid_names}
-        settings = PlotViewSettings(**values)
-        panel = getattr(self, "plot_settings_panel", None)
-        if panel is not None and hasattr(panel, "set_settings"):
-            panel.set_settings(settings, emit=False)
-        self._apply_plot_view_settings(settings)
 
     def _restore_filter_state(self, state: FinderProjectState) -> None:
         self.element_states = dict(state.element_states)

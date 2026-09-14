@@ -1,107 +1,123 @@
 # XRD Phase Finder
 
 ![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-blue.svg)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey.svg)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
-**XRD Phase Finder** is an open-source desktop application for powder X-ray diffraction phase identification. It is focused on practical interpretation of mixtures: loading experimental XRD patterns, selecting expected elements, searching open or local phase sources, comparing calculated/reference peaks with the experiment, and saving the full interpretation state in a portable project file.
+**XRD Phase Finder** is an open-source desktop program for powder X-ray diffraction phase identification. It loads experimental XRD patterns, searches user and open crystallographic sources, calculates reference diffraction locally with CRiStMa, compares observed and calculated peaks, ranks candidates with Match and Gain scores, and saves the interpretation state in portable `.xpff` project files.
 
-This repository is the standalone Finder application. Structure viewing and other crystallographic tools are developed separately.
+This repository contains the standalone Finder application. Structure viewing and other crystallographic tools are developed separately and are not bundled with the Finder installers.
 
 ## Download
 
-- [Windows installer: XRD_Phase_Finder_Setup_1.6.0.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.0/XRD_Phase_Finder_Setup_1.6.0.exe)
-- [macOS package: XRD_Phase_Finder_macOS_1.6.0.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.0/XRD_Phase_Finder_macOS_1.6.0.pkg)
+- [Windows installer: XRD_Phase_Finder_Setup_1.6.1.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_Setup_1.6.1.exe)
+- macOS package: build from this repository with `scripts/build_macos_pkg.command` until the 1.6.1 macOS package is attached to the release.
 
-All release files are also available on the [XRD Phase Finder 1.6.0 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.0).
+All release files are listed on the [XRD Phase Finder 1.6.1 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.1).
 
-## Main Features
+## Main features
 
 - import one or many XRD patterns and CIF files;
-- search local/user libraries, COD, RRUFF, PDF-style line databases and optional online sources;
-- rank candidates by Match and Gain scores;
-- show candidate peak markers, calculated overlays, residuals and selected phases;
-- estimate smoothing and background, including separate background and amorphous/halo handling;
-- save `.xpff` projects with imported data, processing state, selected phases, instrument profile and view settings;
-- use CRiStMa for crystallographic radiation/profile definitions used by Finder calculations.
+- manage instrument profiles, radiation wavelength and profile broadening;
+- search user CIF libraries, COD, Materials Project, AFLOW, OQMD, RRUFF and PDF-style line databases when configured;
+- calculate CIF diffraction lines through CRiStMa for the active instrument profile;
+- rank candidates by Match and Gain scores and inspect residual signal;
+- show calculated profiles, phase ticks, coverage markers, unknown peaks and selected phases;
+- save `.xpff` projects with imported data, selected phases and calculation state;
+- keep personal appearance settings, instrument profiles and local database caches in user AppData/Application Support;
+- export and import settings and cached user/COD/Materials Project phase libraries between computers.
 
-## Quick Start
+## Quick start
 
-macOS:
+### Windows
 
-```bash
-./run_finder.command
-```
+Download and run `XRD_Phase_Finder_Setup_1.6.1.exe` from the release page. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
 
-Windows:
+On first launch, XRD Phase Finder checks the per-user scientific Python runtime. If required packages are missing, the launcher offers to install or repair them under the user profile. Project files and personal data are not stored in the installation directory.
 
-```text
-run_finder.bat
-```
+### macOS
 
-The launchers create or reuse a per-user scientific Python runtime and then start the graphical application. Installed builds use the same runtime logic through the preview launcher.
-
-## Installation Assets
-
-The macOS package builder creates:
-
-```text
-dist/XRD_Phase_Finder_macOS_1.6.0.pkg
-```
-
-Build it from the repository root:
+From the repository root on macOS:
 
 ```bash
 scripts/build_macos_pkg.command
 ```
 
-The package installs `XRD Phase Finder.app` into `/Applications`.
+The package builder creates a Finder-only `.pkg` under `dist/` and installs `XRD Phase Finder.app` into `/Applications`.
 
-Windows installer scripts live in:
+For development or direct source runs:
 
-```text
-installer/finder_setup/
+```bash
+./run_finder.command
 ```
 
-## Repository Layout
+### Ubuntu / Linux from source
+
+Ubuntu packages commonly needed by Qt/PySide:
+
+```bash
+sudo apt update
+sudo apt install -y python3.12 python3.12-venv python3-pip libxcb-cursor0 libegl1 libgl1 libxkbcommon-x11-0
+```
+
+Create and run a local environment:
+
+```bash
+python3.12 -m venv .venv
+. .venv/bin/activate
+python -m pip install -U pip setuptools wheel
+python -m pip install -r requirements.txt
+python -m xrd_finder.apps.finder_gui
+```
+
+If Qt fails under Wayland, try starting from an X11 session or run:
+
+```bash
+QT_QPA_PLATFORM=xcb python -m xrd_finder.apps.finder_gui
+```
+
+## Example project
+
+Use **Help -> Open example project** inside the application. The bundled example opens read-only so that new users can inspect the workflow without overwriting their own projects.
+
+## Database search and cache behavior
+
+XRD Phase Finder does not calculate the complete COD or Materials Project on every search. It combines several layers:
+
+- **User phase library**: CIF files imported by the user are copied into the local user cache, indexed once and reused.
+- **COD online**: formula/name/element queries ask the COD service for a limited candidate set. Downloaded CIF files are cached locally.
+- **COD local/bulk**: downloaded COD CIF folders or ZIP archives can be indexed for offline use.
+- **Materials Project, AFLOW and OQMD**: online queries are optional and depend on the configured service and network access. Retrieved structures are cached locally.
+- **RRUFF and PDF-style line sources**: used as reference-line sources when configured.
+
+The local phase cache stores CIF paths, cell metadata, atoms, calculated peak lists, strongest-peak summaries and a SQL peak index. Repeated searches use this index instead of recalculating every structure. The peak preselection index compares observed peaks by d-spacing using the active wavelength, so non-Cu radiation sources can use the same cached structures.
+
+Typical search time depends on the number of enabled sources, local cache size, network access and the number of selected elements. Narrow element filters are faster and more specific. If COD is unavailable, the program continues with local results and shows a warning; VPN or institutional network filtering can block COD access.
+
+## Moving settings and local caches between computers
+
+Use **Tools -> Export settings...** and **Tools -> Import settings...** to transfer appearance settings, layout settings and instrument profiles.
+
+Use **Database -> User phase library...** or the **Database settings** window to export/import cached user, COD and Materials Project phase libraries. These transfers include the SQL peak index, so imported caches do not need to be recalculated immediately.
+
+## Repository layout
 
 ```text
 xrd_finder/              application package
 launcher/                startup, update and runtime helper scripts
 installer/finder_setup/  Windows installer definition
 scripts/                 release/package scripts
-tests/                   development tests
 requirements.txt         runtime Python dependencies
 pyproject.toml           package metadata
 ```
 
-Release packages intentionally exclude development-only folders such as `tests/`, `docs/`, `build/`, `dist/`, local caches and database downloads.
+Release packages intentionally exclude development-only folders such as `tests/`, `docs/`, `build/`, `dist/`, local logs, local caches and database downloads.
 
-## Data Sources
-
-XRD Phase Finder can use open crystallographic databases and user-provided files. User CIF files can be added directly, while larger external databases are indexed locally when configured by the user. Database terms and licenses remain the responsibility of the data provider and user.
-
-## Development
-
-Create a local environment:
+## Development checks
 
 ```bash
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -U pip
-.venv/bin/python -m pip install -r requirements.txt
-```
-
-Run the application:
-
-```bash
-.venv/bin/python -m xrd_finder.apps.finder_gui
-```
-
-Run focused checks:
-
-```bash
-python3 -m compileall xrd_finder
-python3 -m pytest tests
+python -m compileall xrd_finder
+python -m pytest tests
 ```
 
 ## License

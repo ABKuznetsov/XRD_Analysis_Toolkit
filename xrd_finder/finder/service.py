@@ -4,7 +4,6 @@ from collections import OrderedDict
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-import gemmi
 import numpy as np
 from scipy.optimize import nnls
 from scipy.signal import find_peaks
@@ -29,6 +28,7 @@ from xrd_finder.services.calculated_pattern_service import (
     expand_atoms_by_symmetry,
     radiation_lines_from_wavelength,
 )
+from xrd_finder.services.element_masses import atomic_weight
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,7 +119,7 @@ class FinderService:
         )
         for candidate in finder_input.candidates:
             try:
-                if candidate.structure is not None:
+                if candidate.structure is not None and not candidate.cif_path:
                     structure = candidate.structure
                     line_data = None
                     peaks = self.calculated_pattern_service.calculate_sticks(
@@ -416,10 +416,10 @@ class FinderService:
         total = 0.0
         for atom in expand_atoms_by_symmetry(structure):
             try:
-                atomic_weight = float(gemmi.Element(str(atom.element)).weight)
+                weight = atomic_weight(str(atom.element))
             except (AttributeError, RuntimeError, TypeError, ValueError):
-                atomic_weight = 0.0
-            total += max(float(atom.occupancy), 0.0) * max(atomic_weight, 0.0)
+                weight = 0.0
+            total += max(float(atom.occupancy), 0.0) * max(weight, 0.0)
         return max(total, 1.0e-12)
 
     @staticmethod

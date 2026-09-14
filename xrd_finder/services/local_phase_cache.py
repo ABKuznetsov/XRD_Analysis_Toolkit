@@ -13,6 +13,7 @@ import time
 
 from xrd_finder.core.reference_structures import create_corundum_reference_structure
 from xrd_finder.core.structure import Structure
+from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.services.calculated_pattern_service import CU_KA1_WAVELENGTH, CalculatedPatternService
 from xrd_finder.services.cache_paths import default_phase_cache_root
 from xrd_finder.services.cod_online_service import CodEntry, CodOnlineService, formula_elements
@@ -21,6 +22,7 @@ from xrd_finder.services.cod_online_service import CodEntry, CodOnlineService, f
 DEFAULT_CACHE_ROOT = default_phase_cache_root()
 DERIVED_CACHE_VERSION = 9
 INCOMPLETE_SEARCH_MAX_AGE_SECONDS = 30 * 60
+TRANSFERABLE_LIBRARY_SOURCES = frozenset({"USER", "COD", "MP"})
 
 
 def _embedded_source_dir_name(source: str) -> str:
@@ -81,6 +83,15 @@ class LocalPhaseCache:
     def cached_count(self) -> int:
         with self._connect() as connection:
             return int(connection.execute("select count(*) from phases where cif_path != ''").fetchone()[0])
+
+    def source_count(self, source: str) -> int:
+        with self._connect() as connection:
+            return int(
+                connection.execute(
+                    "select count(*) from phases where source = ?",
+                    (str(source or "").upper(),),
+                ).fetchone()[0]
+            )
 
     def peak_indexed_count(self) -> int:
         with self._connect() as connection:
@@ -291,14 +302,20 @@ class LocalPhaseCache:
         elements: list[str] | None = None,
         excluded_elements: list[str] | None = None,
         sources: list[str] | None = None,
+        wavelength: float = CU_KA1_WAVELENGTH,
         tolerance_two_theta: float = 0.35,
         limit: int = 100,
     ) -> list[CachedPhaseEntry]:
-        peak_positions = [
-            float(position)
-            for position in positions
-            if isinstance(position, Real) and math.isfinite(float(position))
-        ]
+        wavelength = float(wavelength or CU_KA1_WAVELENGTH)
+        peak_positions = []
+        for position in positions:
+            if not isinstance(position, Real) or not math.isfinite(float(position)):
+                continue
+            two_theta = float(position)
+            d_spacing = self._d_from_two_theta(two_theta, wavelength)
+            if d_spacing is None:
+                continue
+            peak_positions.append((two_theta, d_spacing))
         if not peak_positions:
             return self.search(
                 text=text,
@@ -307,12 +324,12 @@ class LocalPhaseCache:
                 sources=sources,
                 limit=limit,
             )
-        anchor_positions = [position for position in peak_positions if 5.0 <= position <= 60.0][:10]
-        anchor_keys = {round(position, 5) for position in anchor_positions}
+        anchor_positions = [item for item in peak_positions if 5.0 <= item[0] <= 60.0][:10]
+        anchor_keys = {round(item[0], 5) for item in anchor_positions}
         remaining_positions = [
-            position
-            for position in peak_positions
-            if round(position, 5) not in anchor_keys
+            item
+            for item in peak_positions
+            if round(item[0], 5) not in anchor_keys
         ]
         selected_positions = (anchor_positions + remaining_positions)[:80]
         anchor_count = len(anchor_positions)
@@ -358,15 +375,22 @@ class LocalPhaseCache:
             )
             params.extend([like_text, like_text, like_text, like_text, f"%{compact_formula}%", f"%{sorted_formula}%"])
         query_peak_sql = " union all ".join(
-            "select ? as query_index, ? as query_position, ? as query_weight, ? as anchor_weight"
+            "select ? as query_index, ? as query_position, ? as query_d, ? as query_tolerance_d, ? as query_weight, ? as anchor_weight"
             for _ in selected_positions
         )
         query_params: list[object] = []
-        for index, position in enumerate(selected_positions):
+        tolerance = max(float(tolerance_two_theta), 0.02)
+        for index, (position, d_spacing) in enumerate(selected_positions):
             query_weight = 1.0 / math.sqrt(index + 1.0)
             anchor_weight = 1.0 if index < anchor_count else 0.0
-            query_params.extend([index, position, query_weight, anchor_weight])
-        tolerance = max(float(tolerance_two_theta), 0.02)
+            query_params.extend([
+                index,
+                position,
+                d_spacing,
+                self._d_tolerance_from_two_theta_window(position, tolerance, wavelength),
+                query_weight,
+                anchor_weight,
+            ])
         with self._connect() as connection:
             deadline = time.monotonic() + 2.0
 
@@ -383,7 +407,7 @@ class LocalPhaseCache:
                            p.atoms_json, p.iic, p.peaks_json, p.top_peaks_json, p.derived_version,
                            count(distinct q.query_index) as observed_hits,
                            count(distinct pp.peak_index) as peak_hits,
-                           min(abs(pp.two_theta - q.query_position)) as best_delta,
+                           min(abs(pp.d - q.query_d)) as best_delta,
                            sum(q.anchor_weight) as anchor_hits,
                            sum(case when q.anchor_weight > 0 and pp.top_rank between 1 and 10 then 1 else 0 end) as strong_anchor_hits,
                            sum(q.anchor_weight * max(pp.norm_intensity, 0.0)) as anchor_intensity_support,
@@ -393,7 +417,8 @@ class LocalPhaseCache:
                     from phases p
                     join phase_peaks pp on pp.source = p.source and pp.entry_id = p.entry_id
                     join query_peaks q
-                      on pp.two_theta between q.query_position - ? and q.query_position + ?
+                      on pp.d is not null
+                     and pp.d between q.query_d - q.query_tolerance_d and q.query_d + q.query_tolerance_d
                     where {" and ".join(where)}
                     group by p.source, p.entry_id
                     order by strong_anchor_hits desc,
@@ -408,7 +433,7 @@ class LocalPhaseCache:
                              p.updated_at desc
                     limit ?
                     """,
-                    (*query_params, tolerance, tolerance, *params, max(limit * 3, limit)),
+                    (*query_params, *params, max(limit * 3, limit)),
                 ).fetchall()
             except sqlite3.OperationalError:
                 rows = []
@@ -426,6 +451,24 @@ class LocalPhaseCache:
                 break
         return results
 
+    @staticmethod
+    def _d_from_two_theta(two_theta: float, wavelength: float) -> float | None:
+        theta = math.radians(float(two_theta) / 2.0)
+        sine = math.sin(theta)
+        if sine <= 0.0:
+            return None
+        d_spacing = float(wavelength) / (2.0 * sine)
+        return d_spacing if math.isfinite(d_spacing) and d_spacing > 0.0 else None
+
+    def _d_tolerance_from_two_theta_window(self, two_theta: float, tolerance: float, wavelength: float) -> float:
+        low = self._d_from_two_theta(max(float(two_theta) - float(tolerance), 0.001), wavelength)
+        high = self._d_from_two_theta(float(two_theta) + float(tolerance), wavelength)
+        center = self._d_from_two_theta(float(two_theta), wavelength)
+        values = [value for value in (low, high, center) if value is not None]
+        if len(values) < 2:
+            return 0.02
+        return max(abs(value - float(center or values[0])) for value in values) + 1.0e-6
+
     def download_cod_entry(self, entry: CodEntry, cod_online: CodOnlineService) -> Path:
         self.upsert_cod_entries([entry])
         cif_path = cod_online.download_cif(entry.cod_id, self.cif_dir)
@@ -436,17 +479,68 @@ class LocalPhaseCache:
         source_path = Path(cif_path)
         user_dir = self.root / "user_cif"
         user_dir.mkdir(parents=True, exist_ok=True)
+        existing_user_path = self._matching_user_cif_path(user_dir, source_path)
+        if existing_user_path is not None:
+            entry_id = existing_user_path.stem
+            self.index_cif(existing_user_path, source="USER", entry_id=entry_id)
+            entry = self.get("USER", entry_id)
+            if entry is not None:
+                return entry
+            return CachedPhaseEntry(source="USER", entry_id=entry_id, name=entry_id, cif_path=str(existing_user_path))
         target_path = user_dir / source_path.name
-        if target_path.exists() and target_path.resolve() != source_path.resolve():
+        if (
+            target_path.exists()
+            and target_path.resolve() != source_path.resolve()
+            and not self._same_file_content(target_path, source_path)
+        ):
             target_path = user_dir / f"{source_path.stem}_{int(time.time())}{source_path.suffix}"
         if target_path.resolve() != source_path.resolve():
-            shutil.copy2(source_path, target_path)
+            if not target_path.exists() or not self._same_file_content(target_path, source_path):
+                shutil.copy2(source_path, target_path)
         entry_id = target_path.stem
         self.index_cif(target_path, source="USER", entry_id=entry_id)
         entry = self.get("USER", entry_id)
         if entry is None:
             return CachedPhaseEntry(source="USER", entry_id=entry_id, name=entry_id, cif_path=str(target_path))
         return entry
+
+    def _matching_user_cif_path(self, user_dir: Path, source_path: Path) -> Path | None:
+        try:
+            if not source_path.is_file():
+                return None
+            source_digest = self._file_sha256(source_path)
+            source_size = source_path.stat().st_size
+        except OSError:
+            return None
+        for candidate in user_dir.glob("*.cif"):
+            try:
+                if candidate.resolve() == source_path.resolve():
+                    return candidate
+                if candidate.stat().st_size == source_size and self._file_sha256(candidate) == source_digest:
+                    return candidate
+            except OSError:
+                continue
+        return None
+
+    def _same_file_content(self, left: Path, right: Path) -> bool:
+        try:
+            left_stat = left.stat()
+            right_stat = right.stat()
+            if left_stat.st_size != right_stat.st_size:
+                return False
+            if left.resolve() == right.resolve():
+                return True
+            return self._file_sha256(left) == self._file_sha256(right)
+        except OSError:
+            return False
+
+    @staticmethod
+    def _file_sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def install_embedded_cif(self, cif_path: str | Path, source: str, entry_id: str) -> Path | None:
         existing_entry = self.get(source, entry_id)
@@ -585,6 +679,156 @@ class LocalPhaseCache:
     def clear_user_library(self) -> None:
         self._clear_sources(["USER"])
         self._remove_cache_dirs(["user_cif"])
+
+    def export_user_library(self, path: str | Path) -> int:
+        return self.export_phase_library(path, sources=["USER"], library_name="user_phase_library")
+
+    def import_user_library(self, path: str | Path) -> int:
+        return self.import_phase_library(path, allowed_sources=["USER"])
+
+    def export_phase_library(
+        self,
+        path: str | Path,
+        *,
+        sources: list[str] | tuple[str, ...],
+        library_name: str = "phase_library",
+    ) -> int:
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        normalized_sources = [str(source or "").upper() for source in sources if str(source or "").strip()]
+        if not normalized_sources:
+            raise ValueError("At least one source is required for export.")
+        placeholders = ", ".join("?" for _ in normalized_sources)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                select source, entry_id, formula, name, spacegroup, source_text, cif_path, elements,
+                       a, b, c, alpha, beta, gamma, volume, atoms_json, iic, peaks_json, top_peaks_json, derived_version
+                from phases
+                where source in ({placeholders})
+                order by source, name, entry_id
+                """,
+                normalized_sources,
+            ).fetchall()
+        entries = []
+        for row in rows:
+            entry = dict(row)
+            cif_text = ""
+            cif_path = Path(str(entry.get("cif_path") or ""))
+            if cif_path.is_file():
+                try:
+                    cif_text = cif_path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    cif_text = ""
+            entry["cif_text"] = cif_text
+            entry.pop("cif_path", None)
+            entries.append(entry)
+        payload = {
+            "schema_version": 1,
+            "application": "XRD Phase Finder",
+            "library": library_name,
+            "sources": normalized_sources,
+            "entries": entries,
+        }
+        target.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        return len(entries)
+
+    def import_phase_library(
+        self,
+        path: str | Path,
+        *,
+        allowed_sources: list[str] | tuple[str, ...] | None = None,
+    ) -> int:
+        source_path = Path(path)
+        payload = json.loads(source_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or payload.get("library") not in {"user_phase_library", "phase_library"}:
+            raise ValueError("Unsupported phase library file")
+        entries = payload.get("entries")
+        if not isinstance(entries, list):
+            raise ValueError("Phase library file does not contain entries")
+        allowed = {
+            str(source or "").upper()
+            for source in (allowed_sources or TRANSFERABLE_LIBRARY_SOURCES)
+            if str(source or "").strip()
+        }
+        imported = 0
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                continue
+            source = str(entry.get("source") or "").upper()
+            if source not in allowed or source not in TRANSFERABLE_LIBRARY_SOURCES:
+                continue
+            cif_text = str(entry.get("cif_text") or "")
+            if not cif_text.strip():
+                continue
+            entry_id = str(entry.get("entry_id") or f"user_phase_{index + 1}").strip() or f"user_phase_{index + 1}"
+            safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", entry_id).strip("._") or f"user_phase_{index + 1}"
+            import_dir = self._transfer_import_dir(source)
+            import_dir.mkdir(parents=True, exist_ok=True)
+            temporary_path = import_dir / f"{safe_id}.cif"
+            counter = 1
+            while temporary_path.exists() and temporary_path.read_text(encoding="utf-8", errors="replace") != cif_text:
+                temporary_path = import_dir / f"{safe_id}_{counter}.cif"
+                counter += 1
+            temporary_path.write_text(cif_text, encoding="utf-8")
+            before = self.get(source, entry_id)
+            cached_entry = self._entry_from_transfer_payload(entry, source, entry_id, temporary_path)
+            with self._connect() as connection:
+                self._upsert(connection, cached_entry, keep_cif=False)
+            if before is None:
+                imported += 1
+        return imported
+
+    def _entry_from_transfer_payload(
+        self,
+        payload: dict[str, object],
+        source: str,
+        entry_id: str,
+        cif_path: Path,
+    ) -> CachedPhaseEntry:
+        return CachedPhaseEntry(
+            source=source,
+            entry_id=entry_id,
+            formula=str(payload.get("formula") or ""),
+            name=str(payload.get("name") or entry_id),
+            spacegroup=str(payload.get("spacegroup") or ""),
+            source_text=str(payload.get("source_text") or ""),
+            cif_path=str(cif_path),
+            a=self._optional_float(payload.get("a")),
+            b=self._optional_float(payload.get("b")),
+            c=self._optional_float(payload.get("c")),
+            alpha=self._optional_float(payload.get("alpha")),
+            beta=self._optional_float(payload.get("beta")),
+            gamma=self._optional_float(payload.get("gamma")),
+            volume=self._optional_float(payload.get("volume")),
+            atoms_json=str(payload.get("atoms_json") or ""),
+            iic=self._optional_float(payload.get("iic")),
+            peaks_json=str(payload.get("peaks_json") or ""),
+            top_peaks_json=str(payload.get("top_peaks_json") or ""),
+            derived_version=int(payload.get("derived_version") or 0),
+        )
+
+    @staticmethod
+    def _optional_float(value: object) -> float | None:
+        if value is None or value == "":
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _transfer_import_dir(self, source: str) -> Path:
+        source = str(source or "").upper()
+        if source == "USER":
+            return self.root / "user_cif_imports"
+        if source == "COD":
+            return self.root / "cod_bulk_cif" / "imported"
+        if source == "MP":
+            return self.root / "materials_project_cif" / "imported"
+        return self.root / "imported_cif" / _embedded_source_dir_name(source)
 
     def clear_cod_cache(self) -> None:
         self._clear_sources(["COD"])
@@ -899,6 +1143,7 @@ class LocalPhaseCache:
             connection.execute("create index if not exists idx_phases_elements on phases(elements)")
             connection.execute("create index if not exists idx_phase_elements_element on phase_elements(element, source, entry_id)")
             connection.execute("create index if not exists idx_phase_peaks_twotheta on phase_peaks(two_theta, source, entry_id)")
+            connection.execute("create index if not exists idx_phase_peaks_d on phase_peaks(d, source, entry_id)")
             connection.execute("create index if not exists idx_phase_peaks_phase on phase_peaks(source, entry_id)")
             connection.execute("create index if not exists idx_phase_peaks_top_rank on phase_peaks(top_rank, two_theta, source, entry_id)")
             element_count = connection.execute("select count(*) from phase_elements").fetchone()[0]

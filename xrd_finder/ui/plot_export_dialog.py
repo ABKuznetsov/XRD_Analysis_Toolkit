@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QSettings, QSize, Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -23,6 +23,7 @@ from xrd_finder.plot_export.options import (
 )
 from xrd_finder.plot_export.paint_exporter import render_preview
 from xrd_finder.plot_export.snapshot import FrozenCanvas
+from xrd_finder.ui.app_settings import app_settings
 
 
 class PlotExportDialog(QDialog):
@@ -236,7 +237,7 @@ class PlotExportDialog(QDialog):
         super().accept()
 
     def _saved_options(self) -> PlotExportOptions:
-        settings = QSettings("Xrdfinder", "Standalone")
+        settings = app_settings()
         prefix = self._SETTINGS_PREFIX
         try:
             format = PlotExportFormat(
@@ -267,7 +268,7 @@ class PlotExportDialog(QDialog):
         )
 
     def _save_options(self, options: PlotExportOptions) -> None:
-        settings = QSettings("Xrdfinder", "Standalone")
+        settings = app_settings()
         prefix = self._SETTINGS_PREFIX
         settings.setValue(f"{prefix}format", options.format.value)
         settings.setValue(f"{prefix}width_mm", options.width_mm)
