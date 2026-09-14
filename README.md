@@ -8,6 +8,13 @@
 
 This repository is the standalone Finder application. Structure viewing and other crystallographic tools are developed separately.
 
+## Download
+
+- [Windows installer: XRD_Phase_Finder_Setup_1.6.0.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.0/XRD_Phase_Finder_Setup_1.6.0.exe)
+- [macOS package: XRD_Phase_Finder_macOS_1.6.0.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.0/XRD_Phase_Finder_macOS_1.6.0.pkg)
+
+All release files are also available on the [XRD Phase Finder 1.6.0 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.0).
+
 ## Main Features
 
 - import one or many XRD patterns and CIF files;
