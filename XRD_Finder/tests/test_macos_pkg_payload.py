@@ -40,6 +40,14 @@ def test_macos_pkg_excludes_local_development_artifacts() -> None:
         assert f'--exclude "{path}"' in script
 
 
+def test_macos_pkg_explicitly_rejects_craft_payload() -> None:
+    script = BUILD_SCRIPT.read_text(encoding="utf-8")
+
+    assert '--exclude "XRD_Craft/"' in script
+    assert '--exclude "installer/craft_setup/"' in script
+    assert "Forbidden CRAFT payload" in script
+
+
 def test_macos_runtime_probe_covers_required_imports() -> None:
     tree = ast.parse(PREVIEW_SCRIPT.read_text(encoding="utf-8"))
     probe = next(

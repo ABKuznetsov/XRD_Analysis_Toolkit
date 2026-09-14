@@ -64,6 +64,8 @@ rsync -a \
     --exclude "XRD_Finder/scripts/" \
     --exclude "XRD_Finder/tests/" \
     --exclude "XRD_Finder/data/" \
+    --exclude "XRD_Craft/" \
+    --exclude "installer/craft_setup/" \
     --exclude "XRD_Finder/xrd_finder.zip" \
     --exclude "XRD_Finder/xrd_finder/app.py" \
     --exclude "XRD_Finder/xrd_finder/io/exporters.py" \
@@ -73,6 +75,14 @@ rsync -a \
     --exclude "XRD_Finder/xrd_finder/ui/legacy_windows.py" \
     --exclude "XRD_Finder/xrd_finder/ui/main_window.py" \
     "$ROOT/" "$APP_PAYLOAD_DIR/"
+
+FORBIDDEN_PAYLOAD="$(find "$APP_PAYLOAD_DIR" \
+    \( -iname '*xrd_craft*' -o -iname '*xrd craft*' -o -iname '*crystal_viewer*' \) \
+    -print -quit)"
+if [ -n "$FORBIDDEN_PAYLOAD" ]; then
+    echo "Forbidden CRAFT payload in Finder package: $FORBIDDEN_PAYLOAD"
+    exit 1
+fi
 
 for required_module in \
     "XRD_Finder/xrd_finder/core/refinement.py" \
