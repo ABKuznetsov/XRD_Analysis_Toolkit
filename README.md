@@ -10,11 +10,11 @@ This repository contains the standalone Finder application. Structure viewing an
 
 ## Download
 
-- [Windows installer: XRD_Phase_Finder_Setup_v1_6_2.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.2/XRD_Phase_Finder_Setup_v1_6_2.exe)
+- [Windows installer: XRD_Phase_Finder_Setup_v1_6_3.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.3/XRD_Phase_Finder_Setup_v1_6_3.exe)
 - [macOS package: XRD_Phase_Finder_macOS_1.6.2.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.2/XRD_Phase_Finder_macOS_1.6.2.pkg)
 - Linux: install from source with the commands below.
 
-All release files are listed on the [XRD Phase Finder 1.6.2 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.2).
+All release files are listed on the [XRD Phase Finder 1.6.3 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.3).
 
 ## Secure and offline deployment
 
@@ -70,7 +70,7 @@ Supported phase and reference sources:
 
 ### Windows
 
-Download and run `XRD_Phase_Finder_Setup_v1_6_2.exe` from the release page. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
+Download and run `XRD_Phase_Finder_Setup_v1_6_3.exe` from the release page. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
 
 On first launch, XRD Phase Finder checks the per-user scientific Python runtime. If required packages are missing, the launcher offers to install or repair them under the user profile. Project files and personal data are not stored in the installation directory.
 
@@ -112,7 +112,7 @@ For development or direct source runs:
 
 ### Ubuntu / Linux from source
 
-Linux is supported from source. A dedicated `.deb`/AppImage package is not bundled in the 1.6.2 release yet, because Qt/PySide binary compatibility depends on the target distribution, desktop session and system libraries.
+Linux is supported from source. A dedicated `.deb`/AppImage package is not bundled in the current release yet, because Qt/PySide binary compatibility depends on the target distribution, desktop session and system libraries.
 
 The commands below were written for recent Ubuntu/Debian systems. Python 3.11 or 3.12 is recommended.
 

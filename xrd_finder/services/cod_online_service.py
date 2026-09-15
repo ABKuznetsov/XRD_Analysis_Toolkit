@@ -124,7 +124,7 @@ class CodOnlineService:
                     next_host = bases[index + 1].split("//", 1)[-1].split("/", 1)[0]
                     if base_url == COD_BASE_URLS[0]:
                         self._emit_alert(
-                            f"Primary COD server is unavailable. Trying mirror {next_host}."
+                            f"Primary online database endpoint is unavailable. Trying COD mirror {next_host}."
                         )
                     else:
                         self._emit_status(f"COD: {next_host} unavailable; trying another server...")
@@ -138,8 +138,8 @@ class CodOnlineService:
 
         if last_error is not None:
             self._emit_alert(
-                "COD servers are unavailable. Showing local results only. "
-                "Check whether VPN is blocking the connection."
+                "Online database connection is unavailable for COD. Local data is shown. "
+                "Check VPN or proxy settings if online databases should be reachable."
             )
             raise last_error
         raise RuntimeError("No COD servers are configured.")

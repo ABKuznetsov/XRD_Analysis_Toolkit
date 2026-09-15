@@ -917,8 +917,12 @@ try {
             if ($remote -is [string]) { $remote = $remote | ConvertFrom-Json }
             $remoteApp = $remote
             if ($remote.apps -and $remote.apps.$AppId) { $remoteApp = $remote.apps.$AppId }
-            if ($remoteApp.version) {
-                $latestVersion = [string]$remoteApp.version
+            $remoteVersion = $remoteApp.version
+            if ($remoteApp.platform_versions -and $remoteApp.platform_versions.windows) {
+                $remoteVersion = $remoteApp.platform_versions.windows
+            }
+            if ($remoteVersion) {
+                $latestVersion = [string]$remoteVersion
                 $updateStatus.latest_version = $latestVersion
                 if ((Compare-VersionText $latestVersion $localVersion) -gt 0) {
                     $updateStatus.update_available = $true

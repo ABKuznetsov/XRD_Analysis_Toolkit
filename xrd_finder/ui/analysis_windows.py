@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QProgressDialog,
     QSizePolicy,
     QSplitter,
@@ -249,10 +250,10 @@ class AnalysisWindow(QDialog):
 
         alert = QMessageBox(self)
         alert.setIcon(QMessageBox.Icon.Warning)
-        alert.setWindowTitle("COD server unavailable")
+        alert.setWindowTitle("Online database connection unavailable")
         alert.setText(message)
         alert.setInformativeText(
-            "The search will continue automatically. No action is required."
+            "Local database results remain available. Check VPN/proxy settings if online COD, Materials Project, AFLOW or OQMD should be reachable."
         )
         alert.setStandardButtons(QMessageBox.StandardButton.Ok)
         alert.setModal(False)
@@ -1534,6 +1535,9 @@ class PhaseFinderWindow(
             progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
             progress_dialog.setMinimumWidth(440)
             progress_dialog.show()
+            progress_bar = progress_dialog.findChild(QProgressBar)
+            if progress_bar is not None:
+                progress_bar.hide()
             QApplication.processEvents()
 
         handle = BackgroundTaskHandle(
@@ -1576,6 +1580,9 @@ class PhaseFinderWindow(
                 self._set_background_status(f"{message}{suffix}")
                 if progress_dialog is not None:
                     progress_dialog.setLabelText(message)
+                    progress_bar = progress_dialog.findChild(QProgressBar)
+                    if progress_bar is not None:
+                        progress_bar.hide()
                     if maximum > 0:
                         progress_dialog.setRange(0, maximum)
                         progress_dialog.setValue(value)

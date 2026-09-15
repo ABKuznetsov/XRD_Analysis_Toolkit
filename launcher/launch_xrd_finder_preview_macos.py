@@ -436,7 +436,11 @@ class PreviewApp:
             remote_app = remote
             if isinstance(remote.get("apps"), dict) and APP_ID in remote["apps"]:
                 remote_app = remote["apps"][APP_ID]
-            latest = str(remote_app.get("version") or self.local_version)
+            platform_versions = remote_app.get("platform_versions")
+            if isinstance(platform_versions, dict):
+                latest = str(platform_versions.get("macos") or remote_app.get("version") or self.local_version)
+            else:
+                latest = str(remote_app.get("version") or self.local_version)
             update_status["latest_version"] = latest
             installer_url, sha256 = find_macos_asset(remote_app)
             if compare_versions(latest, self.local_version) <= 0:

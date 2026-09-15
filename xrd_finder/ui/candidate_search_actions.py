@@ -64,11 +64,11 @@ class PhaseFinderCandidateSearchActionsMixin:
         if controller is None:
             return
         text = str(message or "")
-        if "Primary COD server is unavailable" in text:
-            controller.set_notice("COD primary unavailable; trying mirror")
+        if "Primary online database endpoint is unavailable" in text or "Trying COD mirror" in text:
+            controller.set_notice("Online database endpoint unavailable; trying mirror")
             return
         if "COD" in text:
-            controller.set_notice("COD server unavailable; local data shown")
+            controller.set_notice("Online database unavailable; local data shown")
 
     def _load_prepared_candidate_row(self, source: str, entry_id: str) -> list[str] | None:
         entry = self.local_phase_cache.get(source, entry_id)

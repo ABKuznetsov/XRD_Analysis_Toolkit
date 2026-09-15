@@ -240,50 +240,55 @@ class CandidateSearchService:
 
         if options.cod_online_enabled and options.structural_data_enabled:
             cod_key = self.search_cache_key("text", query, options.excluded_elements)
-            if not self.local_phase_cache.search_is_fresh("COD", cod_key):
-                if rows:
-                    self._queue_background_cod_text_refresh(
-                        cod_key=cod_key,
-                        query=query,
-                        formula_query=formula_query,
-                        query_elements=query_elements,
-                        options=options,
-                        session_token=session_token,
+            cod_cache_has_rows = self._candidate_rows_have_source(rows, "COD")
+            cod_search_is_fresh = self.local_phase_cache.search_is_fresh("COD", cod_key)
+            if cod_cache_has_rows and not cod_search_is_fresh:
+                self._queue_background_cod_text_refresh(
+                    cod_key=cod_key,
+                    query=query,
+                    formula_query=formula_query,
+                    query_elements=query_elements,
+                    options=options,
+                    session_token=session_token,
+                )
+                self._emit_search_progress(
+                    progress,
+                    "Local COD cache is ready; online refresh is running in the background",
+                    len(rows),
+                    0,
+                    8,
+                )
+            elif not cod_cache_has_rows:
+                try:
+                    self._emit_search_progress(progress, "Connecting to online databases...", len(rows), 0, 7)
+                    cod_entries = self._timed_source_call(
+                        "cod",
+                        lambda: self._refresh_cod_batches(
+                            cod_key=cod_key,
+                            result_limit=self.ONLINE_RESULT_LIMIT,
+                            fetch=lambda limit: self._search_cod_text_entries(
+                                query=query,
+                                formula_query=formula_query,
+                                query_elements=query_elements,
+                                options=options,
+                                result_limit=limit,
+                            ),
+                            session_token=session_token,
+                        ),
                     )
+                    rows = self.dedupe_candidate_rows(
+                        rows + self.cod_rows(cod_entries)
+                    )
+                    rows = self._emit_partial_candidate_rows(partial_results, rows, options)
                     self._emit_search_progress(
                         progress,
-                        "Local cache is ready; COD online refresh is running in the background",
+                        "COD results are shown; CIF processing continues in the background",
                         len(rows),
-                        0,
+                        len(cod_entries),
                         8,
                     )
-                else:
-                    try:
-                        self._emit_search_progress(progress, "Searching COD online...", len(rows), 0, 7)
-                        self._timed_source_call(
-                            "cod",
-                            lambda: self._refresh_cod_batches(
-                                cod_key=cod_key,
-                                result_limit=self.ONLINE_RESULT_LIMIT,
-                                fetch=lambda limit: self._search_cod_text_entries(
-                                    query=query,
-                                    formula_query=formula_query,
-                                    query_elements=query_elements,
-                                    options=options,
-                                    result_limit=limit,
-                                ),
-                                session_token=session_token,
-                            ),
-                        )
-                        self._emit_search_progress(
-                            progress,
-                            "COD results are loading into the local index",
-                            len(rows),
-                            0,
-                            8,
-                        )
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
 
         if options.materials_project_enabled and options.structural_data_enabled:
             mp_key = self.search_cache_key("text", query)
@@ -299,7 +304,7 @@ class CandidateSearchService:
                     )
                 else:
                     try:
-                        self._emit_search_progress(progress, "Searching Materials Project...", len(rows), 0, 9)
+                        self._emit_search_progress(progress, "Querying Materials Project database...", len(rows), 0, 9)
                         mp_entries = self._timed_source_call(
                             "mp",
                             lambda: self.materials_project.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT),
@@ -323,7 +328,7 @@ class CandidateSearchService:
                     self._emit_search_progress(progress, "Local cache is ready; AFLOW refresh is running in the background", len(rows), 0, 10)
                 else:
                     try:
-                        self._emit_search_progress(progress, "Searching AFLOW...", len(rows), 0, 10)
+                        self._emit_search_progress(progress, "Querying AFLOW database...", len(rows), 0, 10)
                         aflow_entries = self._timed_source_call(
                             "aflow",
                             lambda: self.aflow.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT),
@@ -347,7 +352,7 @@ class CandidateSearchService:
                     self._emit_search_progress(progress, "Local cache is ready; OQMD refresh is running in the background", len(rows), 0, 11)
                 else:
                     try:
-                        self._emit_search_progress(progress, "Searching OQMD...", len(rows), 0, 11)
+                        self._emit_search_progress(progress, "Querying OQMD database...", len(rows), 0, 11)
                         oqmd_entries = self._timed_source_call(
                             "oqmd",
                             lambda: self.oqmd.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT),
@@ -432,43 +437,48 @@ class CandidateSearchService:
         rows = self._emit_partial_candidate_rows(partial_results, rows, options)
         if options.cod_online_enabled and options.structural_data_enabled:
             cod_key = self.search_cache_key("elements", elements, options.excluded_elements)
-            if not self.local_phase_cache.search_is_fresh("COD", cod_key):
-                if rows:
-                    self._queue_background_cod_elements_refresh(
-                        cod_key,
-                        elements,
-                        options,
-                        session_token=session_token,
+            cod_cache_has_rows = self._candidate_rows_have_source(rows, "COD")
+            cod_search_is_fresh = self.local_phase_cache.search_is_fresh("COD", cod_key)
+            if cod_cache_has_rows and not cod_search_is_fresh:
+                self._queue_background_cod_elements_refresh(
+                    cod_key,
+                    elements,
+                    options,
+                    session_token=session_token,
+                )
+                self._emit_search_progress(
+                    progress,
+                    "Local COD cache is ready; online refresh is running in the background",
+                    len(rows),
+                    0,
+                    6,
+                )
+            elif not cod_cache_has_rows:
+                try:
+                    self._emit_search_progress(progress, "Connecting to online databases...", len(rows), 0, 5)
+                    cod_entries = self._timed_source_call(
+                        "cod",
+                        lambda: self._refresh_cod_elements_cache(
+                            cod_key,
+                            elements,
+                            options,
+                            session_token=session_token,
+                            result_limit=self.ONLINE_RESULT_LIMIT,
+                        ),
                     )
+                    rows = self.dedupe_candidate_rows(
+                        rows + self.cod_rows(cod_entries)
+                    )
+                    rows = self._emit_partial_candidate_rows(partial_results, rows, options)
                     self._emit_search_progress(
                         progress,
-                        "Local cache is ready; COD online refresh is running in the background",
+                        "COD results are shown; CIF processing continues in the background",
                         len(rows),
-                        0,
+                        len(cod_entries),
                         6,
                     )
-                else:
-                    try:
-                        self._emit_search_progress(progress, "Searching COD online...", len(rows), 0, 5)
-                        self._timed_source_call(
-                            "cod",
-                            lambda: self._refresh_cod_elements_cache(
-                                cod_key,
-                                elements,
-                                options,
-                                session_token=session_token,
-                                result_limit=self.ONLINE_RESULT_LIMIT,
-                            ),
-                        )
-                        self._emit_search_progress(
-                            progress,
-                            "COD results are loading into the local index",
-                            len(rows),
-                            0,
-                            6,
-                        )
-                    except Exception as exc:
-                        rows.append(["", "COD", "", "", f"COD search failed: {exc}", "", "", "", "", ""])
+                except Exception as exc:
+                    rows.append(["", "COD", "", "", f"COD search failed: {exc}", "", "", "", "", ""])
         if options.materials_project_enabled and options.structural_data_enabled:
             mp_key = self.search_cache_key("elements", elements, options.excluded_elements)
             if not self.local_phase_cache.search_is_fresh("MP", mp_key):
@@ -483,7 +493,7 @@ class CandidateSearchService:
                     )
                 else:
                     try:
-                        self._emit_search_progress(progress, "Searching Materials Project...", len(rows), 0, 7)
+                        self._emit_search_progress(progress, "Querying Materials Project database...", len(rows), 0, 7)
                         mp_entries = self._timed_source_call(
                             "mp",
                             lambda: self.materials_project.search_elements(
@@ -514,7 +524,7 @@ class CandidateSearchService:
                     self._emit_search_progress(progress, "Local cache is ready; AFLOW refresh is running in the background", len(rows), 0, 10)
                 else:
                     try:
-                        self._emit_search_progress(progress, "Searching AFLOW...", len(rows), 0, 9)
+                        self._emit_search_progress(progress, "Querying AFLOW database...", len(rows), 0, 9)
                         aflow_entries = self._timed_source_call(
                             "aflow",
                             lambda: self._search_computational_element_systems(
@@ -545,7 +555,7 @@ class CandidateSearchService:
                     self._emit_search_progress(progress, "Local cache is ready; OQMD refresh is running in the background", len(rows), 0, 11)
                 else:
                     try:
-                        self._emit_search_progress(progress, "Searching OQMD...", len(rows), 0, 11)
+                        self._emit_search_progress(progress, "Querying OQMD database...", len(rows), 0, 11)
                         oqmd_entries = self._timed_source_call(
                             "oqmd",
                             lambda: self._search_computational_element_systems(
@@ -800,8 +810,8 @@ class CandidateSearchService:
         *,
         session_token: int | None = None,
         result_limit: int | None = None,
-    ) -> None:
-        self._refresh_cod_batches(
+    ) -> list[CodEntry]:
+        return self._refresh_cod_batches(
             cod_key=cod_key,
             result_limit=result_limit,
             fetch=lambda limit: self._search_cod_text_entries(
@@ -822,17 +832,18 @@ class CandidateSearchService:
         *,
         session_token: int | None = None,
         result_limit: int | None = None,
-    ) -> None:
+    ) -> list[CodEntry]:
         def fetch(limit: int) -> tuple[list[CodEntry], int]:
-            entries = self.cod_online.search_elements(
+            entries = self._search_cod_element_systems(
                 elements,
+                options.optional_elements,
                 excluded_elements=options.excluded_elements,
                 limit=limit,
             )
             result_count = len(entries)
             return self.filter_cod_entries(entries, options), result_count
 
-        self._refresh_cod_batches(
+        return self._refresh_cod_batches(
             cod_key=cod_key,
             result_limit=result_limit,
             fetch=fetch,
@@ -846,10 +857,12 @@ class CandidateSearchService:
         result_limit: int | None,
         fetch: Callable[[int], tuple[list[CodEntry], int]],
         session_token: int | None,
-    ) -> None:
+    ) -> list[CodEntry]:
         limit = max(1, int(result_limit or self.ONLINE_RESULT_LIMIT))
+        collected: list[CodEntry] = []
         while True:
             cod_entries, result_count = fetch(limit)
+            collected.extend(cod_entries)
             self.local_phase_cache.upsert_cod_entries(cod_entries)
             self._mark_search_if_complete("COD", cod_key, result_count, limit)
             self.queue_background_cod_downloads(
@@ -857,7 +870,7 @@ class CandidateSearchService:
                 session_token=session_token,
             )
             if result_count < limit or limit >= self.ONLINE_MAX_RESULT_LIMIT:
-                return
+                return self._dedupe_cod_entries(collected)
             limit = min(
                 self.ONLINE_MAX_RESULT_LIMIT,
                 limit + self.ONLINE_RESULT_LIMIT,
@@ -929,6 +942,38 @@ class CandidateSearchService:
                 seen.add(key)
                 entries.append(entry)
                 if len(entries) >= self.COMPUTATIONAL_RESULT_LIMIT:
+                    return entries
+        return entries
+
+    def _search_cod_element_systems(
+        self,
+        elements: list[str],
+        optional_elements: list[str] | None = None,
+        *,
+        excluded_elements: list[str] | None = None,
+        limit: int | None = None,
+    ) -> list[CodEntry]:
+        result_limit = max(1, int(limit or self.ONLINE_RESULT_LIMIT))
+        systems = self._element_systems(elements, optional_elements or [])
+        # COD does not reliably limit broad /result queries server-side.  Try
+        # the most specific element systems first so optional-element searches
+        # behave closer to the pre-1.6.1 "selected elements" COD query and do
+        # not start with a very large required-only request.
+        systems.sort(key=lambda values: (-len(values), values))
+        entries: list[CodEntry] = []
+        seen: set[str] = set()
+        for system in systems:
+            for entry in self.cod_online.search_elements(
+                system,
+                excluded_elements=excluded_elements,
+                limit=result_limit,
+            ):
+                key = entry.cod_id.strip()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                entries.append(entry)
+                if len(entries) >= result_limit:
                     return entries
         return entries
 
@@ -1404,6 +1449,14 @@ class CandidateSearchService:
             callback(snapshot)
         return snapshot
 
+    @staticmethod
+    def _candidate_rows_have_source(rows: list[list[str]], source: str) -> bool:
+        wanted = source.strip().upper()
+        for row in rows:
+            if row and str(row[0]).strip().upper() == wanted:
+                return True
+        return False
+
     def _emit_search_progress(
         self,
         progress: SearchProgressCallback | None,
@@ -1416,15 +1469,10 @@ class CandidateSearchService:
             return
         total_steps = 12
         current_step = max(0, min(int(step), total_steps))
-        remaining_steps = max(0, total_steps - current_step)
-        details = (
-            f"{message}\n"
-            f"Search progress: step {current_step}/{total_steps}; remaining {remaining_steps}\n"
-            f"Found: {int(found_count)} candidates"
-        )
+        details = str(message or "Querying selected databases...").strip()
         if queued_count:
-            details += f"\nCIF downloads queued in background: {int(queued_count)}"
-        progress(details, current_step, total_steps)
+            details += f"\nCIF processing queued in background: {int(queued_count)}"
+        progress(details, 0, 0)
 
     def _dedupe_cod_entries(self, entries: list[CodEntry]) -> list[CodEntry]:
         unique = []
