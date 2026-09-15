@@ -6,7 +6,7 @@
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
   "published_at": "2026-09-15",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.3",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.3/XRD_Phase_Finder_Setup_v1_6_3.exe",
   "release_notes_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/RELEASE_NOTES_1.6.3.md",
   "assets": [
     {
@@ -14,8 +14,8 @@
       "type": "installer",
       "platform": "windows",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.3/XRD_Phase_Finder_Setup_v1_6_3.exe",
-      "sha256": "a3d8ad8ed563e4b6b66f7fea375f6b99872dc91aba22fbbc258e5a74b0989efa",
-      "size_bytes": 5300414
+      "sha256": "1c4275ffcda5044952850f697b2860554ad980601cbe836b395379f11dcaa357",
+      "size_bytes": 5300493
     },
     {
       "name": "XRD_Phase_Finder_macOS_1.6.3.pkg",
@@ -30,13 +30,14 @@
     "Fix COD online search, repeated element searches and online database progress messages."
   ],
   "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.3/XRD_Phase_Finder_Setup_v1_6_3.exe",
-  "installer_sha256": "a3d8ad8ed563e4b6b66f7fea375f6b99872dc91aba22fbbc258e5a74b0989efa",
+  "installer_sha256": "1c4275ffcda5044952850f697b2860554ad980601cbe836b395379f11dcaa357",
   "installer_filename": "XRD_Phase_Finder_Setup_v1_6_3.exe",
-  "installer_size_bytes": 5300414,
+  "installer_size_bytes": 5300493,
   "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.3/XRD_Phase_Finder_macOS_1.6.3.pkg",
   "macos_installer_sha256": "29e0f7fdb1d45ab3405bc64a5b3b8d435404cbcdba591cf316c4bcf7f45d677e",
   "platform_versions": {
     "windows": "1.6.3",
     "macos": "1.6.3"
-  }
+  },
+  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.3"
 }

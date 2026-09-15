@@ -25,5 +25,6 @@
   "macos_installer_sha256": "29e0f7fdb1d45ab3405bc64a5b3b8d435404cbcdba591cf316c4bcf7f45d677e",
   "platform_versions": {
     "macos": "1.6.3"
-  }
+  },
+  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.3"
 }

@@ -906,6 +906,7 @@ try {
         latest_version = $localVersion
         update_available = $false
         release_url = $releaseUrl
+        release_page_url = $releaseUrl
         installer_url = $installerUrl
         installer_sha256 = $installerSha256
         error = $null
@@ -929,6 +930,8 @@ try {
                 $updateStatus.latest_version = $latestVersion
                 if ((Compare-VersionText $latestVersion $localVersion) -gt 0) {
                     $updateStatus.update_available = $true
+                    if ($remoteApp.release_page_url) { $updateStatus.release_page_url = [string]$remoteApp.release_page_url }
+                    elseif ($remoteApp.release_url) { $updateStatus.release_page_url = [string]$remoteApp.release_url }
                     if ($remoteApp.release_url) { $updateStatus.release_url = [string]$remoteApp.release_url }
                     if ($remoteApp.installer_url) { $updateStatus.installer_url = [string]$remoteApp.installer_url }
                     if ($remoteApp.installer_sha256) { $updateStatus.installer_sha256 = [string]$remoteApp.installer_sha256 }
@@ -967,8 +970,10 @@ try {
                         } catch {
                             $fallbackMessage = "The automatic update download failed:`r`n" + $_.Exception.Message + "`r`n`r`nOpen the release page instead?"
                             $fallbackChoice = Show-OwnedQuestion $fallbackMessage "XRD Phase Finder update"
-                            if ($fallbackChoice -eq [System.Windows.Forms.DialogResult]::Yes -and $updateStatus.release_url) {
-                                Start-Process $updateStatus.release_url | Out-Null
+                            $fallbackPage = $updateStatus.release_page_url
+                            if (-not $fallbackPage) { $fallbackPage = $updateStatus.release_url }
+                            if ($fallbackChoice -eq [System.Windows.Forms.DialogResult]::Yes -and $fallbackPage) {
+                                Start-Process $fallbackPage | Out-Null
                                 $script:Form.Close()
                                 return
                             }
@@ -1012,3 +1017,4 @@ try {
     $script:Form.Close()
     $script:Form.Dispose()
 }
+
