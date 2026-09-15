@@ -14,7 +14,7 @@
       "type": "installer",
       "platform": "windows",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.3/XRD_Phase_Finder_Setup_v1_6_3.exe",
-      "sha256": "1c4275ffcda5044952850f697b2860554ad980601cbe836b395379f11dcaa357",
+      "sha256": "2513768c50589dc73426840416ff8bcd9fd861e3d5228ca286aa2dc07bf06fbf",
       "size_bytes": 5300493
     }
   ],
@@ -22,7 +22,7 @@
     "Fix COD online search, repeated element searches and online database progress messages."
   ],
   "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.3/XRD_Phase_Finder_Setup_v1_6_3.exe",
-  "installer_sha256": "1c4275ffcda5044952850f697b2860554ad980601cbe836b395379f11dcaa357",
+  "installer_sha256": "2513768c50589dc73426840416ff8bcd9fd861e3d5228ca286aa2dc07bf06fbf",
   "installer_filename": "XRD_Phase_Finder_Setup_v1_6_3.exe",
   "installer_size_bytes": 5300493,
   "platform_versions": {

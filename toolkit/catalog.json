@@ -15,7 +15,7 @@
       "architectures": [
         "x86_64"
       ],
-      "update_manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/launcher/updates/xrd_finder.json",
+      "update_manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/toolkit/updates/xrd_finder.json",
       "installer": {
         "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.3/XRD_Phase_Finder_Setup_v1_6_3.exe",
         "filename": "XRD_Phase_Finder_Setup_v1_6_3.exe",
@@ -24,7 +24,7 @@
       },
       "platform_versions": {
         "windows": "1.6.3",
-        "macos": "1.6.2"
+        "macos": "1.6.3"
       }
     }
   ]
