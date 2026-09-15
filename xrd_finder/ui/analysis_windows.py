@@ -73,6 +73,7 @@ from xrd_finder.services.security_mode import (
     set_saved_offline_mode_enabled,
 )
 from xrd_finder.tools.secure_macos_installer import build_secure_macos_pkg
+from xrd_finder.tools.secure_windows_package import build_secure_windows_installer
 from xrd_finder.services.indexed_cell_matching import IndexedCellMatchingService
 from xrd_finder.services.rruff_service import RruffService
 from xrd_finder.ui.pattern_plot_helpers import (
@@ -1724,6 +1725,74 @@ class PhaseFinderWindow(
             box.setInformativeText(
                 "The secure installer was not created. Check that Xcode Command Line Tools "
                 "are installed and that the Sci runtime is already prepared on this Mac."
+            )
+            box.setDetailedText(details)
+            box.exec()
+
+        handle.progress.connect(on_progress)
+        handle.finished.connect(on_finished)
+        handle.failed.connect(on_failed)
+        handle.start()
+
+    def _create_secure_windows_installer(self) -> None:
+        output_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Choose secure installer output folder",
+            str(Path.cwd() / "dist" / "secure"),
+        )
+        if not output_dir:
+            return
+
+        progress_dialog = QProgressDialog(
+            "Preparing secure Windows installer...",
+            "",
+            0,
+            0,
+            self,
+        )
+        progress_dialog.setWindowTitle("Secure Windows installer")
+        progress_dialog.setCancelButton(None)
+        progress_dialog.setWindowModality(Qt.WindowModal)
+        progress_dialog.setMinimumDuration(0)
+        progress_dialog.show()
+
+        def task(progress_emit):
+            return build_secure_windows_installer(
+                output_dir=output_dir,
+                progress=lambda message: progress_emit(message, 0, 0),
+            )
+
+        handle = BackgroundTaskHandle(
+            task,
+            parent=self,
+            accepts_progress=True,
+            operation_name="secure_installer.build_windows_installer",
+        )
+        self._secure_windows_installer_task = handle
+
+        def on_progress(message: str, _value: int, _maximum: int) -> None:
+            progress_dialog.setLabelText(message)
+
+        def on_finished(result: object) -> None:
+            progress_dialog.close()
+            self._secure_windows_installer_task = None
+            QMessageBox.information(
+                self,
+                "Secure Windows installer",
+                "Secure/offline Windows installer was created:\n\n"
+                f"{result}\n\n"
+                "It installs the application, the prepared Sci runtime, local Finder data, "
+                "cached databases and secure/offline mode settings. Keep this local package "
+                "out of public GitHub releases because it contains local data.",
+            )
+
+        def on_failed(message: str, details: str) -> None:
+            progress_dialog.close()
+            self._secure_windows_installer_task = None
+            box = QMessageBox(QMessageBox.Critical, "Secure Windows installer", message, parent=self)
+            box.setInformativeText(
+                "The secure installer was not created. Check that Inno Setup is installed "
+                "and that the Sci runtime is already prepared on this Windows computer."
             )
             box.setDetailedText(details)
             box.exec()

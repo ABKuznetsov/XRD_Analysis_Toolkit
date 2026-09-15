@@ -10,11 +10,26 @@ This repository contains the standalone Finder application. Structure viewing an
 
 ## Download
 
-- [Windows installer: XRD_Phase_Finder_Setup_v1_6_1.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_Setup_v1_6_1.exe)
+- [Windows installer: XRD_Phase_Finder_Setup_v1_6_2.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.2/XRD_Phase_Finder_Setup_v1_6_2.exe)
 - [macOS package: XRD_Phase_Finder_macOS_1.6.2.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.2/XRD_Phase_Finder_macOS_1.6.2.pkg)
 - Linux: install from source with the commands below.
 
 All release files are listed on the [XRD Phase Finder 1.6.2 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.2).
+
+## Secure and offline deployment
+
+XRD Phase Finder can be used on controlled or offline workstations. The application has no telemetry, stores user data in the user profile, and can run from prepared local CIF libraries, cached COD/Materials Project data, RRUFF data and SQL peak indexes. Online database access and update checks can be disabled with **Tools -> Network mode -> Offline / secure**.
+
+Prepared Windows and macOS workstations can also create local secure installers that include the application, the prepared Sci runtime, local Finder data/cache snapshots and secure-mode settings. These secure packages are intended for institutional/local deployment and are not attached to public GitHub releases because they contain local data.
+
+
+## Main window
+
+![XRD Phase Finder main window with labeled workspace areas](assets/main_window_fig3.jpg)
+
+The main window keeps the main steps of phase identification visible in a single workspace. The project tree (A) lists imported experimental patterns and structure files. The toolbar and control area (B) provide the main actions for opening data, saving the project, importing files, starting automatic search and resetting the current view or analysis state. The central diffraction plot (C) displays the experimental PXRD pattern together with calculated candidate patterns, accepted-phase diffraction data and unexplained features. The element-filter and search panel (D) lets the user choose required and optional chemical elements, select data sources and start the search. The selected-phase table (E) summarizes phases accepted by the user and their fitted semi-quantitative contributions. The candidate table (F) lists ranked search results with source information and Match/Gain scores. The information tabs (G) show additional details for the active candidate, including composition, processing-related information and reference-card data.
+
+Database searching follows a three-state element-selection logic in the periodic-table panel. By default, elements are excluded and shown in pink. A left-click marks an element as required (blue), while a right-click marks it as optional (green). Required elements must be present in a candidate composition, optional elements may be present, and all remaining elements are excluded. Searches can also be restricted by source, material class and data type before Match/Gain ranking.
 
 ## Main features
 
@@ -55,9 +70,17 @@ Supported phase and reference sources:
 
 ### Windows
 
-Download and run `XRD_Phase_Finder_Setup_v1_6_1.exe` from the release page. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
+Download and run `XRD_Phase_Finder_Setup_v1_6_2.exe` from the release page. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
 
 On first launch, XRD Phase Finder checks the per-user scientific Python runtime. If required packages are missing, the launcher offers to install or repair them under the user profile. Project files and personal data are not stored in the installation directory.
+
+For a locked-down Windows workstation, prepare the runtime and local caches on an approved Windows computer first, then build a local secure/offline installer:
+
+```bat
+scripts\build_secure_windows_installer.bat
+```
+
+This creates `XRD_Phase_Finder_Secure_Windows_<version>.exe` under `dist\secure\` for local deployment. The secure installer installs the application, copies the prepared Sci runtime and local Finder data/cache snapshot to the target user profile, and enables offline/secure mode automatically. Keep this local installer out of public GitHub releases because it contains local data.
 
 ### macOS
 
@@ -173,6 +196,8 @@ XRD Phase Finder has no telemetry. It can work without an internet connection wh
 
 For closed or government/institutional networks, use **Tools -> Network mode** and select **Offline / secure**. The setting is stored in the user data directory and is read by both the launcher and the main application. The launcher then shows that secure/offline mode is enabled and skips network-dependent checks.
 
+On Windows, **Tools -> Create secure Windows installer...** can build a separate secure/offline `.exe` from the current application, prepared Sci runtime and local cache state. The same builder is available from the terminal as `scripts\build_secure_windows_installer.bat`.
+
 On macOS, **Tools -> Create secure macOS installer...** can build a separate secure/offline `.pkg` from the current application, prepared Sci runtime and local cache state. The same builder is available from the terminal as `scripts/build_secure_macos_pkg.command`.
 
 For scripted deployments, the same mode can be forced with:
@@ -230,3 +255,4 @@ python -m pytest tests
 ## License
 
 MIT. See `LICENSE`.
+

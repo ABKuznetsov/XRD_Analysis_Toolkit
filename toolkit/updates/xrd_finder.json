@@ -1,29 +1,29 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "channel": "stable",
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
-  "published_at": "2026-09-14",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.1",
-  "release_notes_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/RELEASE_NOTES_1.6.1.md",
+  "published_at": "2026-09-15",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.2",
+  "release_notes_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/RELEASE_NOTES_1.6.2.md",
   "assets": [
     {
-      "name": "XRD_Phase_Finder_Setup_v1_6_1.exe",
+      "name": "XRD_Phase_Finder_Setup_v1_6_2.exe",
       "type": "installer",
       "platform": "windows",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_Setup_v1_6_1.exe",
-      "sha256": "3b92fff4de16905a53b18ec1ab89b178e69c4c6941df526a5a99c021de833a57",
-      "size_bytes": 5287983
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.2/XRD_Phase_Finder_Setup_v1_6_2.exe",
+      "sha256": "07a114c5cb3cc8ca78044d3a1bd011591835e2c2c20231f31694882d92e0a011",
+      "size_bytes": 5300059
     },
     {
-      "name": "XRD_Phase_Finder_macOS_1.6.1.pkg",
+      "name": "XRD_Phase_Finder_macOS_1.6.2.pkg",
       "type": "installer",
       "platform": "macos",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_macOS_1.6.1.pkg",
-      "sha256": "cf731aa62b6d8139115f0dd24ac398425158e7c686b20b2183570c39ed8e6df9",
-      "size_bytes": 4759143
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.2/XRD_Phase_Finder_macOS_1.6.2.pkg",
+      "sha256": "f51b49f1560d399bd1ca698abce09dad15eb2ff7d3671e9a3d0fadae4d613551",
+      "size_bytes": 4778495
     }
   ],
   "summary": [
@@ -31,10 +31,10 @@
     "Search local peak indexes by d-spacing for the active wavelength.",
     "Add example project, settings transfer and USER/COD/Materials Project cache transfer."
   ],
-  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_Setup_v1_6_1.exe",
-  "installer_sha256": "3b92fff4de16905a53b18ec1ab89b178e69c4c6941df526a5a99c021de833a57",
-  "installer_filename": "XRD_Phase_Finder_Setup_v1_6_1.exe",
-  "installer_size_bytes": 5287983,
-  "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_macOS_1.6.1.pkg",
-  "macos_installer_sha256": "cf731aa62b6d8139115f0dd24ac398425158e7c686b20b2183570c39ed8e6df9"
+  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.2/XRD_Phase_Finder_Setup_v1_6_2.exe",
+  "installer_sha256": "07a114c5cb3cc8ca78044d3a1bd011591835e2c2c20231f31694882d92e0a011",
+  "installer_filename": "XRD_Phase_Finder_Setup_v1_6_2.exe",
+  "installer_size_bytes": 5300059,
+  "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.2/XRD_Phase_Finder_macOS_1.6.2.pkg",
+  "macos_installer_sha256": "f51b49f1560d399bd1ca698abce09dad15eb2ff7d3671e9a3d0fadae4d613551"
 }

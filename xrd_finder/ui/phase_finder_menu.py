@@ -125,6 +125,7 @@ def build_phase_finder_menu_bar(owner: QWidget) -> QMenuBar:
     _add_development_action(tools_menu, "Export candidate list", owner)
     tools_menu.addSeparator()
     _add_owner_action(tools_menu, "Create secure macOS installer...", owner, "_create_secure_macos_installer")
+    _add_owner_action(tools_menu, "Create secure Windows installer...", owner, "_create_secure_windows_installer")
     tools_menu.addSeparator()
     network_mode_action = _add_owner_action(tools_menu, "Network mode: Online", owner, "_toggle_network_mode")
     network_mode_action.setCheckable(True)

@@ -456,14 +456,21 @@ class PhaseFinderPlotViewActionsMixin:
         if source_width < 120 or source_height < 120:
             QTimer.singleShot(50, self._apply_plot_view_aspect)
             return
-        canvas_width = max(source_width - 22, 260)
-        canvas_height = max(source_height - 22, 220)
+        horizontal_margins = 0
+        vertical_margins = 0
+        layout = getattr(self, "plot_canvas_layout", None)
+        if layout is not None:
+            margins = layout.contentsMargins()
+            horizontal_margins = margins.left() + margins.right()
+            vertical_margins = margins.top() + margins.bottom()
+        canvas_width = max(source_width - horizontal_margins, 260)
+        canvas_height = max(source_height - vertical_margins, 220)
         if aspect is None:
             if hasattr(self, "plot_canvas_layout"):
                 self.plot_canvas_layout.setAlignment(self.match_plot, Qt.Alignment())
-            self.match_plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             self.match_plot.setMinimumSize(260, 220)
             self.match_plot.setMaximumSize(16777215, 16777215)
+            self.match_plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             self.match_plot.updateGeometry()
             return
         if hasattr(self, "plot_canvas_layout"):
