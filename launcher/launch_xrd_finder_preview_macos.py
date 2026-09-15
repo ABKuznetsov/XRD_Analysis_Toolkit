@@ -507,7 +507,9 @@ class PreviewApp:
                     subprocess.Popen(["open", fallback_url])
                     self._close_preview_soon()
                     return True
-                return False
+                # The user explicitly chose to update. Do not continue into the
+                # old installed application after a failed installer download.
+                return True
         except Exception as exc:
             update_status["error"] = exception_message(exc)
             self.set_step(3, "Offline", "Update check unavailable", "muted")
