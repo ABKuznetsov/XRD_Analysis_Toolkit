@@ -11,7 +11,7 @@ This repository contains the standalone Finder application. Structure viewing an
 ## Download
 
 - [Windows installer: XRD_Phase_Finder_Setup_v1_6_3.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.3/XRD_Phase_Finder_Setup_v1_6_3.exe)
-- [macOS package: XRD_Phase_Finder_macOS_1.6.2.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.2/XRD_Phase_Finder_macOS_1.6.2.pkg)
+- [macOS package: XRD_Phase_Finder_macOS_1.6.3.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.3/XRD_Phase_Finder_macOS_1.6.3.pkg)
 - Linux: install from source with the commands below.
 
 All release files are listed on the [XRD Phase Finder 1.6.3 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.3).
@@ -84,7 +84,7 @@ This creates `XRD_Phase_Finder_Secure_Windows_<version>.exe` under `dist\secure\
 
 ### macOS
 
-Download and run `XRD_Phase_Finder_macOS_1.6.2.pkg` from the release page. The package installs `XRD Phase Finder.app` into `/Applications`.
+Download and run `XRD_Phase_Finder_macOS_1.6.3.pkg` from the release page. The package installs `XRD Phase Finder.app` into `/Applications`.
 
 On first launch, XRD Phase Finder checks the per-user scientific Python runtime under `~/Library/Application Support/Sci`. If required packages are missing, the launcher offers to install or repair them. Project files, settings, caches and local databases are stored in the user Application Support directory, not inside the application bundle.
 
@@ -255,4 +255,3 @@ python -m pytest tests
 ## License
 
 MIT. See `LICENSE`.
-

@@ -18,6 +18,10 @@ from urllib.request import Request, urlopen
 
 APP_ID = "xrd_finder"
 APP_NAME = "XRD Phase Finder"
+MACOS_UPDATE_MANIFEST_URL = (
+    "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/"
+    "main/launcher/updates/xrd_finder_macos.json"
+)
 MIN_VISIBLE_STEP_SECONDS = 1.0
 RUNTIME_PROBE = (
     "from PySide6 import QtCore; "
@@ -416,7 +420,12 @@ class PreviewApp:
             return False
         manifest = load_json(self.manifest_path)
         app_info = (manifest.get("apps") or {}).get(APP_ID, {})
-        remote_url = app_info.get("update_manifest_url") or app_info.get("manifest_url")
+        remote_url = (
+            app_info.get("macos_update_manifest_url")
+            or app_info.get("update_manifest_url")
+            or app_info.get("manifest_url")
+            or MACOS_UPDATE_MANIFEST_URL
+        )
         release_url = app_info.get("release_url", "")
         update_status = {
             "checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),

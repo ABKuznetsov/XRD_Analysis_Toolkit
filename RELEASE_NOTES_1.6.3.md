@@ -13,7 +13,7 @@ This release fixes database-search regressions found after the 1.6.2 Windows bui
 ## Assets
 
 - Windows installer: `XRD_Phase_Finder_Setup_v1_6_3.exe`.
-- macOS package will be rebuilt separately on macOS.
+- macOS package: `XRD_Phase_Finder_macOS_1.6.3.pkg`.
 
 ## Notes
 

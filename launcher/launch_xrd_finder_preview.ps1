@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$WindowsUpdateManifestUrl = "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/launcher/updates/xrd_finder_windows.json"
 
 function Resolve-AppRoot {
     if ($PSScriptRoot) {
@@ -891,6 +892,8 @@ try {
         $appInfo = $manifest.apps.$AppId
         if ($appInfo.manifest_url) { $manifestUrl = [string]$appInfo.manifest_url }
         if ($appInfo.update_manifest_url) { $updateManifestUrl = [string]$appInfo.update_manifest_url }
+        if ($appInfo.windows_update_manifest_url) { $updateManifestUrl = [string]$appInfo.windows_update_manifest_url }
+        if (-not $updateManifestUrl) { $updateManifestUrl = $WindowsUpdateManifestUrl }
         if ($appInfo.installer_url) { $installerUrl = [string]$appInfo.installer_url }
         if ($appInfo.installer_sha256) { $installerSha256 = [string]$appInfo.installer_sha256 }
         if ($appInfo.release_url) { $releaseUrl = [string]$appInfo.release_url }
