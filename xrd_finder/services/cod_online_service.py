@@ -9,7 +9,7 @@ import re
 from urllib.parse import urlencode
 from urllib.error import URLError
 from urllib.request import Request, urlopen
-from xrd_finder.services.network import create_ssl_context
+from xrd_finder.services.network import create_ssl_context, ensure_online_allowed
 
 
 COD_BASE_URLS = (
@@ -105,6 +105,7 @@ class CodOnlineService:
         return [self._to_entry(item) for item in raw_entries[:limit]]
 
     def _request_bytes(self, path: str, *, timeout: float) -> bytes:
+        ensure_online_allowed("COD online")
         bases = [self._active_base_url]
         bases.extend(base for base in COD_BASE_URLS if base not in bases)
         last_error: Exception | None = None

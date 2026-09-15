@@ -30,6 +30,31 @@ function Ensure-Folder {
     }
 }
 
+function Test-EnvFlag {
+    param([string]$Name)
+    $value = [Environment]::GetEnvironmentVariable($Name)
+    if (-not $value) { return $false }
+    return $value.Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")
+}
+
+function Test-DiagnosticsEnabled {
+    $value = [Environment]::GetEnvironmentVariable("XRD_FINDER_DIAGNOSTICS")
+    if (-not $value) { return $true }
+    return -not ($value.Trim().ToLowerInvariant() -in @("0", "false", "no", "off"))
+}
+
+function Test-SavedSecureMode {
+    param([string]$DataRoot)
+    $path = Join-Path $DataRoot "settings\security.json"
+    if (-not (Test-Path -LiteralPath $path)) { return $false }
+    try {
+        $payload = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        return [bool]$payload.offline_mode
+    } catch {
+        return $false
+    }
+}
+
 function New-Label {
     param(
         [string]$Text,
@@ -170,7 +195,7 @@ function Get-SetupProgressMessage {
     if ($joined -match "RUNTIME_CHECK_FAILED") { return "Installed runtime failed its self-test" }
     if ($joined -match "Installing package:\s*([^`r`n]+)") {
         $packageName = $Matches[1].Trim()
-        if ($packageName -match "^(PySide6(?:==.*)?|mp-api)$") { return "Installing package: $packageName (this can take several minutes)" }
+        if ($packageName -match "^(PySide6(?:==.*)?)$") { return "Installing package: $packageName (this can take several minutes)" }
         return "Installing package: $packageName"
     }
     if ($joined -match "Installing XRD Phase Finder requirements") { return "Installing scientific Python packages" }
@@ -561,6 +586,7 @@ $finderRoot = Join-Path $appsRoot "xrd_phase_finder"
 $dataRoot = Join-Path $finderRoot "data"
 $logsRoot = Join-Path $sciRoot "logs"
 $updateRoot = Join-Path $sciRoot "updates"
+$secureMode = (Test-EnvFlag "XRD_FINDER_OFFLINE") -or (Test-SavedSecureMode $dataRoot)
 function Write-LauncherLog {
     param([string]$Message)
 }
@@ -712,6 +738,10 @@ try {
         $runtimeDetail = ($runtimeDetail + "`r`n- Python GUI launcher was not found: $pythonw").Trim()
     }
     while (-not $runtimeReady) {
+        if ($secureMode) {
+            Set-Step 1 "Secure" "Runtime setup skipped in secure/offline mode" "Muted"
+            throw "Secure/offline mode is enabled and the scientific runtime is not ready.`r`n`r`nAutomatic runtime repair may download Python packages, so it was skipped. Install or repair the Sci runtime on a connected/approved machine first, then launch again in secure/offline mode.`r`n`r`n$runtimeDetail"
+        }
         Set-ProgressText 28 "Environment setup required"
         Set-Step 1 "Action required" "Python or scientific packages are missing or damaged" "Red"
         if (-not (Show-RuntimeConsent $runtimeDetail $sciRoot $setupLog)) {
@@ -780,9 +810,12 @@ try {
         $env:PYTHONPATH = $appPackageRoot
     }
     Ensure-Folder $logsRoot
+    $diagnosticsEnabled = Test-DiagnosticsEnabled
     $startupLog = Join-Path $logsRoot "xrd_finder_console.log"
-    $startupLogHeader = "[" + (Get-Date).ToString("s") + "] Starting XRD Phase Finder"
-    $startupLogHeader | Set-Content -LiteralPath $startupLog -Encoding UTF8
+    if ($diagnosticsEnabled) {
+        $startupLogHeader = "[" + (Get-Date).ToString("s") + "] Starting XRD Phase Finder"
+        $startupLogHeader | Set-Content -LiteralPath $startupLog -Encoding UTF8
+    }
     $readyFile = Join-Path $logsRoot "xrd_finder_ready.flag"
     $preparedFile = Join-Path $logsRoot "xrd_finder_prepared.flag"
     $showSignalFile = Join-Path $logsRoot "xrd_finder_show.signal"
@@ -799,8 +832,8 @@ try {
     $startInfo.WorkingDirectory = $appRoot
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
+    $startInfo.RedirectStandardOutput = $diagnosticsEnabled
+    $startInfo.RedirectStandardError = $diagnosticsEnabled
     $startInfo.EnvironmentVariables["PYTHONDONTWRITEBYTECODE"] = "1"
     $startInfo.EnvironmentVariables["XRD_FINDER_DATA_DIR"] = $dataRoot
     $startInfo.EnvironmentVariables["XRD_FINDER_LOG_DIR"] = $logsRoot
@@ -813,29 +846,39 @@ try {
     $startInfo.EnvironmentVariables["QT_QUICK_BACKEND"] = "software"
     $startInfo.EnvironmentVariables["QT_ANGLE_PLATFORM"] = "warp"
     $startInfo.EnvironmentVariables["QT_QPA_PLATFORM"] = "windows"
+    if ($secureMode) {
+        $startInfo.EnvironmentVariables["XRD_FINDER_OFFLINE"] = "1"
+    }
     $appProcess = New-Object System.Diagnostics.Process
     $appProcess.StartInfo = $startInfo
     $null = $appProcess.Start()
-    $appProcess.add_OutputDataReceived({
-        if ($_.Data) { Add-Content -LiteralPath $startupLog -Value $_.Data -Encoding UTF8 }
-    })
-    $appProcess.add_ErrorDataReceived({
-        if ($_.Data) { Add-Content -LiteralPath $startupLog -Value $_.Data -Encoding UTF8 }
-    })
-    $appProcess.BeginOutputReadLine()
-    $appProcess.BeginErrorReadLine()
+    if ($diagnosticsEnabled) {
+        $appProcess.add_OutputDataReceived({
+            if ($_.Data) { Add-Content -LiteralPath $startupLog -Value $_.Data -Encoding UTF8 }
+        })
+        $appProcess.add_ErrorDataReceived({
+            if ($_.Data) { Add-Content -LiteralPath $startupLog -Value $_.Data -Encoding UTF8 }
+        })
+        $appProcess.BeginOutputReadLine()
+        $appProcess.BeginErrorReadLine()
+    }
 
 
     Pause-PreviewStep
     $script:ActiveStep = 2
     Set-ProgressText 48 "Checking sources"
-    Set-Step 2 "Checking..." "COD, Materials Project, local sources" "Blue"
-    Set-Step 2 "OK" "Configured sources are available" "Green"
+    if ($secureMode) {
+        Set-Step 2 "Secure" "Secure/offline mode enabled; online source checks skipped" "Muted"
+    } else {
+        Set-Step 2 "Checking..." "COD, Materials Project, local sources" "Blue"
+        Set-Step 2 "OK" "Configured sources are available" "Green"
+    }
 
     Pause-PreviewStep
     $script:ActiveStep = 3
     Set-ProgressText 68 "Checking for updates"
     Set-Step 3 "Checking..." ("Current version: " + $localVersion) "Blue"
+    $offlineMode = $secureMode
     if (Test-Path -LiteralPath $appManifestPath) {
         $appManifest = Get-Content -LiteralPath $appManifestPath -Raw | ConvertFrom-Json
         if ($appManifest.version) { $localVersion = [string]$appManifest.version }
@@ -864,7 +907,9 @@ try {
         installer_sha256 = $installerSha256
         error = $null
     }
-    if ($manifestUrl -or $updateManifestUrl) {
+    if ($offlineMode) {
+        Set-Step 3 "Secure" "Secure/offline mode enabled; update check skipped" "Muted"
+    } elseif ($manifestUrl -or $updateManifestUrl) {
         try {
             $remoteUrl = $manifestUrl
             if ($updateManifestUrl) { $remoteUrl = $updateManifestUrl }

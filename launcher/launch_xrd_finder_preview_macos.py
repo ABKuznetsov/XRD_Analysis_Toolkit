@@ -21,8 +21,15 @@ APP_NAME = "XRD Phase Finder"
 MIN_VISIBLE_STEP_SECONDS = 1.0
 RUNTIME_PROBE = (
     "from PySide6 import QtCore; "
-    "import certifi, mp_api, numpy, pybaselines, pyqtgraph, rfc8785, scipy"
+    "import certifi, numpy, pybaselines, pyqtgraph, rfc8785, scipy"
 )
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def app_root() -> Path:
@@ -59,6 +66,11 @@ def load_json(path: Path) -> dict:
         return {}
 
 
+def saved_secure_mode_enabled(data_root: Path) -> bool:
+    payload = load_json(data_root / "settings" / "security.json")
+    return bool(payload.get("offline_mode"))
+
+
 def create_ssl_context() -> ssl.SSLContext:
     try:
         import certifi
@@ -69,6 +81,8 @@ def create_ssl_context() -> ssl.SSLContext:
 
 
 def fetch_url_bytes(url: str, timeout: float = 30.0) -> bytes:
+    if env_flag("XRD_FINDER_OFFLINE"):
+        raise URLError("offline mode is enabled")
     request = Request(url, headers={"User-Agent": "XRD-Phase-Finder-macOS-Updater"})
     try:
         with urlopen(request, timeout=timeout, context=create_ssl_context()) as response:
@@ -182,6 +196,7 @@ class PreviewApp:
         self.local_version = "0.0.0"
         self.entry_module = "xrd_finder.apps.finder_gui"
         self.app_process: subprocess.Popen | None = None
+        self.secure_mode = env_flag("XRD_FINDER_OFFLINE") or saved_secure_mode_enabled(self.data_root)
 
         app_manifest = load_json(self.app_manifest_path)
         if app_manifest.get("version"):
@@ -341,6 +356,14 @@ class PreviewApp:
         self.set_step(1, "Checking...", "Looking for Sci runtime")
         runtime_ready, runtime_error = runtime_is_usable(self.python)
         if not runtime_ready:
+            if self.secure_mode:
+                self.set_step(1, "Secure", "Runtime setup skipped in secure/offline mode", "muted")
+                raise RuntimeError(
+                    "Secure/offline mode is enabled and the Sci runtime is not ready.\n\n"
+                    "Automatic runtime repair may download Python packages, so it was skipped. "
+                    "Install or repair the Sci runtime on a connected/approved machine first, "
+                    "then launch again in secure/offline mode."
+                )
             if not self.setup_script.exists():
                 raise RuntimeError(f"Setup script was not found: {self.setup_script}")
             action = "Installing" if not self.python.exists() else "Repairing"
@@ -378,12 +401,19 @@ class PreviewApp:
         return "Preparing environment"
 
     def check_databases(self) -> None:
-        self.set_step(2, "Checking...", "COD, RRUFF and local cache folders")
+        if self.secure_mode:
+            self.set_step(2, "Secure", "Secure/offline mode enabled; online source checks skipped", "muted")
+        else:
+            self.set_step(2, "Checking...", "COD, RRUFF and local cache folders")
         (self.data_root / "cod_cache").mkdir(parents=True, exist_ok=True)
-        self.set_step(2, "OK", "Configured sources are available", "green")
+        if not self.secure_mode:
+            self.set_step(2, "OK", "Configured sources are available", "green")
 
     def check_updates(self) -> bool:
         self.set_step(3, "Checking...", f"Current version: {self.local_version}")
+        if self.secure_mode:
+            self.set_step(3, "Secure", "Secure/offline mode enabled; update check skipped", "muted")
+            return False
         manifest = load_json(self.manifest_path)
         app_info = (manifest.get("apps") or {}).get(APP_ID, {})
         remote_url = app_info.get("update_manifest_url") or app_info.get("manifest_url")
@@ -491,16 +521,25 @@ class PreviewApp:
         env["XRD_FINDER_READY_FILE"] = str(ready_file)
         env["MPLCONFIGDIR"] = str(self.matplotlib_root)
         env["QT_MAC_WANTS_LAYER"] = "1"
+        if self.secure_mode:
+            env["XRD_FINDER_OFFLINE"] = "1"
 
+        diagnostics_value = os.environ.get("XRD_FINDER_DIAGNOSTICS", "1").strip().casefold()
+        diagnostics = diagnostics_value not in {"0", "false", "no", "off"}
         log_file = self.logs_root / "xrd_finder_console.log"
-        log_handle = log_file.open("w", encoding="utf-8")
-        log_handle.write(f"[{time.ctime()}] Starting XRD Phase Finder on {platform.platform()}\n")
-        log_handle.flush()
+        if diagnostics:
+            log_handle = log_file.open("w", encoding="utf-8")
+            log_handle.write(f"[{time.ctime()}] Starting XRD Phase Finder on {platform.platform()}\n")
+            log_handle.flush()
+            output_target = log_handle
+        else:
+            log_handle = None
+            output_target = subprocess.DEVNULL
         self.app_process = subprocess.Popen(
             [str(self.python), "-m", self.entry_module],
             cwd=str(self.app_root),
             env=env,
-            stdout=log_handle,
+            stdout=output_target,
             stderr=subprocess.STDOUT,
         )
         time.sleep(0.8)
@@ -512,7 +551,9 @@ class PreviewApp:
                 self._close_preview_soon(400)
                 return
             if self.app_process.poll() is not None:
-                raise RuntimeError(f"XRD Phase Finder closed during startup. Log: {log_file}")
+                if log_handle is not None:
+                    raise RuntimeError(f"XRD Phase Finder closed during startup. Log: {log_file}")
+                raise RuntimeError("XRD Phase Finder closed during startup.")
             self.set_step(4, "Starting...", "Waiting for the main application window")
             time.sleep(0.5)
         self.set_step(4, "OK", "Application is running; startup is taking longer than expected", "green")

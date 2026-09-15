@@ -11,6 +11,7 @@ from xrd_finder.services.candidate_preparation_queue import (
 )
 from xrd_finder.ui.candidate_search_status import (
     CandidateBatchStatus,
+    candidate_batch_detail_text,
     candidate_batch_status_text,
     candidate_batch_title_text,
 )
@@ -26,6 +27,7 @@ class CandidateBatchUpdateController(QObject):
         rows_ready: Callable[[list[list[str]]], None],
         status_callback: Callable[[str], None] | None = None,
         title_callback: Callable[[str], None] | None = None,
+        detail_callback: Callable[[str], None] | None = None,
         interval_ms: int = 250,
         parent: QObject | None = None,
     ) -> None:
@@ -34,6 +36,7 @@ class CandidateBatchUpdateController(QObject):
         self._rows_ready = rows_ready
         self._status_callback = status_callback
         self._title_callback = title_callback
+        self._detail_callback = detail_callback
         self._active_session_token: int | None = None
         self._searching = False
         self._pending: dict[tuple[str, str], None] = {}
@@ -150,6 +153,8 @@ class CandidateBatchUpdateController(QObject):
         self._notice = ""
         if self._title_callback is not None:
             self._title_callback("Candidate list")
+        if self._detail_callback is not None:
+            self._detail_callback("")
 
     def _emit_status(self) -> None:
         status = CandidateBatchStatus(
@@ -171,3 +176,5 @@ class CandidateBatchUpdateController(QObject):
             self._title_callback(
                 candidate_batch_title_text(status, searching=self._searching)
             )
+        if self._detail_callback is not None:
+            self._detail_callback(candidate_batch_detail_text(status))

@@ -11,6 +11,7 @@ from xrd_finder.services.network import create_ssl_context
 from zipfile import ZipFile
 
 from xrd_finder.services.cod_online_service import formula_elements
+from xrd_finder.services.network import ensure_online_allowed
 
 
 RRUFF_POWDER_XY_PROCESSED_URL = "https://www.rruff.net/zipped_data_files/powder/XY_Processed.zip"
@@ -58,6 +59,7 @@ class RruffService:
         url: str = RRUFF_POWDER_XY_PROCESSED_URL,
         timeout: float = 120.0,
     ) -> Path:
+        ensure_online_allowed("RRUFF download")
         self.root.mkdir(parents=True, exist_ok=True)
         tmp_path = self.archive_path.with_suffix(".zip.part")
         with urlopen(url, timeout=timeout, context=self._ssl_context) as response:

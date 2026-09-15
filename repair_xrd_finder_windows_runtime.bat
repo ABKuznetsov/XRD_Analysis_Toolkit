@@ -121,7 +121,7 @@ if not "!PIP_CHECK_EXIT!"=="0" (
 >> "%COMPLETE_FLAG%" echo repaired_at=%date% %time%
 >> "%COMPLETE_FLAG%" echo script_version=%SCRIPT_VERSION%
 "%PYTHON_EXE%" -c "import sys; print('python=' + sys.version.split()[0])" >> "%COMPLETE_FLAG%" 2>nul
-"%PYTHON_EXE%" -c "import importlib.metadata as m; print('mp-api=' + m.version('mp-api')); print('cristma=' + m.version('cristma'))" >> "%COMPLETE_FLAG%" 2>nul
+"%PYTHON_EXE%" -c "import importlib.metadata as m; print('cristma=' + m.version('cristma'))" >> "%COMPLETE_FLAG%" 2>nul
 
 >> "%LOG_FILE%" echo [%date% %time%] RUNTIME_REPAIR_COMPLETE
 call :cleanup_work_dir
@@ -297,7 +297,6 @@ exit /b 0
 >> "%REQ_FILE%" echo PySide6==6.7.3
 >> "%REQ_FILE%" echo rfc8785==0.1.4
 >> "%REQ_FILE%" echo scipy
->> "%REQ_FILE%" echo mp-api
 if not exist "%REQ_FILE%" exit /b 1
 exit /b 0
 
@@ -323,7 +322,7 @@ exit /b 0
 :describe
 echo XRD Phase Finder standalone runtime repair %SCRIPT_VERSION%
 echo SCI_ENV=%%LocalAppData%%\Sci\env
-echo MANDATORY=certifi cristma==0.1.0b9 numpy packaging pybaselines pyqtgraph==0.14.0 PySide6==6.7.3 rfc8785==0.1.4 scipy mp-api
+echo MANDATORY=certifi cristma==0.1.0b9 numpy packaging pybaselines pyqtgraph==0.14.0 PySide6==6.7.3 rfc8785==0.1.4 scipy
 echo MAX_REPAIR_ATTEMPTS=%MAX_REPAIR_ATTEMPTS%
 echo LOCK=%%LocalAppData%%\Sci\locks\xrd_runtime_repair.lock
 echo COMPLETE=%%LocalAppData%%\Sci\runtime_complete.flag
@@ -368,7 +367,6 @@ from pathlib import Path
 MODULES = {
     "certifi": "certifi",
     "cristma": "cristma",
-    "mp-api": "mp_api",
     "numpy": "numpy",
     "pybaselines": "pybaselines",
     "pyqtgraph": "pyqtgraph",
@@ -469,7 +467,6 @@ def self_test() -> int:
     sample = [
         "cristma==0.1.0b9",
         "PySide6==6.7.3",
-        "mp-api",
     ]
     names = []
     for line in sample:
@@ -478,7 +475,7 @@ def self_test() -> int:
             print(f"VALIDATOR_SELF_TEST_FAILED: could not parse {line!r}")
             return 1
         names.append(normalized(match.group(1)))
-    expected = ["cristma", "pyside6", "mp-api"]
+    expected = ["cristma", "pyside6"]
     if names != expected:
         print(f"VALIDATOR_SELF_TEST_FAILED: {names!r}")
         return 1

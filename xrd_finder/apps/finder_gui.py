@@ -17,6 +17,7 @@ from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.io.project_io import load_project_manifest
 from xrd_finder.services.runtime_diagnostics import (
     configure_diagnostics,
+    diagnostics_enabled,
     install_exception_hooks,
     restore_exception_hooks,
     trace_operation,
@@ -108,14 +109,16 @@ def _run_gui() -> int:
 
 
 def main() -> int:
-    session = configure_diagnostics(__version__)
-    install_exception_hooks()
+    session = configure_diagnostics(__version__) if diagnostics_enabled() else None
+    if session is not None:
+        install_exception_hooks()
     try:
         with trace_operation("application.run"):
             return _run_gui()
     finally:
-        restore_exception_hooks()
-        session.stop(timeout=1.0)
+        if session is not None:
+            restore_exception_hooks()
+            session.stop(timeout=1.0)
 
 
 if __name__ == "__main__":

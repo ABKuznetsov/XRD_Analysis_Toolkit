@@ -22,7 +22,6 @@ CORE_MODULES = {
 
 FULL_MODULES = {
     **CORE_MODULES,
-    "mp-api": "mp_api",
 }
 REQUIREMENT = re.compile(
     r"^\s*([A-Za-z0-9_.-]+)\s*(?:==\s*([A-Za-z0-9_.+!-]+))?"

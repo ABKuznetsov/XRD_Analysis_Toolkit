@@ -1,5 +1,5 @@
 #define MyAppName "XRD Phase Finder"
-#define MyAppVersion "1.6.1"
+#define MyAppVersion "1.6.2"
 #define MyAppPublisher "ABKuznetsov"
 #define MyAppURL "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit"
 
@@ -18,7 +18,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 PrivilegesRequired=admin
 OutputDir=..\..\dist\releases
-OutputBaseFilename=XRD_Phase_Finder_Setup_v1_6_1
+OutputBaseFilename=XRD_Phase_Finder_Setup_v1_6_2
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -85,7 +85,7 @@ Type: files; Name: "{app}\MANIFEST.in"
 Type: files; Name: "{app}\PROJECT_HEALTH.md"
 Type: files; Name: "{app}\pyproject.toml"
 Type: files; Name: "{app}\README.md"
-Type: files; Name: "{app}\RELEASE_NOTES_1.6.1.md"
+Type: files; Name: "{app}\RELEASE_NOTES_1.6.2.md"
 Type: files; Name: "{app}\repair_xrd_finder_windows_runtime.bat"
 Type: files; Name: "{app}\requirements-dev.txt"
 Type: files; Name: "{app}\run_finder.bat"

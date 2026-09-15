@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import json
 from pathlib import Path
 import re
@@ -178,12 +179,8 @@ class AflowService:
         return urls
 
     def _write_vasp_as_cif(self, text: str, output_path: Path) -> None:
-        try:
-            from pymatgen.core import Structure
-        except Exception as exc:
-            raise ValueError("pymatgen is required to convert AFLOW VASP structures to CIF.") from exc
-        structure = Structure.from_str(_vasp_text_with_symbols(text), fmt="poscar")
-        output_path.write_text(structure.to(fmt="cif"), encoding="utf-8")
+        lattice, sites = _parse_vasp_structure(text)
+        _write_p1_cif(output_path, data_name=output_path.stem, lattice=lattice, sites=sites)
 
 
 class OqmdService:
@@ -272,25 +269,18 @@ class OqmdService:
         return None
 
     def _write_record_as_cif(self, record: dict, output_path: Path) -> None:
-        try:
-            from pymatgen.core import Structure
-        except Exception as exc:
-            raise ValueError("pymatgen is required to convert OQMD JSON structures to CIF.") from exc
         lattice = record.get("unit_cell") or []
         sites = record.get("sites") or []
-        species = []
-        coords = []
+        cif_sites = []
         for site in sites:
             parsed = _parse_oqmd_site(str(site))
             if parsed is None:
                 continue
             element, xyz = parsed
-            species.append(element)
-            coords.append(xyz)
-        if len(lattice) != 3 or not species:
+            cif_sites.append((element, xyz))
+        if len(lattice) != 3 or not cif_sites:
             raise ValueError("OQMD JSON record does not contain a usable unit_cell/sites structure.")
-        structure = Structure(lattice, species, coords, coords_are_cartesian=False)
-        output_path.write_text(structure.to(fmt="cif"), encoding="utf-8")
+        _write_p1_cif(output_path, data_name=output_path.stem, lattice=lattice, sites=cif_sites)
 
     def _search(
         self,
@@ -364,18 +354,6 @@ def _looks_like_vasp(text: str) -> bool:
     return not _looks_like_cif(text) and not _looks_like_json(text) and "<html" not in (text or "").lower()[:300]
 
 
-def _vasp_text_with_symbols(text: str) -> str:
-    lines = (text or "").splitlines()
-    if len(lines) < 7:
-        return text
-    if _line_is_counts(lines[5]):
-        symbols = _formula_symbols(lines[0])
-        counts = lines[5].split()
-        if symbols and len(symbols) == len(counts):
-            return "\n".join(lines[:5] + ["  " + "  ".join(symbols)] + lines[5:]) + "\n"
-    return text
-
-
 def _line_is_counts(line: str) -> bool:
     parts = line.split()
     if not parts:
@@ -422,3 +400,142 @@ def _parse_oqmd_site(site: str) -> tuple[str, list[float]] | None:
 
 def _formula_elements(text: str) -> set[str]:
     return set(re.findall(r"[A-Z][a-z]?", text or ""))
+
+
+def _parse_vasp_structure(text: str) -> tuple[list[list[float]], list[tuple[str, list[float]]]]:
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    if len(lines) < 8:
+        raise ValueError("AFLOW VASP structure is too short to convert to CIF.")
+    try:
+        scale = float(lines[1].split()[0])
+        lattice = [[float(value) * scale for value in lines[index].split()[:3]] for index in range(2, 5)]
+    except Exception as exc:
+        raise ValueError("AFLOW VASP structure has invalid lattice vectors.") from exc
+
+    symbols_line_index = 5
+    if _line_is_counts(lines[symbols_line_index]):
+        symbols = _formula_symbols(lines[0])
+        counts_line_index = symbols_line_index
+    else:
+        symbols = re.findall(r"[A-Z][a-z]?", lines[symbols_line_index])
+        counts_line_index = symbols_line_index + 1
+    if not symbols or counts_line_index >= len(lines):
+        raise ValueError("AFLOW VASP structure has no element symbols.")
+    try:
+        counts = [int(float(value)) for value in lines[counts_line_index].split()]
+    except Exception as exc:
+        raise ValueError("AFLOW VASP structure has invalid atom counts.") from exc
+    if len(symbols) != len(counts):
+        raise ValueError("AFLOW VASP structure element/count columns do not match.")
+
+    coord_mode_index = counts_line_index + 1
+    if coord_mode_index < len(lines) and lines[coord_mode_index].lower().startswith("s"):
+        coord_mode_index += 1
+    if coord_mode_index >= len(lines):
+        raise ValueError("AFLOW VASP structure has no coordinate mode.")
+    coordinate_mode = lines[coord_mode_index].lower()
+    coordinate_start = coord_mode_index + 1
+    total_atoms = sum(counts)
+    coordinate_lines = lines[coordinate_start:coordinate_start + total_atoms]
+    if len(coordinate_lines) < total_atoms:
+        raise ValueError("AFLOW VASP structure has fewer coordinates than atom counts.")
+
+    expanded_symbols = []
+    for symbol, count in zip(symbols, counts):
+        expanded_symbols.extend([symbol] * count)
+    sites = []
+    for symbol, line in zip(expanded_symbols, coordinate_lines):
+        try:
+            values = [float(value) for value in line.split()[:3]]
+        except Exception as exc:
+            raise ValueError("AFLOW VASP structure has invalid atom coordinates.") from exc
+        if coordinate_mode.startswith(("c", "k")):
+            values = _cartesian_to_fractional(values, lattice)
+        sites.append((symbol, [_wrap_fraction(value) for value in values]))
+    if not sites:
+        raise ValueError("AFLOW VASP structure contains no atomic sites.")
+    return lattice, sites
+
+
+def _write_p1_cif(
+    output_path: Path,
+    *,
+    data_name: str,
+    lattice: list[list[float]],
+    sites: list[tuple[str, list[float]]],
+) -> None:
+    a, b, c, alpha, beta, gamma = _cell_parameters_from_lattice(lattice)
+    lines = [
+        f"data_{_safe_id(data_name)}",
+        "_audit_creation_method 'XRD Phase Finder lightweight structure adapter'",
+        "_symmetry_space_group_name_H-M 'P 1'",
+        "_symmetry_Int_Tables_number 1",
+        f"_cell_length_a {a:.8f}",
+        f"_cell_length_b {b:.8f}",
+        f"_cell_length_c {c:.8f}",
+        f"_cell_angle_alpha {alpha:.8f}",
+        f"_cell_angle_beta {beta:.8f}",
+        f"_cell_angle_gamma {gamma:.8f}",
+        "loop_",
+        "_symmetry_equiv_pos_as_xyz",
+        "'x, y, z'",
+        "loop_",
+        "_atom_site_label",
+        "_atom_site_type_symbol",
+        "_atom_site_fract_x",
+        "_atom_site_fract_y",
+        "_atom_site_fract_z",
+        "_atom_site_occupancy",
+    ]
+    counters: dict[str, int] = {}
+    for symbol, coords in sites:
+        counters[symbol] = counters.get(symbol, 0) + 1
+        x, y, z = (_wrap_fraction(float(value)) for value in coords[:3])
+        lines.append(f"{symbol}{counters[symbol]} {symbol} {x:.8f} {y:.8f} {z:.8f} 1.0")
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _cell_parameters_from_lattice(lattice: list[list[float]]) -> tuple[float, float, float, float, float, float]:
+    if len(lattice) != 3:
+        raise ValueError("Structure lattice must contain three vectors.")
+    vectors = [[float(value) for value in vector[:3]] for vector in lattice]
+    if any(len(vector) != 3 for vector in vectors):
+        raise ValueError("Structure lattice vectors must be three-dimensional.")
+    a_vec, b_vec, c_vec = vectors
+    a = _vector_norm(a_vec)
+    b = _vector_norm(b_vec)
+    c = _vector_norm(c_vec)
+    if min(a, b, c) <= 0:
+        raise ValueError("Structure lattice has a zero-length vector.")
+    alpha = _angle_deg(b_vec, c_vec)
+    beta = _angle_deg(a_vec, c_vec)
+    gamma = _angle_deg(a_vec, b_vec)
+    return a, b, c, alpha, beta, gamma
+
+
+def _vector_norm(vector: list[float]) -> float:
+    return math.sqrt(sum(value * value for value in vector))
+
+
+def _angle_deg(left: list[float], right: list[float]) -> float:
+    dot = sum(a * b for a, b in zip(left, right))
+    denominator = _vector_norm(left) * _vector_norm(right)
+    cosine = max(-1.0, min(1.0, dot / denominator))
+    return math.degrees(math.acos(cosine))
+
+
+def _cartesian_to_fractional(cartesian: list[float], lattice: list[list[float]]) -> list[float]:
+    try:
+        import numpy as np
+
+        matrix = np.array(lattice, dtype=float).T
+        return np.linalg.solve(matrix, np.array(cartesian, dtype=float)).tolist()
+    except Exception as exc:
+        raise ValueError("Cannot convert Cartesian AFLOW coordinates to fractional coordinates.") from exc
+
+
+def _wrap_fraction(value: float) -> float:
+    wrapped = value % 1.0
+    if abs(wrapped - 1.0) < 1e-10 or abs(wrapped) < 1e-10:
+        return 0.0
+    return wrapped

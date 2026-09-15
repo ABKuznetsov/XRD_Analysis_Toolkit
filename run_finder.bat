@@ -45,12 +45,23 @@ set "QT_QUICK_BACKEND=software"
 set "QT_ANGLE_PLATFORM=warp"
 set "PYTHONPATH=%APP_ROOT%;%PYTHONPATH%"
 
-echo Starting XRD Phase Finder with console diagnostics...
-echo Log file: %LOG_FILE%
-echo [%date% %time%] Starting XRD Phase Finder > "%LOG_FILE%"
-call "%PYTHON_EXE%" -m xrd_finder.apps.finder_gui %* 1>> "%LOG_FILE%" 2>&1
+set "DIAGNOSTICS_ENABLED=1"
+if /I "%XRD_FINDER_DIAGNOSTICS%"=="0" set "DIAGNOSTICS_ENABLED=0"
+if /I "%XRD_FINDER_DIAGNOSTICS%"=="false" set "DIAGNOSTICS_ENABLED=0"
+if /I "%XRD_FINDER_DIAGNOSTICS%"=="no" set "DIAGNOSTICS_ENABLED=0"
+if /I "%XRD_FINDER_DIAGNOSTICS%"=="off" set "DIAGNOSTICS_ENABLED=0"
+
+if "%DIAGNOSTICS_ENABLED%"=="1" (
+    echo Starting XRD Phase Finder with console diagnostics...
+    echo Log file: %LOG_FILE%
+    echo [%date% %time%] Starting XRD Phase Finder > "%LOG_FILE%"
+    call "%PYTHON_EXE%" -m xrd_finder.apps.finder_gui %* 1>> "%LOG_FILE%" 2>&1
+) else (
+    echo Starting XRD Phase Finder with diagnostics disabled...
+    call "%PYTHON_EXE%" -m xrd_finder.apps.finder_gui %*
+)
 set "EXIT_CODE=%ERRORLEVEL%"
-if not "%EXIT_CODE%"=="0" (
+if not "%EXIT_CODE%"=="0" if "%DIAGNOSTICS_ENABLED%"=="1" (
     echo.
     echo XRD Phase Finder exited with code %EXIT_CODE%.
     echo Last log lines:

@@ -39,6 +39,8 @@ class CandidateSearchOptions:
     structural_data_enabled: bool
     reference_patterns_enabled: bool
     material_class_allowed: Callable[[str], bool]
+    optional_elements: list[str] = field(default_factory=list)
+    required_elements: list[str] = field(default_factory=list)
     observed_peak_positions: list[float] = field(default_factory=list)
 
 
@@ -468,10 +470,10 @@ class CandidateSearchService:
                     except Exception as exc:
                         rows.append(["", "COD", "", "", f"COD search failed: {exc}", "", "", "", "", ""])
         if options.materials_project_enabled and options.structural_data_enabled:
-            mp_key = self.search_cache_key("elements", elements)
+            mp_key = self.search_cache_key("elements", elements, options.excluded_elements)
             if not self.local_phase_cache.search_is_fresh("MP", mp_key):
                 if rows and partial_results is None:
-                    self._queue_background_mp_elements_refresh(mp_key, elements)
+                    self._queue_background_mp_elements_refresh(mp_key, elements, options.optional_elements)
                     self._emit_search_progress(
                         progress,
                         "Local cache is ready; Materials Project refresh is running in the background",
@@ -484,7 +486,11 @@ class CandidateSearchService:
                         self._emit_search_progress(progress, "Searching Materials Project...", len(rows), 0, 7)
                         mp_entries = self._timed_source_call(
                             "mp",
-                            lambda: self.materials_project.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT),
+                            lambda: self.materials_project.search_elements(
+                                elements,
+                                optional_elements=options.optional_elements,
+                                limit=self.COMPUTATIONAL_RESULT_LIMIT,
+                            ),
                         )
                         self.local_phase_cache.upsert_materials_project_entries(mp_entries)
                         self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
@@ -496,17 +502,26 @@ class CandidateSearchService:
                     except Exception as exc:
                         rows.append(["MP", "", "", "Materials Project search failed", "", str(exc)])
         if options.aflow_enabled and options.structural_data_enabled:
-            aflow_key = self.search_cache_key("elements", elements)
+            aflow_key = self.search_cache_key("elements", elements, options.excluded_elements)
             if not self.local_phase_cache.search_is_fresh("AFLOW", aflow_key):
                 if rows and partial_results is None:
-                    self._queue_background_computational_elements_refresh("AFLOW", aflow_key, elements)
+                    self._queue_background_computational_elements_refresh(
+                        "AFLOW",
+                        aflow_key,
+                        elements,
+                        options.optional_elements,
+                    )
                     self._emit_search_progress(progress, "Local cache is ready; AFLOW refresh is running in the background", len(rows), 0, 10)
                 else:
                     try:
                         self._emit_search_progress(progress, "Searching AFLOW...", len(rows), 0, 9)
                         aflow_entries = self._timed_source_call(
                             "aflow",
-                            lambda: self.aflow.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT),
+                            lambda: self._search_computational_element_systems(
+                                self.aflow,
+                                elements,
+                                options.optional_elements,
+                            ),
                         )
                         self.local_phase_cache.upsert_computational_entries(aflow_entries)
                         self._mark_search_if_complete("AFLOW", aflow_key, len(aflow_entries), self.COMPUTATIONAL_RESULT_LIMIT)
@@ -518,17 +533,26 @@ class CandidateSearchService:
                     except Exception as exc:
                         rows.append(["AFLOW", "", "", "AFLOW search failed", "", str(exc)])
         if options.oqmd_enabled and options.structural_data_enabled:
-            oqmd_key = self.search_cache_key("elements", elements)
+            oqmd_key = self.search_cache_key("elements", elements, options.excluded_elements)
             if not self.local_phase_cache.search_is_fresh("OQMD", oqmd_key):
                 if rows and partial_results is None:
-                    self._queue_background_computational_elements_refresh("OQMD", oqmd_key, elements)
+                    self._queue_background_computational_elements_refresh(
+                        "OQMD",
+                        oqmd_key,
+                        elements,
+                        options.optional_elements,
+                    )
                     self._emit_search_progress(progress, "Local cache is ready; OQMD refresh is running in the background", len(rows), 0, 11)
                 else:
                     try:
                         self._emit_search_progress(progress, "Searching OQMD...", len(rows), 0, 11)
                         oqmd_entries = self._timed_source_call(
                             "oqmd",
-                            lambda: self.oqmd.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT),
+                            lambda: self._search_computational_element_systems(
+                                self.oqmd,
+                                elements,
+                                options.optional_elements,
+                            ),
                         )
                         self.local_phase_cache.upsert_computational_entries(oqmd_entries)
                         self._mark_search_if_complete("OQMD", oqmd_key, len(oqmd_entries), self.COMPUTATIONAL_RESULT_LIMIT)
@@ -701,10 +725,15 @@ class CandidateSearchService:
             lambda: self._refresh_mp_text_cache(mp_key, query),
         )
 
-    def _queue_background_mp_elements_refresh(self, mp_key: str, elements: list[str]) -> None:
+    def _queue_background_mp_elements_refresh(
+        self,
+        mp_key: str,
+        elements: list[str],
+        optional_elements: list[str] | None = None,
+    ) -> None:
         self._queue_background_refresh(
             ("MP", mp_key),
-            lambda: self._refresh_mp_elements_cache(mp_key, elements),
+            lambda: self._refresh_mp_elements_cache(mp_key, elements, optional_elements or []),
         )
 
     def _queue_background_computational_text_refresh(self, source: str, key: str, query: str) -> None:
@@ -713,10 +742,16 @@ class CandidateSearchService:
             lambda: self._refresh_computational_text_cache(source, key, query),
         )
 
-    def _queue_background_computational_elements_refresh(self, source: str, key: str, elements: list[str]) -> None:
+    def _queue_background_computational_elements_refresh(
+        self,
+        source: str,
+        key: str,
+        elements: list[str],
+        optional_elements: list[str] | None = None,
+    ) -> None:
         self._queue_background_refresh(
             (source, key),
-            lambda: self._refresh_computational_elements_cache(source, key, elements),
+            lambda: self._refresh_computational_elements_cache(source, key, elements, optional_elements or []),
         )
 
     def _queue_background_refresh(self, key: tuple[str, str], task: Callable[[], object]) -> None:
@@ -837,8 +872,17 @@ class CandidateSearchService:
         self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
         self.queue_background_mp_downloads(mp_entries)
 
-    def _refresh_mp_elements_cache(self, mp_key: str, elements: list[str]) -> None:
-        mp_entries = self.materials_project.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+    def _refresh_mp_elements_cache(
+        self,
+        mp_key: str,
+        elements: list[str],
+        optional_elements: list[str] | None = None,
+    ) -> None:
+        mp_entries = self.materials_project.search_elements(
+            elements,
+            optional_elements=optional_elements or [],
+            limit=self.COMPUTATIONAL_RESULT_LIMIT,
+        )
         self.local_phase_cache.upsert_materials_project_entries(mp_entries)
         self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
         self.queue_background_mp_downloads(mp_entries)
@@ -853,15 +897,55 @@ class CandidateSearchService:
         else:
             self.queue_background_oqmd_downloads(entries)
 
-    def _refresh_computational_elements_cache(self, source: str, key: str, elements: list[str]) -> None:
+    def _refresh_computational_elements_cache(
+        self,
+        source: str,
+        key: str,
+        elements: list[str],
+        optional_elements: list[str] | None = None,
+    ) -> None:
         service = self.aflow if source == "AFLOW" else self.oqmd
-        entries = service.search_elements(elements, limit=self.COMPUTATIONAL_RESULT_LIMIT)
+        entries = self._search_computational_element_systems(service, elements, optional_elements or [])
         self.local_phase_cache.upsert_computational_entries(entries)
         self._mark_search_if_complete(source, key, len(entries), self.COMPUTATIONAL_RESULT_LIMIT)
         if source == "AFLOW":
             self.queue_background_aflow_downloads(entries)
         else:
             self.queue_background_oqmd_downloads(entries)
+
+    def _search_computational_element_systems(
+        self,
+        service,
+        elements: list[str],
+        optional_elements: list[str] | None = None,
+    ):
+        entries = []
+        seen = set()
+        for system in self._element_systems(elements, optional_elements or []):
+            for entry in service.search_elements(system, limit=self.COMPUTATIONAL_RESULT_LIMIT):
+                key = (getattr(entry, "source", ""), getattr(entry, "entry_id", ""))
+                if key in seen:
+                    continue
+                seen.add(key)
+                entries.append(entry)
+                if len(entries) >= self.COMPUTATIONAL_RESULT_LIMIT:
+                    return entries
+        return entries
+
+    def _element_systems(self, required: list[str], optional: list[str]) -> list[list[str]]:
+        required_set = {element.strip() for element in required if element.strip()}
+        optional_values = sorted(
+            {element.strip() for element in optional if element.strip()} - required_set
+        )[:6]
+        systems = []
+        for mask in range(1 << len(optional_values)):
+            system = set(required_set)
+            for index, element in enumerate(optional_values):
+                if mask & (1 << index):
+                    system.add(element)
+            systems.append(sorted(system))
+        systems.sort(key=lambda values: (len(values), values))
+        return systems
 
     def download_cod_entries_to_cache(self, entries) -> int:
         errors = 0
@@ -1211,12 +1295,20 @@ class CandidateSearchService:
         options: CandidateSearchOptions,
     ) -> list[list[str]]:
         excluded = set(options.excluded_elements)
+        required = {element.strip() for element in options.required_elements if element.strip()}
+        allowed = required | {element.strip() for element in options.optional_elements if element.strip()}
         filtered = []
         for row in rows:
             normalized = normalize_candidate_row(row)
             formula = normalized[2] if len(normalized) > 2 else ""
-            if excluded and formula and formula_elements(formula) & excluded:
-                continue
+            if formula:
+                row_elements = formula_elements(formula)
+                if required and not required.issubset(row_elements):
+                    continue
+                if allowed and not row_elements.issubset(allowed):
+                    continue
+                if excluded and row_elements & excluded:
+                    continue
             if formula and not options.material_class_allowed(formula):
                 continue
             filtered.append(row)

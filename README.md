@@ -11,10 +11,10 @@ This repository contains the standalone Finder application. Structure viewing an
 ## Download
 
 - [Windows installer: XRD_Phase_Finder_Setup_v1_6_1.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_Setup_v1_6_1.exe)
-- [macOS package: XRD_Phase_Finder_macOS_1.6.1.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.1/XRD_Phase_Finder_macOS_1.6.1.pkg)
+- [macOS package: XRD_Phase_Finder_macOS_1.6.2.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.2/XRD_Phase_Finder_macOS_1.6.2.pkg)
 - Linux: install from source with the commands below.
 
-All release files are listed on the [XRD Phase Finder 1.6.1 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.1).
+All release files are listed on the [XRD Phase Finder 1.6.2 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.2).
 
 ## Main features
 
@@ -38,7 +38,7 @@ Core runtime libraries:
 - **pybaselines** for baseline/background-processing methods;
 - **CRiStMa** for CIF-backed crystallographic and powder-diffraction calculations;
 - **SQLite** through the Python standard library for local phase, search and peak indexes;
-- **mp-api** for optional Materials Project access;
+- the Python standard-library HTTP stack plus **certifi** for optional Materials Project REST access;
 - **rfc8785**, **certifi** and **packaging** for project serialization, HTTPS certificate handling and version/runtime checks.
 
 Supported phase and reference sources:
@@ -61,7 +61,7 @@ On first launch, XRD Phase Finder checks the per-user scientific Python runtime.
 
 ### macOS
 
-Download and run `XRD_Phase_Finder_macOS_1.6.1.pkg` from the release page. The package installs `XRD Phase Finder.app` into `/Applications`.
+Download and run `XRD_Phase_Finder_macOS_1.6.2.pkg` from the release page. The package installs `XRD Phase Finder.app` into `/Applications`.
 
 On first launch, XRD Phase Finder checks the per-user scientific Python runtime under `~/Library/Application Support/Sci`. If required packages are missing, the launcher offers to install or repair them. Project files, settings, caches and local databases are stored in the user Application Support directory, not inside the application bundle.
 
@@ -73,6 +73,14 @@ scripts/build_macos_pkg.command
 
 The package builder creates a Finder-only `.pkg` under `dist/`.
 
+For a locked-down workstation, prepare the runtime and local caches on an approved Mac first, then build a local secure/offline installer:
+
+```bash
+scripts/build_secure_macos_pkg.command
+```
+
+This creates `XRD_Phase_Finder_Secure_macOS_<version>.pkg` under `dist/` for local deployment. The secure installer installs the application, copies the prepared Sci runtime and local Finder data/cache snapshot to the target user profile, and enables offline/secure mode automatically.
+
 For development or direct source runs:
 
 ```bash
@@ -81,7 +89,7 @@ For development or direct source runs:
 
 ### Ubuntu / Linux from source
 
-Linux is supported from source. A dedicated `.deb`/AppImage package is not bundled in the 1.6.1 release yet, because Qt/PySide binary compatibility depends on the target distribution, desktop session and system libraries.
+Linux is supported from source. A dedicated `.deb`/AppImage package is not bundled in the 1.6.2 release yet, because Qt/PySide binary compatibility depends on the target distribution, desktop session and system libraries.
 
 The commands below were written for recent Ubuntu/Debian systems. Python 3.11 or 3.12 is recommended.
 
@@ -157,7 +165,33 @@ Typical search time depends on the number of enabled sources, local cache size, 
 
 ## Materials Project access
 
-Materials Project search uses the official `mp-api` Python client. The Windows runtime installs `mp-api` during first launch so that the connector is available without manual package installation. A Materials Project API key is still required for online queries; configure it in the database/settings tools before searching Materials Project. If no key is configured, Finder continues to work with user libraries, COD, local caches and other enabled sources.
+Materials Project search uses a lightweight built-in REST connector and does not require the heavy `mp-api`/`pymatgen` stack for normal Finder operation. A Materials Project API key is still required for online queries; configure it in the database/settings tools before searching Materials Project. If no key is configured, Finder continues to work with user libraries, COD, local caches and other enabled sources.
+
+## Offline and controlled-network use
+
+XRD Phase Finder has no telemetry. It can work without an internet connection when the required user CIF libraries, local COD/PDF-style indexes, RRUFF data or other local caches have already been prepared.
+
+For closed or government/institutional networks, use **Tools -> Network mode** and select **Offline / secure**. The setting is stored in the user data directory and is read by both the launcher and the main application. The launcher then shows that secure/offline mode is enabled and skips network-dependent checks.
+
+On macOS, **Tools -> Create secure macOS installer...** can build a separate secure/offline `.pkg` from the current application, prepared Sci runtime and local cache state. The same builder is available from the terminal as `scripts/build_secure_macos_pkg.command`.
+
+For scripted deployments, the same mode can be forced with:
+
+```bash
+XRD_FINDER_OFFLINE=1
+```
+
+In this mode online database requests, launcher update checks and automatic runtime repair/downloads are skipped immediately. Local project files, user CIF libraries, local SQL indexes and cached phase libraries remain available.
+
+Diagnostic runtime logs are local-only and capped/rotated. They redact full home-directory paths and are intended for troubleshooting startup or runtime failures. To disable Finder diagnostic logs for a locked-down workstation, start with:
+
+```bash
+XRD_FINDER_DIAGNOSTICS=0
+```
+
+Operational installer or repair scripts can still create setup logs while building the scientific runtime. For a fully offline deployment, prepare the Sci runtime and local database caches on a connected machine, then distribute the application package and cache/settings exports through the institution's approved software channel.
+
+See [SECURITY.md](SECURITY.md) for the controlled-network deployment checklist.
 
 ## Match and Gain scores
 

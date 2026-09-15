@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog
 
 from xrd_finder.services.candidate_search_service import CandidateSearchOptions
 from xrd_finder.services.cod_online_service import formula_elements
+from xrd_finder.services.network import offline_mode_enabled
 from xrd_finder.ui.candidate_batch_updates import CandidateBatchUpdateController
 
 
@@ -49,6 +50,7 @@ class PhaseFinderCandidateSearchActionsMixin:
             rows_ready=self._merge_prepared_candidate_rows,
             status_callback=self.background_status_changed.emit,
             title_callback=self.candidate_list_label.setText,
+            detail_callback=self.candidate_search_detail_label.setText,
             parent=self,
         )
         self.candidate_prepared.connect(self._candidate_batch_updates.accept_notice)
@@ -375,6 +377,8 @@ class PhaseFinderCandidateSearchActionsMixin:
             structural_data_enabled=self._structural_data_enabled(),
             reference_patterns_enabled=self._reference_patterns_enabled(),
             material_class_allowed=self._material_class_allowed,
+            optional_elements=self._optional_elements(),
+            required_elements=list(self.selected_element_order),
             observed_peak_positions=self._candidate_search_peak_positions(),
         )
 
@@ -398,6 +402,7 @@ class PhaseFinderCandidateSearchActionsMixin:
     def _materials_project_enabled(self) -> bool:
         return (
             self._structural_data_enabled()
+            and not offline_mode_enabled()
             and bool(self.settings.value("materials_project/enabled", False, type=bool))
             and bool(getattr(self.materials_project, "api_key", ""))
         )
@@ -408,22 +413,22 @@ class PhaseFinderCandidateSearchActionsMixin:
             sources.extend(["USER", "CCDC", "COD"])
         if self._source_enabled("sources/cod_local", True):
             sources.append("COD")
-        if self._materials_project_enabled():
+        if self._structural_data_enabled() and bool(self.settings.value("materials_project/enabled", False, type=bool)):
             sources.append("MP")
-        if self._aflow_enabled():
+        if self._structural_data_enabled() and self._source_enabled("sources/aflow", False):
             sources.append("AFLOW")
-        if self._oqmd_enabled():
+        if self._structural_data_enabled() and self._source_enabled("sources/oqmd", False):
             sources.append("OQMD")
         return list(dict.fromkeys(sources))
 
     def _aflow_enabled(self) -> bool:
-        return self._structural_data_enabled() and self._source_enabled("sources/aflow", False)
+        return self._structural_data_enabled() and not offline_mode_enabled() and self._source_enabled("sources/aflow", False)
 
     def _oqmd_enabled(self) -> bool:
-        return self._structural_data_enabled() and self._source_enabled("sources/oqmd", False)
+        return self._structural_data_enabled() and not offline_mode_enabled() and self._source_enabled("sources/oqmd", False)
 
     def _cod_online_enabled(self) -> bool:
-        return self._structural_data_enabled() and self._source_enabled("sources/cod_online", True)
+        return self._structural_data_enabled() and not offline_mode_enabled() and self._source_enabled("sources/cod_online", True)
 
     def _rruff_enabled(self) -> bool:
         return self._reference_patterns_enabled() and self._source_enabled("sources/rruff", False)

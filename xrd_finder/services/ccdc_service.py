@@ -7,7 +7,7 @@ from http.cookiejar import CookieJar
 from pathlib import Path
 from urllib.parse import quote, urlencode, urljoin
 from urllib.request import HTTPSHandler, HTTPCookieProcessor, Request, build_opener, urlopen
-from xrd_finder.services.network import create_ssl_context
+from xrd_finder.services.network import create_ssl_context, ensure_online_allowed
 
 
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.IGNORECASE)
@@ -215,6 +215,7 @@ class CcdcService:
             )
 
     def _read_url(self, url: str, timeout: float, opener=None, data: bytes | None = None) -> bytes:
+        ensure_online_allowed("CCDC/CSD online lookup")
         headers = {"User-Agent": "XRD Phase Finder/1.0.3"}
         if data is not None:
             headers["Content-Type"] = "application/x-www-form-urlencoded"
@@ -359,4 +360,3 @@ class CcdcService:
 
     def _create_ssl_context(self):
         return create_ssl_context()
-

@@ -27,6 +27,7 @@ from xrd_finder.services.cache_paths import (
 
 
 _LOGGER_NAME = "xrd_finder.runtime"
+DIAGNOSTICS_ENV = "XRD_FINDER_DIAGNOSTICS"
 _MAX_LOG_BYTES = 10 * 1024 * 1024
 _KEEP_SESSION_LOGS = 10
 _STOP = object()
@@ -37,6 +38,13 @@ _ORIGINAL_SYS_HOOK: Any = None
 _ORIGINAL_THREAD_HOOK: Any = None
 _WINDOWS_PATH_RE = re.compile(r"(?i)(?:[a-z]:\\|\\\\)[^\r\n\t\"']+")
 _POSIX_HOME_RE = re.compile(r"/(?:home|Users)/[^/\s]+/[^\r\n\t\"']+")
+
+
+def diagnostics_enabled() -> bool:
+    value = os.environ.get(DIAGNOSTICS_ENV)
+    if value is None:
+        return True
+    return value.strip().casefold() not in {"0", "false", "no", "off"}
 
 
 def _redact_path_match(match: re.Match[str]) -> str:

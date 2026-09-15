@@ -75,6 +75,7 @@ for runtime_file in \
     "install_xrd_finder_windows_runtime.bat" \
     "repair_xrd_finder_windows_runtime.bat" \
     "README.md" \
+    "SECURITY.md" \
     "LICENSE" \
     "THIRD_PARTY_DATA_SOURCES.md"
 do

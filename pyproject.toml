@@ -1,6 +1,6 @@
 [project]
 name = "xrd-phase-finder"
-version = "1.6.1"
+version = "1.6.2"
 description = "Cross-platform XRD phase finder for powder diffraction search-match workflows."
 requires-python = ">=3.11,<3.13"
 dependencies = [
@@ -13,7 +13,6 @@ dependencies = [
     "PySide6==6.7.3",
     "rfc8785==0.1.4",
     "scipy",
-    "mp-api",
 ]
 
 [project.scripts]

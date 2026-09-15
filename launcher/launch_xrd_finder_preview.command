@@ -58,7 +58,18 @@ else
     echo "1/4 Environment ready."
 fi
 
-if [ -d "$APP_ROOT/.git" ] && command -v git >/dev/null 2>&1; then
+case "${XRD_FINDER_OFFLINE:-}" in
+    1|true|TRUE|yes|YES|on|ON)
+        OFFLINE_MODE=1
+        ;;
+    *)
+        OFFLINE_MODE=0
+        ;;
+esac
+
+if [ "$OFFLINE_MODE" = "1" ]; then
+    echo "2/4 Auto-update skipped: offline mode is enabled."
+elif [ -d "$APP_ROOT/.git" ] && command -v git >/dev/null 2>&1; then
     echo "2/4 Checking GitHub updates..."
     (
         cd "$APP_ROOT"

@@ -124,11 +124,20 @@ def build_phase_finder_menu_bar(owner: QWidget) -> QMenuBar:
     _add_development_action(tools_menu, "Calibrate pattern", owner)
     _add_development_action(tools_menu, "Export candidate list", owner)
     tools_menu.addSeparator()
+    _add_owner_action(tools_menu, "Create secure macOS installer...", owner, "_create_secure_macos_installer")
+    tools_menu.addSeparator()
+    network_mode_action = _add_owner_action(tools_menu, "Network mode: Online", owner, "_toggle_network_mode")
+    network_mode_action.setCheckable(True)
+    owner.network_mode_action = network_mode_action
+    if hasattr(owner, "_refresh_network_mode_action"):
+        owner._refresh_network_mode_action()
+    tools_menu.addSeparator()
     _add_owner_action(tools_menu, "Export settings...", owner, "_export_user_settings")
     _add_owner_action(tools_menu, "Import settings...", owner, "_import_user_settings")
 
     help_menu = menu_bar.addMenu("Help")
     _add_owner_action(help_menu, "Phase Finder help", owner, "_show_quick_help")
+    _add_owner_action(help_menu, "Security and offline use", owner, "_show_security_info_dialog")
     _add_owner_action(help_menu, "Open example project", owner, "_open_example_project")
     _add_development_action(help_menu, "Manual", owner)
     _add_owner_action(help_menu, "About XRD Phase Finder", owner, "_show_about_dialog")

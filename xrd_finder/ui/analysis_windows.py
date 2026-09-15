@@ -66,6 +66,13 @@ from xrd_finder.services.materials_project_service import MaterialsProjectServic
 from xrd_finder.services.preprocessing_service import estimate_background
 from xrd_finder.services.refinement_service import RefinementService
 from xrd_finder.services.runtime_diagnostics import traced_operation
+from xrd_finder.services.security_mode import (
+    env_offline_mode_enabled,
+    offline_mode_enabled,
+    security_settings_path,
+    set_saved_offline_mode_enabled,
+)
+from xrd_finder.tools.secure_macos_installer import build_secure_macos_pkg
 from xrd_finder.services.indexed_cell_matching import IndexedCellMatchingService
 from xrd_finder.services.rruff_service import RruffService
 from xrd_finder.ui.pattern_plot_helpers import (
@@ -1324,7 +1331,31 @@ class PhaseFinderWindow(
         candidate_layout.setContentsMargins(0, 0, 0, 0)
         candidate_layout.setSpacing(4)
         self.candidate_list_label = QLabel("Candidate list")
-        candidate_layout.addWidget(self.candidate_list_label)
+        self.candidate_search_detail_label = QLabel("")
+        self.candidate_search_detail_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.candidate_search_detail_label.setMinimumHeight(28)
+        self.candidate_search_detail_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.candidate_search_detail_label.setStyleSheet(
+            "QLabel {"
+            " background: #1c2a34;"
+            " border: 1px solid #405363;"
+            " border-radius: 4px;"
+            " color: #dbe8f2;"
+            " padding: 4px 8px;"
+            " font-weight: 600;"
+            "}"
+        )
+        candidate_header_layout = QHBoxLayout()
+        candidate_header_layout.setContentsMargins(0, 0, 0, 0)
+        candidate_header_layout.setSpacing(8)
+        candidate_header_layout.addWidget(self.candidate_list_label)
+        candidate_header_layout.addWidget(self.candidate_search_detail_label, 1)
+        candidate_layout.addLayout(candidate_header_layout)
         candidate_layout.addWidget(self.candidate_table, 1)
 
     def _create_center_splitter(self) -> None:
@@ -1586,6 +1617,141 @@ class PhaseFinderWindow(
     def _show_quick_help(self) -> None:
         QMessageBox.information(self, PHASE_FINDER_HELP_TITLE, PHASE_FINDER_HELP_TEXT)
 
+    def _refresh_network_mode_action(self) -> None:
+        action = getattr(self, "network_mode_action", None)
+        if action is None:
+            return
+        enabled = offline_mode_enabled()
+        action.blockSignals(True)
+        action.setChecked(enabled)
+        action.setText(
+            "Network mode: Offline / secure" if enabled else "Network mode: Online"
+        )
+        if env_offline_mode_enabled():
+            action.setToolTip("Offline / secure mode is forced by XRD_FINDER_OFFLINE.")
+        else:
+            action.setToolTip(
+                "Disable online database requests and use local caches only."
+                if not enabled
+                else "Online database requests are disabled; local caches remain available."
+            )
+        action.blockSignals(False)
+
+    def _toggle_network_mode(self) -> None:
+        if env_offline_mode_enabled():
+            QMessageBox.information(
+                self,
+                "Network mode",
+                "Offline / secure mode is forced by XRD_FINDER_OFFLINE.\n\n"
+                "Unset that environment variable before switching back to online mode.",
+            )
+            self._refresh_network_mode_action()
+            return
+        enabled = not offline_mode_enabled()
+        path = set_saved_offline_mode_enabled(enabled)
+        self._refresh_network_mode_action()
+        QMessageBox.information(
+            self,
+            "Network mode",
+            (
+                "Offline / secure mode is now enabled.\n\n"
+                "Online database requests are disabled. Local projects, user CIF libraries, "
+                "local SQL indexes and cached phase libraries remain available.\n\n"
+                f"Saved to:\n{path}"
+                if enabled
+                else
+                "Online mode is now enabled.\n\n"
+                "Online sources can be used when they are enabled in Database settings and "
+                "the network is available."
+            ),
+        )
+
+    def _create_secure_macos_installer(self) -> None:
+        output_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Choose secure installer output folder",
+            str(Path.cwd() / "dist"),
+        )
+        if not output_dir:
+            return
+
+        progress_dialog = QProgressDialog(
+            "Preparing secure macOS installer...",
+            "",
+            0,
+            0,
+            self,
+        )
+        progress_dialog.setWindowTitle("Secure macOS installer")
+        progress_dialog.setCancelButton(None)
+        progress_dialog.setWindowModality(Qt.WindowModal)
+        progress_dialog.setMinimumDuration(0)
+        progress_dialog.show()
+
+        def task(progress_emit):
+            return build_secure_macos_pkg(
+                output_dir=output_dir,
+                progress=lambda message: progress_emit(message, 0, 0),
+            )
+
+        handle = BackgroundTaskHandle(
+            task,
+            parent=self,
+            accepts_progress=True,
+            operation_name="secure_installer.build_macos_pkg",
+        )
+        self._secure_installer_task = handle
+
+        def on_progress(message: str, _value: int, _maximum: int) -> None:
+            progress_dialog.setLabelText(message)
+
+        def on_finished(result: object) -> None:
+            progress_dialog.close()
+            self._secure_installer_task = None
+            QMessageBox.information(
+                self,
+                "Secure macOS installer",
+                "Secure/offline installer was created:\n\n"
+                f"{result}\n\n"
+                "It installs the application, the current Sci runtime, local Finder data, "
+                "cached databases and secure/offline mode settings.",
+            )
+
+        def on_failed(message: str, details: str) -> None:
+            progress_dialog.close()
+            self._secure_installer_task = None
+            box = QMessageBox(QMessageBox.Critical, "Secure macOS installer", message, parent=self)
+            box.setInformativeText(
+                "The secure installer was not created. Check that Xcode Command Line Tools "
+                "are installed and that the Sci runtime is already prepared on this Mac."
+            )
+            box.setDetailedText(details)
+            box.exec()
+
+        handle.progress.connect(on_progress)
+        handle.finished.connect(on_finished)
+        handle.failed.connect(on_failed)
+        handle.start()
+
+    def _show_security_info_dialog(self) -> None:
+        mode = "Offline / secure" if offline_mode_enabled() else "Online"
+        settings_path = security_settings_path()
+        QMessageBox.information(
+            self,
+            "Security and offline use",
+            (
+                f"Current network mode: {mode}\n\n"
+                "XRD Phase Finder has no telemetry. Online access is used only for visible "
+                "operations such as update checks, online database searches and requested "
+                "downloads from COD, Materials Project, AFLOW, OQMD, RRUFF or CCDC.\n\n"
+                "Offline / secure mode disables online database requests. Local projects, "
+                "user CIF libraries, local SQL indexes and cached phase libraries remain available.\n\n"
+                "Runtime diagnostics are local-only, capped and path-redacted. Start with "
+                "XRD_FINDER_DIAGNOSTICS=0 to disable them on locked-down workstations.\n\n"
+                f"Saved security mode file:\n{settings_path}"
+            ),
+        )
+
     def _show_example_read_only_message(self) -> None:
         QMessageBox.information(
             self,
@@ -1622,6 +1788,10 @@ class PhaseFinderWindow(
                 "It helps load experimental XRD patterns, search local and online phase sources, "
                 "compare calculated and reference peaks with the experiment, and save the full "
                 "interpretation state in portable .xpff project files.<br><br>"
+                "<b>Security / offline use</b><br>"
+                "No telemetry. Offline / secure mode disables online database requests and "
+                "keeps local caches available. Runtime diagnostics are local-only and can be "
+                "disabled with <code>XRD_FINDER_DIAGNOSTICS=0</code>.<br><br>"
                 'Project: <a href="https://github.com/ABKuznetsov/XRD_Analysis_Toolkit">'
                 "github.com/ABKuznetsov/XRD_Analysis_Toolkit</a><br>"
                 "License: MIT"
@@ -4417,6 +4587,13 @@ class PhaseFinderWindow(
                 and self.element_states.get(element, "neutral") not in {"optional", "any"}
             ]
         return [element for element, state in self.element_states.items() if state == "excluded"]
+
+    def _optional_elements(self) -> list[str]:
+        return [
+            element
+            for element, state in sorted(self.element_states.items(), key=lambda item: element_sort_key(item[0]))
+            if state == "optional"
+        ]
 
     def _element_symbols(self) -> list[str]:
         return self.element_table.element_symbols if self.element_table is not None else []

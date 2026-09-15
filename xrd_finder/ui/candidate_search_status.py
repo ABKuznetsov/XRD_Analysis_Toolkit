@@ -29,6 +29,18 @@ def candidate_batch_status_text(status: CandidateBatchStatus) -> str:
     )
 
 
+def candidate_batch_detail_text(status: CandidateBatchStatus) -> str:
+    found = status.local + status.displayed
+    loading = status.queued + status.downloading + status.indexing + status.pending_display + status.ranking
+    ready = max(status.ready, status.displayed)
+    parts = [f"Found {found}", f"Loading {loading}", f"Ready {ready}"]
+    if status.failed:
+        parts.append(f"Failed {status.failed}")
+    if status.notice:
+        parts.append(status.notice)
+    return " | ".join(parts)
+
+
 def candidate_batch_title_text(
     status: CandidateBatchStatus,
     *,

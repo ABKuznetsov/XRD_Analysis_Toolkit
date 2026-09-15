@@ -19,7 +19,6 @@ REQUIRED_RUNTIME_PACKAGES = (
     ("PySide6", "PySide6", "==6.7.3"),
     ("rfc8785", "rfc8785", "==0.1.4"),
     ("scipy", "scipy", ""),
-    ("mp-api", "mp_api", ""),
 )
 PLATFORM_VERSION_SPECIFIERS = {
     ("darwin", "PySide6"): "==6.11.1",

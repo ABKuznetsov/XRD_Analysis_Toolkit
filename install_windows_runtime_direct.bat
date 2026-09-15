@@ -93,10 +93,8 @@ call :install_package "rfc8785==0.1.4"
 if errorlevel 1 goto failed
 call :install_package "scipy"
 if errorlevel 1 goto failed
-call :install_package "mp-api"
-if errorlevel 1 goto failed
 echo Validating installed packages...
-call "%PYTHON_EXE%" -c "import certifi, cristma, inspect, mp_api, numpy, packaging, pybaselines, pyqtgraph, rfc8785, scipy, PySide6; from cristma.crystallography import resolve_space_group_setting; from cristma.diffraction import PowderPatternCalculator, PowderProfileCalculator; assert 'd_spacing_scale' in inspect.signature(PowderProfileCalculator.calculate).parameters; print('Runtime packages are ready')" >> "%LOG_FILE%" 2>&1
+call "%PYTHON_EXE%" -c "import certifi, cristma, inspect, numpy, packaging, pybaselines, pyqtgraph, rfc8785, scipy, PySide6; from cristma.crystallography import resolve_space_group_setting; from cristma.diffraction import PowderPatternCalculator, PowderProfileCalculator; assert 'd_spacing_scale' in inspect.signature(PowderProfileCalculator.calculate).parameters; print('Runtime packages are ready')" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 goto failed
 
 if exist "%~dp0xrd_finder\apps\runtime_check.py" (
@@ -106,7 +104,7 @@ if exist "%~dp0xrd_finder\apps\runtime_check.py" (
     if errorlevel 1 goto failed
 )
 
-echo Materials Project support is included through mp-api.
+echo Materials Project support uses the built-in lightweight REST connector.
 
 echo.
 echo ============================================================

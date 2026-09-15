@@ -69,13 +69,12 @@ call :install_step "scipy"
 call :install_step "certifi"
 call :install_step "cristma==0.1.0b9"
 call :install_step "rfc8785==0.1.4"
-call :install_step "mp-api"
 
 echo.
 if defined FAILED_PACKAGES goto packages_failed
 
 echo Validating the complete runtime...
-call "%PYTHON_EXE%" -c "import certifi, cristma, mp_api, numpy, packaging, pybaselines, pyqtgraph, rfc8785, scipy, PySide6; from PySide6 import QtCore, QtGui, QtWidgets; print('Complete runtime is ready')" >> "%LOG_FILE%" 2>&1
+call "%PYTHON_EXE%" -c "import certifi, cristma, numpy, packaging, pybaselines, pyqtgraph, rfc8785, scipy, PySide6; from PySide6 import QtCore, QtGui, QtWidgets; print('Complete runtime is ready')" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 goto validation_failed
 
 echo.
@@ -127,7 +126,6 @@ exit /b 0
 set "REQ=%~1"
 echo Installing package: %REQ%>> "%LOG_FILE%"
 if /I "%REQ%"=="PySide6-Addons==6.7.3" echo This is the largest Qt file, about 124 MB. Please wait.
-if /I "%REQ%"=="mp-api" echo Installing Materials Project connector and its dependencies.
 
 call :run_pip_package "%REQ%"
 if not errorlevel 1 (
