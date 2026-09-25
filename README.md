@@ -12,7 +12,7 @@ This repository contains the standalone Finder application. Structure viewing an
 
 - [Windows installer: XRD_Phase_Finder_Setup_v1_6_3.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.3/XRD_Phase_Finder_Setup_v1_6_3.exe)
 - [macOS package: XRD_Phase_Finder_macOS_1.6.3.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.3/XRD_Phase_Finder_macOS_1.6.3.pkg)
-- Linux: install from source with the commands below.
+- [Linux package (Debian/Ubuntu, amd64): XRD_Phase_Finder_1.6.3_amd64.deb](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.3/XRD_Phase_Finder_1.6.3_amd64.deb)
 
 All release files are listed on the [XRD Phase Finder 1.6.3 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.3).
 
@@ -110,9 +110,15 @@ For development or direct source runs:
 ./run_finder.command
 ```
 
-### Ubuntu / Linux from source
+### Ubuntu / Debian Linux
 
-Linux is supported from source. A dedicated `.deb`/AppImage package is not bundled in the current release yet, because Qt/PySide binary compatibility depends on the target distribution, desktop session and system libraries.
+For a 64-bit Debian or Ubuntu system, download `XRD_Phase_Finder_1.6.3_amd64.deb` from the release page and install it with:
+
+```bash
+sudo apt install ./XRD_Phase_Finder_1.6.3_amd64.deb
+```
+
+The source installation remains available for other Linux distributions and for development.
 
 The commands below were written for recent Ubuntu/Debian systems. Python 3.11 or 3.12 is recommended.
 
