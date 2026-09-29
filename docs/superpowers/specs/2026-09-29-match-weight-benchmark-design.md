@@ -4,7 +4,7 @@
 
 Build a compact, reproducible benchmark that selects and validates the four weights used by the XRD Phase Finder Match score and quantitatively evaluates the subsequent Gain ranking. The benchmark must support the methodological claims in the manuscript, remain small enough to store in the public GitHub repository, and exercise the same peak detection, Match, residual construction, and Gain implementation used by the application.
 
-The benchmark must answer four questions:
+The benchmark must answer six questions:
 
 1. Which weight vector ranks the correct phase most reliably?
 2. How stable is that choice across noise, phase overlap, phase count, minor-phase fraction, peak width, background, intensity distortion, and axis error?
@@ -150,6 +150,27 @@ The selection target is macro-averaged mean reciprocal rank of the dominant phas
 
 The held-out test set is evaluated once with the selected vector.
 
+### Exploratory adaptive policies
+
+After the fixed-weight model has been selected, the benchmark may test whether parameters should vary with properties measured from the query pattern. This analysis is secondary and cannot replace the fixed baseline unless it improves held-out results consistently.
+
+The permitted predictors are available before candidate identity is known:
+
+- estimated median FWHM;
+- robust noise-to-signal ratio;
+- detected peak count and peak density;
+- fraction of unresolved or closely spaced observed peaks;
+- angular step size.
+
+The first adaptive candidates are deliberately simple and monotonic:
+
+- Match line tolerance as a clipped affine function of estimated FWHM;
+- peak-detector minimum separation as a clipped multiple of FWHM and angular step;
+- maximum observed-line count as a small set of noise/peak-density bins;
+- Match weights as either two FWHM bins, two noise bins, or a clipped affine interpolation between two weight vectors.
+
+Adaptive candidates are fitted inside the train/validation partitions using nested grouped resampling. Model selection penalizes each added parameter and requires improvement in validation macro MRR, worst-stratum Recall@5, and calibration stability. The final comparison reports fixed versus adaptive policies on the untouched test set. If the confidence intervals overlap or the adaptive policy loses materially in any difficult stratum, the fixed policy remains the recommended application default.
+
 ## Comparisons and Ablations
 
 Every report compares:
@@ -253,6 +274,7 @@ A standard run writes:
 - `selected_weights.json`: selected vector, objective, confidence interval, and dataset hash;
 - `comparison.csv`: manuscript, current, equal, selected, and ablation results;
 - `sensitivity.csv`: factor-level and interaction results, including FWHM;
+- `adaptive_policy.csv`: fixed and adaptive policy comparisons, fitted coefficients, complexity penalty, and held-out strata;
 - `experimental_external.csv`: measured RRUFF and IUCr organic pattern ranks and quality notes;
 - `gain_evaluation.csv`: next-phase ranks, selected stages, sparse flags, and residual conditions;
 - `gain_definition.md`: implementation-derived formal definition and all numerical thresholds;
@@ -277,7 +299,8 @@ The implementation is accepted when:
 9. measured and synthetic organic results are labeled separately, and every measured profile retains its provenance and verified structural target;
 10. the application default and manuscript formula are changed only after reviewing held-out results;
 11. benchmark tests and the existing application test suite pass.
+12. adaptive policies use only pre-candidate pattern features and are accepted only through the nested grouped validation rule.
 
 ## Known Limitations
 
-Synthetic mixtures do not reproduce every sample-preparation, preferred-orientation, or instrument effect. RRUFF supplies an experimental check but may contain impurities, secondary phases, and heterogeneous acquisition conditions. The manuscript must describe the benchmark as validation over the stated factors, not as proof of universal identification accuracy.
+Synthetic mixtures do not reproduce every sample-preparation, preferred-orientation, or instrument effect. RRUFF supplies an experimental mineral check but may contain impurities, secondary phases, and heterogeneous acquisition conditions. The IUCr aspirin pattern comes from a tablet and may include excipients, while sucrose and beta-caffeine still represent only a small part of organic diffraction space. The manuscript must describe the benchmark as validation over the stated factors, not as proof of universal identification accuracy.
