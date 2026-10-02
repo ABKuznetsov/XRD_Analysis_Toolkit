@@ -5,6 +5,7 @@ import argparse
 import csv
 from concurrent.futures import ProcessPoolExecutor
 import math
+import json
 from pathlib import Path
 import time
 from collections.abc import Mapping, Sequence
@@ -102,6 +103,10 @@ class GainScenarioResult:
     ranked_candidate_ids: tuple[str, ...] = ()
     ranked_families: tuple[str, ...] = ()
     suppressed_candidate_count: int = 0
+    full_set_recovered: bool = False
+    false_positive_families: int = 0
+    variant_group: str = ""
+    variant_kind: str = ""
 
 
 class IndistinguishableGainScenario(ValueError):
@@ -836,6 +841,12 @@ def _evaluate_joint_gain_scenario(
     )
     target_gain = float(target_gain_result.gain if target_gain_result is not None else 0.0)
     top_gain = float(top_gain_result.gain if top_gain_result is not None else 0.0)
+    true_families = {component.family_id for component in scenario.components}
+    best_families = {
+        family_by_phase[phase_id]
+        for phase_id in best.card_keys
+        if phase_id in family_by_phase
+    }
     return GainScenarioResult(
         query_id=scenario.scenario_id,
         split=scenario.split,
@@ -893,6 +904,8 @@ def _evaluate_joint_gain_scenario(
         suppressed_candidate_count=sum(
             not item.reportable for item in evaluation.search_result.candidate_gains
         ),
+        full_set_recovered=true_families.issubset(best_families),
+        false_positive_families=len(best_families - true_families),
     )
 
 
@@ -979,9 +992,7 @@ def run_gain_benchmark(
         writer = csv.DictWriter(stream, fieldnames=tuple(asdict(results[0])))
         writer.writeheader()
         for result in results:
-            row = asdict(result)
-            row["dominant_evidence"] = str(result.dominant_evidence)
-            writer.writerow(row)
+            writer.writerow(_gain_csv_row(result))
     summary_path = output_dir / "gain_summary.md"
     summary_path.write_text(_gain_summary(results), encoding="utf-8")
     return summary_path
@@ -1024,6 +1035,14 @@ def _evaluate_gain_chunk(arguments):
     return tuple(results)
 
 
+def _gain_csv_row(result: GainScenarioResult) -> dict[str, object]:
+    row = asdict(result)
+    row["dominant_evidence"] = str(result.dominant_evidence)
+    for key in ("best_combination", "ranked_candidate_ids", "ranked_families"):
+        row[key] = json.dumps(list(row[key]), ensure_ascii=False, separators=(",", ":"))
+    return row
+
+
 def _gain_summary(results: Sequence[GainScenarioResult]) -> str:
     zero_errors = [abs(item.global_zero_shift - item.true_zero_shift) for item in results]
     width_errors = [
@@ -1031,6 +1050,12 @@ def _gain_summary(results: Sequence[GainScenarioResult]) -> str:
         for item in results
         if math.isfinite(item.target_fwhm)
     ]
+    ranks_all = np.asarray([item.target_rank for item in results], dtype=float)
+    retrieval = [item.retrieval_seconds for item in results]
+    profile = [item.profile_seconds for item in results]
+    search = [item.search_seconds for item in results]
+    combinations = [item.evaluated_combinations for item in results]
+    order_stability, card_stability = _gain_variant_stability(results)
     lines = [
         "# Gain benchmark summary",
         "",
@@ -1044,6 +1069,17 @@ def _gain_summary(results: Sequence[GainScenarioResult]) -> str:
         "",
         f"Global zero-shift median absolute error: {np.median(zero_errors):.4f} deg.",
         f"Candidate FWHM median absolute error: {np.median(width_errors):.4f} deg ({len(width_errors)}/{len(results)} targets estimated)." if width_errors else "Candidate FWHM could not be estimated.",
+        "",
+        f"Retrieval median/p95: {np.median(retrieval):.4f} / {_p95(retrieval):.4f} s.",
+        f"Profile build median/p95: {np.median(profile):.4f} / {_p95(profile):.4f} s.",
+        f"Beam search median/p95: {np.median(search):.4f} / {_p95(search):.4f} s.",
+        f"Evaluated combinations median/p95: {np.median(combinations):.1f} / {_p95(combinations):.1f}.",
+        f"Pool recall: {np.mean([item.target_in_shortlist for item in results]):.4f}.",
+        f"Top-1/Top-5/Top-10: {np.mean(ranks_all <= 1):.4f} / {np.mean(ranks_all <= 5):.4f} / {np.mean(ranks_all <= 10):.4f}.",
+        f"Full-set recovery: {np.mean([item.full_set_recovered for item in results]):.4f}.",
+        f"False-positive families per query: {np.mean([item.false_positive_families for item in results]):.4f}.",
+        f"Order stability (paired Top-5 retention): {order_stability}.",
+        f"Card-variant stability (median absolute rank delta): {card_stability}.",
         "",
         "| Evidence group | Queries | MRR | Top-1 | Top-5 | Top-10 | Shortlist recall | Median time (s) |",
         "|---|---:|---:|---:|---:|---:|---:|---:|",
@@ -1072,6 +1108,32 @@ def _gain_summary(results: Sequence[GainScenarioResult]) -> str:
             f"{np.median([item.elapsed_seconds for item in group]):.3f} |"
         )
     return "\n".join(lines) + "\n"
+
+
+def _p95(values: Sequence[float | int]) -> float:
+    if not values:
+        return 0.0
+    return float(np.percentile(np.asarray(values, dtype=float), 95))
+
+
+def _gain_variant_stability(results: Sequence[GainScenarioResult]) -> tuple[str, str]:
+    groups: dict[tuple[str, str], list[GainScenarioResult]] = {}
+    for result in results:
+        if result.variant_group and result.variant_kind:
+            groups.setdefault((result.variant_kind, result.variant_group), []).append(result)
+    order = [items for (kind, _), items in groups.items() if kind == "accepted-order" and len(items) >= 2]
+    cards = [items for (kind, _), items in groups.items() if kind == "card-variant" and len(items) >= 2]
+    order_value = (
+        f"{np.mean([all(item.target_rank <= 5 for item in pair[:2]) for pair in order]):.4f}"
+        if order
+        else "n/a"
+    )
+    card_value = (
+        f"{np.median([abs(pair[0].target_rank - pair[1].target_rank) for pair in cards]):.3f}"
+        if cards
+        else "n/a"
+    )
+    return order_value, card_value
 
 
 def main() -> int:

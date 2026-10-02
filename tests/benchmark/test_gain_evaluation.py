@@ -4,6 +4,8 @@ import unittest
 
 from benchmarks.match.evaluate_gain import (
     _gain_candidate_ids,
+    _gain_csv_row,
+    _gain_summary,
     _joint_nonnegative_scales,
     evaluate_gain_scenario,
 )
@@ -149,6 +151,49 @@ class GainEvaluationTests(unittest.TestCase):
                 scenario,
                 gain_engine="unknown",
             )
+
+    def test_joint_summary_reports_stage_timings_combinations_and_stability(self):
+        references, families, scenario = self._overlap_fixture()
+        result = evaluate_gain_scenario(
+            references,
+            families,
+            scenario,
+            shortlist_limit=3,
+            gain_engine="joint-beam",
+        )
+
+        summary = _gain_summary((result,))
+
+        for label in (
+            "Retrieval median/p95",
+            "Profile build median/p95",
+            "Beam search median/p95",
+            "Evaluated combinations",
+            "Pool recall",
+            "Top-1/Top-5/Top-10",
+            "Full-set recovery",
+            "False-positive families",
+            "Order stability",
+            "Card-variant stability",
+        ):
+            self.assertIn(label, summary)
+
+    def test_csv_row_round_trips_combination_and_family_keys(self):
+        references, families, scenario = self._overlap_fixture()
+        result = evaluate_gain_scenario(
+            references,
+            families,
+            scenario,
+            shortlist_limit=3,
+            gain_engine="joint-beam",
+        )
+
+        row = _gain_csv_row(result)
+
+        import json
+
+        self.assertEqual(tuple(json.loads(row["best_combination"])), result.best_combination)
+        self.assertEqual(tuple(json.loads(row["ranked_families"])), result.ranked_families)
 
     def test_joint_scales_recover_two_selected_profiles(self):
         first = [1.0, 0.0, 1.0, 0.0]
