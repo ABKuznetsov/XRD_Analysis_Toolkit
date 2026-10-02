@@ -233,13 +233,33 @@ def _weighted_residual_records(
         snr_reliability = (
             0.80 if snr is None else min(1.0, max(snr, 0.0) / 8.0)
         )
+        # Matched-profile hypotheses may stay available to rescue channels
+        # while contributing less to the primary strong-line channel.
+        source_record = next(
+            (
+                record
+                for record in records
+                if abs(float(getattr(record, "two_theta", math.inf)) - position)
+                <= 1.0e-6
+            ),
+            None,
+        )
+        evidence_class = str(
+            getattr(source_record, "evidence_class", "") or ""
+        )
+        class_reliability = {
+            "strong": 1.0,
+            "weak": 0.60,
+            "tentative": 0.25,
+        }.get(evidence_class, 1.0)
         weighted.append(
             (
                 position,
                 strength_weight
                 * width_reliability
                 * fit_reliability
-                * snr_reliability,
+                * snr_reliability
+                * class_reliability,
             )
         )
     weighted.sort(key=lambda item: (-item[1], item[0]))
