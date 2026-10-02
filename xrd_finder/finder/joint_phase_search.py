@@ -5,6 +5,7 @@ from time import perf_counter
 from typing import Collection, Sequence
 
 import numpy as np
+from scipy.optimize import nnls
 
 
 def _readonly_vector(values: np.ndarray | Sequence[float]) -> np.ndarray:
@@ -123,10 +124,12 @@ def search_phase_combinations(
     required = tuple(
         candidate for candidate in normalized if candidate.key in set(required_keys)
     )
-    baseline = _required_baseline(
+    baseline = _fit_combination(
         target=target_values,
         weights=weight_values,
-        required=required,
+        candidates=required,
+        required_count=len(required),
+        config=config or JointPhaseSearchConfig(),
     )
     if not np.any(target_values) or len(required) == len(normalized):
         return JointPhaseSearchResult(
@@ -197,34 +200,57 @@ def _validate_inputs(
     return x_values, target_values, weight_values, normalized
 
 
-def _required_baseline(
+def _fit_combination(
     *,
     target: np.ndarray,
     weights: np.ndarray,
-    required: Sequence[JointPhaseCandidate],
+    candidates: Sequence[JointPhaseCandidate],
+    required_count: int,
+    config: JointPhaseSearchConfig,
 ) -> JointPhaseCombination:
-    if required:
-        matrix = np.column_stack([candidate.profile for candidate in required])
+    if candidates:
+        matrix = np.column_stack([candidate.profile for candidate in candidates])
         root_weights = np.sqrt(weights)
         weighted_matrix = matrix * root_weights[:, None]
         weighted_target = target * root_weights
-        scales = np.clip(
-            np.linalg.lstsq(weighted_matrix, weighted_target, rcond=None)[0],
-            0.0,
-            None,
-        )
+        try:
+            scales = nnls(weighted_matrix, weighted_target)[0]
+        except (RuntimeError, ValueError, np.linalg.LinAlgError):
+            scales = np.clip(
+                np.linalg.lstsq(weighted_matrix, weighted_target, rcond=None)[0],
+                0.0,
+                None,
+            )
         model = matrix @ scales
     else:
         scales = np.zeros(0, dtype=float)
         model = np.zeros_like(target)
     residual = target - model
+    under = np.maximum(residual, 0.0)
+    over = np.maximum(-residual, 0.0)
     denominator = max(float(np.dot(weights, target * target)), np.finfo(float).eps)
-    score = float(np.dot(weights, residual * residual) / denominator)
-    if not np.any(target):
-        score = 0.0
+    profile_error = float(
+        np.sum(weights * (under * under + config.excess_penalty * over * over))
+        / denominator
+    )
+    target_gradient = np.diff(target)
+    model_gradient = np.diff(model)
+    derivative_denominator = max(
+        float(np.sum(np.abs(target_gradient))),
+        np.finfo(float).eps,
+    )
+    derivative_error = float(
+        np.sum(np.abs(target_gradient - model_gradient)) / derivative_denominator
+    )
+    optional_phase_count = max(len(candidates) - int(required_count), 0)
+    score = (
+        profile_error
+        + config.derivative_weight * derivative_error
+        + config.complexity_penalty * optional_phase_count
+    )
     return JointPhaseCombination(
-        family_keys=tuple(candidate.family_key for candidate in required),
-        card_keys=tuple(candidate.key for candidate in required),
+        family_keys=tuple(candidate.family_key for candidate in candidates),
+        card_keys=tuple(candidate.key for candidate in candidates),
         scales=tuple(float(value) for value in scales),
         score=score,
         model=model,
