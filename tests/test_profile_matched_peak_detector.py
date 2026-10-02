@@ -6,6 +6,7 @@ import numpy as np
 
 from xrd_finder.finder.residual_peak_refinement import pseudo_voigt_unit_height
 from xrd_finder.services.profile_matched_peak_detector import (
+    is_broad_rescue_candidate,
     profile_matched_peak_hypotheses,
 )
 
@@ -39,6 +40,7 @@ class ProfileMatchedPeakDetectorTests(unittest.TestCase):
         self.assertGreater(narrow.area_signed, 0.0)
         self.assertGreaterEqual(narrow.area_positive, narrow.area_signed)
         self.assertGreater(narrow.area_snr, 3.0)
+        self.assertGreater(narrow.curvature, 0.0)
         self.assertGreaterEqual(narrow.width_persistence, 2)
         self.assertGreaterEqual(broad.width_persistence, 2)
         self.assertGreater(narrow.delta_chi2, 0.0)
@@ -75,6 +77,28 @@ class ProfileMatchedPeakDetectorTests(unittest.TestCase):
         )
         self.assertTrue(all(np.isfinite(value) for value in feature_vector))
         self.assertGreater(peak.confidence, 0.0)
+
+    def test_broad_rescue_requires_shape_area_width_and_curvature(self):
+        from types import SimpleNamespace
+
+        valid = SimpleNamespace(
+            broadening_scale=3.0,
+            profile_match=0.72,
+            area_snr=8.0,
+            curvature=6.0,
+            local_snr=3.2,
+        )
+
+        self.assertTrue(is_broad_rescue_candidate(valid))
+        for attribute, value in (
+            ("broadening_scale", 1.4),
+            ("profile_match", 0.40),
+            ("area_snr", 2.0),
+            ("curvature", 0.0),
+        ):
+            rejected = SimpleNamespace(**vars(valid))
+            setattr(rejected, attribute, value)
+            self.assertFalse(is_broad_rescue_candidate(rejected))
 
     def test_uses_angle_dependent_instrument_width(self):
         rng = np.random.default_rng(19)

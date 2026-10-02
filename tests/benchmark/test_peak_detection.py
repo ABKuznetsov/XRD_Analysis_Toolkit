@@ -17,13 +17,25 @@ class PeakDetectionBenchmarkTests(unittest.TestCase):
             result.matched_recall,
             result.legacy_precision,
             result.matched_precision,
+            result.hybrid_recall,
+            result.diagnostic_union_recall,
         ):
             self.assertTrue(math.isfinite(value))
             self.assertGreaterEqual(value, 0.0)
             self.assertLessEqual(value, 1.0)
         self.assertGreaterEqual(result.legacy_median_seconds, 0.0)
         self.assertGreaterEqual(result.matched_median_seconds, 0.0)
+        self.assertEqual(
+            sum(item.true_peaks for item in result.width_strata),
+            result.true_peaks,
+        )
+        self.assertEqual(
+            {item.label for item in result.width_strata},
+            {"k<1.5", "1.5<=k<2.5", "2.5<=k<3.5", "k>=3.5"},
+        )
         self.assertEqual(len(result.rescue_features), result.matched_unique_rescues)
+        self.assertLessEqual(result.accepted_broad_rescues, result.matched_unique_rescues)
+        self.assertLessEqual(result.hybrid_recall, result.diagnostic_union_recall)
         for rescue in result.rescue_features:
             for value in (
                 rescue.prominence,

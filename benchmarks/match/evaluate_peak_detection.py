@@ -9,6 +9,7 @@ import numpy as np
 
 from xrd_finder.finder.residual_peak_refinement import pseudo_voigt_unit_height
 from xrd_finder.services.profile_matched_peak_detector import (
+    is_broad_rescue_candidate,
     profile_matched_peak_hypotheses,
 )
 from xrd_finder.ui.peak_matching import observed_peak_records
@@ -29,6 +30,16 @@ class MatchedRescueFeature:
 
 
 @dataclass(frozen=True, slots=True)
+class WidthStratumResult:
+    label: str
+    true_peaks: int
+    legacy_recall: float
+    matched_recall: float
+    union_recall: float
+    diagnostic_union_recall: float
+
+
+@dataclass(frozen=True, slots=True)
 class PeakDetectionBenchmarkResult:
     cases: int
     true_peaks: int
@@ -41,8 +52,11 @@ class PeakDetectionBenchmarkResult:
     legacy_overlap_recall: float
     matched_overlap_recall: float
     hybrid_recall: float
+    diagnostic_union_recall: float
     matched_unique_rescues: int
+    accepted_broad_rescues: int
     rescue_features: tuple[MatchedRescueFeature, ...]
+    width_strata: tuple[WidthStratumResult, ...]
 
 
 def run_peak_detection_benchmark(
@@ -64,10 +78,16 @@ def run_peak_detection_benchmark(
     matched_overlap_recovered = 0
     overlap_total = 0
     hybrid_recovered = 0
+    diagnostic_union_recovered = 0
     matched_unique_rescues = 0
+    accepted_broad_rescues = 0
     rescue_features: list[MatchedRescueFeature] = []
     legacy_times: list[float] = []
     matched_times: list[float] = []
+    stratum_counts = {
+        label: [0, 0, 0, 0, 0]
+        for label in ("k<1.5", "1.5<=k<2.5", "2.5<=k<3.5", "k>=3.5")
+    }
     for case_index in range(max(1, int(cases))):
         x, y, true_peaks, overlap_truth = _synthetic_two_phase_case(rng)
         started = time.perf_counter()
@@ -91,11 +111,17 @@ def run_peak_detection_benchmark(
         matched_times.append(time.perf_counter() - started)
         legacy_positions = [record.two_theta for record in legacy]
         matched_positions = [record.position for record in matched]
+        broad_rescue_positions = [
+            record.position for record in matched if is_broad_rescue_candidate(record)
+        ]
         true_total += len(true_peaks)
         legacy_matches = _matched_pairs(true_peaks, legacy_positions)
         matched_matches = _matched_pairs(true_peaks, matched_positions)
-        hybrid_matches = _matched_pairs(
+        diagnostic_union_matches = _matched_pairs(
             true_peaks, [*legacy_positions, *matched_positions]
+        )
+        hybrid_matches = _matched_pairs(
+            true_peaks, [*legacy_positions, *broad_rescue_positions]
         )
         legacy_recovered += len(legacy_matches)
         matched_recovered += len(matched_matches)
@@ -104,15 +130,34 @@ def run_peak_detection_benchmark(
         legacy_detected += len(legacy_positions)
         matched_detected += len(matched_positions)
         hybrid_recovered += len(hybrid_matches)
+        diagnostic_union_recovered += len(diagnostic_union_matches)
         legacy_truth_indices = {
             truth_index for truth_index, _detected_index in legacy_matches
         }
+        matched_truth_indices = {
+            truth_index for truth_index, _detected_index in matched_matches
+        }
+        hybrid_truth_indices = {
+            truth_index for truth_index, _detected_index in hybrid_matches
+        }
+        diagnostic_union_truth_indices = {
+            truth_index for truth_index, _detected_index in diagnostic_union_matches
+        }
+        for truth_index, (_position, width) in enumerate(true_peaks):
+            label = _width_stratum(float(width) / 0.10)
+            counts = stratum_counts[label]
+            counts[0] += 1
+            counts[1] += int(truth_index in legacy_truth_indices)
+            counts[2] += int(truth_index in matched_truth_indices)
+            counts[3] += int(truth_index in hybrid_truth_indices)
+            counts[4] += int(truth_index in diagnostic_union_truth_indices)
         for truth_index, detected_index in matched_matches:
             if truth_index in legacy_truth_indices:
                 continue
             matched_unique_rescues += 1
             hypothesis = matched[detected_index]
-            curvature, centroid_offset = _rescue_shape_diagnostics(
+            accepted_broad_rescues += int(is_broad_rescue_candidate(hypothesis))
+            centroid_offset = _rescue_centroid_offset(
                 x, y, hypothesis.position, hypothesis.effective_fwhm
             )
             rescue_features.append(
@@ -125,7 +170,7 @@ def run_peak_detection_benchmark(
                     area_snr=float(hypothesis.area_snr),
                     width_ratio=float(hypothesis.broadening_scale),
                     profile_match=float(hypothesis.profile_match),
-                    curvature=float(curvature),
+                    curvature=float(hypothesis.curvature),
                     centroid_offset=float(centroid_offset),
                 )
             )
@@ -148,24 +193,37 @@ def run_peak_detection_benchmark(
         legacy_overlap_recall=legacy_overlap_recovered / max(overlap_total, 1),
         matched_overlap_recall=matched_overlap_recovered / max(overlap_total, 1),
         hybrid_recall=hybrid_recovered / max(true_total, 1),
+        diagnostic_union_recall=diagnostic_union_recovered / max(true_total, 1),
         matched_unique_rescues=matched_unique_rescues,
+        accepted_broad_rescues=accepted_broad_rescues,
         rescue_features=tuple(rescue_features),
+        width_strata=tuple(
+            WidthStratumResult(
+                label=label,
+                true_peaks=counts[0],
+                legacy_recall=counts[1] / max(counts[0], 1),
+                matched_recall=counts[2] / max(counts[0], 1),
+                union_recall=counts[3] / max(counts[0], 1),
+                diagnostic_union_recall=counts[4] / max(counts[0], 1),
+            )
+            for label, counts in stratum_counts.items()
+        ),
     )
 
 
-def _rescue_shape_diagnostics(
+def _rescue_centroid_offset(
     x: np.ndarray,
     residual: np.ndarray,
     position: float,
     fwhm: float,
-) -> tuple[float, float]:
+) -> float:
     width = max(float(fwhm), 0.04)
     left = int(np.searchsorted(x, position - 2.0 * width, side="left"))
     right = int(np.searchsorted(x, position + 2.0 * width, side="right"))
     local_x = np.asarray(x[left:right], dtype=float)
     local_y = np.asarray(residual[left:right], dtype=float)
     if len(local_x) < 7:
-        return 0.0, 0.0
+        return 0.0
     offset = local_x - float(position)
     scaled = offset / width
     edge = np.abs(scaled) >= 1.1
@@ -175,13 +233,6 @@ def _rescue_shape_diagnostics(
     else:
         baseline = np.full_like(local_y, float(np.nanmedian(local_y)))
     detrended = local_y - baseline
-    central = np.abs(scaled) <= 0.8
-    try:
-        quadratic = np.polyfit(scaled[central], detrended[central], 2)
-        noise = max(float(np.median(np.abs(np.diff(local_y)))) / 0.954, 1.0e-12)
-        curvature = max(-2.0 * float(quadratic[0]) / noise, 0.0)
-    except (TypeError, ValueError, np.linalg.LinAlgError):
-        curvature = 0.0
     positive = np.maximum(detrended, 0.0)
     total = float(np.sum(positive))
     centroid = (
@@ -189,7 +240,17 @@ def _rescue_shape_diagnostics(
         if total > 0.0
         else float(position)
     )
-    return curvature, centroid - float(position)
+    return centroid - float(position)
+
+
+def _width_stratum(k_value: float) -> str:
+    if k_value < 1.5:
+        return "k<1.5"
+    if k_value < 2.5:
+        return "1.5<=k<2.5"
+    if k_value < 3.5:
+        return "2.5<=k<3.5"
+    return "k>=3.5"
 
 
 def _synthetic_two_phase_case(
@@ -205,7 +266,9 @@ def _synthetic_two_phase_case(
     phase_a_scale = float(1.0 + rng.uniform(-0.0035, 0.0035))
     phase_b_scale = float(1.0 + rng.uniform(-0.0035, 0.0035))
     phase_a_width = float(rng.choice((0.10, 0.13, 0.17)))
-    phase_b_width = float(rng.choice((0.24, 0.32, 0.42, 0.50)))
+    phase_b_width = float(
+        rng.choice((0.10, 0.14, 0.18, 0.22, 0.28, 0.32, 0.42, 0.50))
+    )
     phase_a = np.sort(rng.uniform(14.0, 72.0, 6))
     phase_b = np.sort(rng.uniform(14.0, 72.0, 5))
     phase_b[0] = phase_a[int(rng.integers(0, len(phase_a)))] + float(
@@ -295,5 +358,6 @@ if __name__ == "__main__":
 __all__ = [
     "MatchedRescueFeature",
     "PeakDetectionBenchmarkResult",
+    "WidthStratumResult",
     "run_peak_detection_benchmark",
 ]

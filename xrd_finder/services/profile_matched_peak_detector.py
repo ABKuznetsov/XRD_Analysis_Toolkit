@@ -21,6 +21,7 @@ class ProfileMatchedPeakHypothesis:
     area_positive: float
     area_signed: float
     area_snr: float
+    curvature: float
     broadening_scale: float
     effective_fwhm: float
     profile_match: float
@@ -216,6 +217,7 @@ def profile_matched_peak_hypotheses(
             area_positive,
             area_signed,
             area_snr,
+            curvature,
         ) = _local_peak_fit_statistics(
             x_values,
             signal,
@@ -283,6 +285,7 @@ def profile_matched_peak_hypotheses(
                 area_positive=max(float(area_positive), 0.0),
                 area_signed=float(area_signed),
                 area_snr=float(area_snr),
+                curvature=float(curvature),
                 broadening_scale=float(scales[scale_index]),
                 effective_fwhm=fwhm,
                 profile_match=profile_match,
@@ -346,7 +349,7 @@ def _local_peak_fit_statistics(
     noise: float,
     kernel_hwhm: float,
     satellites: Sequence[tuple[float, float]],
-) -> tuple[float, float, float, float, float, float]:
+) -> tuple[float, float, float, float, float, float, float]:
     half_width = max(float(fwhm) * 0.5 * float(kernel_hwhm), 0.06)
     position = float(x[index])
     left = int(np.searchsorted(x, position - half_width, side="left"))
@@ -354,7 +357,7 @@ def _local_peak_fit_statistics(
     local_x = x[left:right]
     local_y = signal[left:right]
     if len(local_x) < 5:
-        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     offset = local_x - position
     baseline_design = np.column_stack(
         [np.ones(len(local_x), dtype=float), offset]
@@ -375,7 +378,7 @@ def _local_peak_fit_statistics(
             full_design, local_y, rcond=None
         )
     except np.linalg.LinAlgError:
-        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     amplitude = max(float(full_coefficients[-1]), 0.0)
     baseline_residual = local_y - baseline_design @ baseline_coefficients
     fitted_baseline = baseline_design @ full_coefficients[:2]
@@ -395,6 +398,7 @@ def _local_peak_fit_statistics(
         1.0e-12,
     )
     area_snr = area_signed / area_noise
+    curvature = _normalized_curvature(offset, detrended, fwhm, noise)
     return (
         max(delta, 0.0),
         amplitude,
@@ -402,6 +406,44 @@ def _local_peak_fit_statistics(
         max(area_positive, 0.0),
         area_signed,
         area_snr,
+        curvature,
+    )
+
+
+def _normalized_curvature(
+    offset: np.ndarray,
+    detrended: np.ndarray,
+    fwhm: float,
+    noise: float,
+) -> float:
+    width = max(float(fwhm), 1.0e-9)
+    scaled = np.asarray(offset, dtype=float) / width
+    central = np.abs(scaled) <= 0.8
+    if np.count_nonzero(central) < 5:
+        return 0.0
+    try:
+        quadratic = np.polyfit(scaled[central], detrended[central], 2)
+    except (TypeError, ValueError, np.linalg.LinAlgError):
+        return 0.0
+    return max(-2.0 * float(quadratic[0]) / max(float(noise), 1.0e-12), 0.0)
+
+
+def is_broad_rescue_candidate(hypothesis: object) -> bool:
+    """Return whether independent width, shape and area evidence supports rescue."""
+
+    def value(name: str) -> float:
+        try:
+            result = float(getattr(hypothesis, name))
+        except (AttributeError, TypeError, ValueError):
+            return 0.0
+        return result if math.isfinite(result) else 0.0
+
+    return bool(
+        value("broadening_scale") >= 2.5
+        and value("profile_match") >= 0.62
+        and value("local_snr") >= 2.5
+        and value("area_snr") >= 6.0
+        and value("curvature") >= 2.0
     )
 
 
@@ -494,5 +536,6 @@ def _local_noise(
 
 __all__ = [
     "ProfileMatchedPeakHypothesis",
+    "is_broad_rescue_candidate",
     "profile_matched_peak_hypotheses",
 ]
