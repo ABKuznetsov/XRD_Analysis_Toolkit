@@ -5,6 +5,7 @@ from unittest.mock import patch
 from types import SimpleNamespace
 
 from benchmarks.match.gain_retrieval import (
+    GainRetrievalConfig,
     JointGainCandidatePool,
     adaptive_gain_shortlist,
     dual_score_gain_shortlist,
@@ -18,6 +19,12 @@ from benchmarks.match.generate_profiles import ReferenceLine
 
 
 class GainRetrievalTests(unittest.TestCase):
+    def test_benchmark_uses_shared_multichannel_pool_contract(self):
+        from benchmarks.match import gain_retrieval
+
+        self.assertIs(gain_retrieval.GainRetrievalConfig, GainRetrievalConfig)
+        self.assertTrue(callable(gain_retrieval.build_gain_retrieval_pool))
+
     def test_joint_pool_does_not_compare_unselected_database_tail_for_diagnostics(self):
         references = {
             "accepted": self._lines(10, 20, 30, 40),

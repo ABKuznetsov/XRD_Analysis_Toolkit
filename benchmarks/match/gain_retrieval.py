@@ -15,6 +15,11 @@ from xrd_finder.services.geometric_fingerprint import (
     peak_geometric_hashes,
     rank_fingerprint_candidates,
 )
+from xrd_finder.services.gain_retrieval_union import (
+    GainRetrievalConfig,
+    GainRetrievalPool,
+    build_gain_retrieval_pool,
+)
 from xrd_finder.services.phase_pattern_equivalence import phase_patterns_equivalent
 
 
@@ -596,6 +601,8 @@ def _score_value(value: object) -> float:
 
 
 __all__ = [
+    "GainRetrievalConfig",
+    "GainRetrievalPool",
     "JointGainCandidatePool",
     "adaptive_gain_shortlist",
     "dominant_line_gain_shortlist",
@@ -603,5 +610,6 @@ __all__ = [
     "fused_line_gain_shortlist",
     "hybrid_gain_shortlist",
     "joint_gain_candidate_pool",
+    "build_gain_retrieval_pool",
     "rare_line_gain_shortlist",
 ]
