@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from xrd_finder.services.gain_shortlist import (
     rare_line_candidate_scores,
+    residual_peak_is_explained,
     significant_residual_records,
 )
 from xrd_finder.services.residual_geometry import (
@@ -166,6 +167,64 @@ def geometry_channel(
     ranked = rank_channel_scores(
         "geometry", scores, evidence_counts, limit=limit
     )
+    return _with_total_elapsed(ranked, started)
+
+
+def overlap_deficit_channel(
+    candidate_peaks: Mapping[str, Iterable[object]],
+    overlap_records: Iterable[object],
+    *,
+    limit: int,
+    tolerance: float = 0.45,
+) -> RetrievalChannelRun:
+    """Rank candidates only from noise-significant accepted-profile deficits."""
+
+    started = time.perf_counter()
+    deficits: list[object] = []
+    for record in overlap_records:
+        has_explicit_model = any(
+            hasattr(record, attribute)
+            for attribute in (
+                "observed_height",
+                "calculated_height",
+                "residual_height",
+                "noise_floor",
+            )
+        )
+        if has_explicit_model:
+            try:
+                observed = float(
+                    getattr(record, "observed_height", getattr(record, "height", 0.0))
+                    or 0.0
+                )
+                calculated = float(getattr(record, "calculated_height", 0.0) or 0.0)
+                residual = float(
+                    getattr(record, "residual_height", getattr(record, "height", 0.0))
+                    or 0.0
+                )
+                noise = float(getattr(record, "noise_floor", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if residual_peak_is_explained(
+                observed_height=observed,
+                calculated_height=calculated,
+                residual_height=residual,
+                noise_floor=noise,
+                overlaps_accepted_phase=bool(
+                    getattr(record, "overlaps_accepted_phase", True)
+                ),
+            ):
+                continue
+        deficits.append(record)
+    strong = strong_residual_channel(
+        candidate_peaks,
+        deficits,
+        limit=max(len(candidate_peaks), int(limit)),
+        tolerance=tolerance,
+    )
+    scores = {hit.phase_id: hit.score for hit in strong.hits}
+    counts = {hit.phase_id: hit.evidence_count for hit in strong.hits}
+    ranked = rank_channel_scores("overlap", scores, counts, limit=limit)
     return _with_total_elapsed(ranked, started)
 
 
@@ -332,6 +391,7 @@ __all__ = [
     "RetrievalChannelRun",
     "RetrievalHit",
     "geometry_channel",
+    "overlap_deficit_channel",
     "rare_line_channel",
     "rank_channel_scores",
     "strong_residual_channel",

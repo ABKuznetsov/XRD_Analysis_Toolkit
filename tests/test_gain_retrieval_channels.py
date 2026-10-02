@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from xrd_finder.services.gain_retrieval_channels import (
     RETRIEVAL_CHANNELS,
     geometry_channel,
+    overlap_deficit_channel,
     rare_line_channel,
     rank_channel_scores,
     strong_residual_channel,
@@ -180,6 +181,77 @@ class GeometryRetrievalChannelTests(unittest.TestCase):
             geometry_channel(index, two_lines[:1], limit=10).hits,
             (),
         )
+
+
+class OverlapDeficitChannelTests(unittest.TestCase):
+    @staticmethod
+    def _line(position):
+        return SimpleNamespace(two_theta=position, intensity=100.0)
+
+    def test_only_noise_significant_intensity_deficit_is_evidence(self):
+        candidates = {
+            "covered": [self._line(20.0)],
+            "below-noise": [self._line(30.0)],
+            "deficit": [self._line(40.0)],
+            "broad-deficit": [self._line(50.0)],
+        }
+        overlap = [
+            SimpleNamespace(
+                two_theta=20.0,
+                area=8.0,
+                height=8.0,
+                observed_height=100.0,
+                calculated_height=94.0,
+                residual_height=6.0,
+                noise_floor=3.0,
+                overlaps_accepted_phase=True,
+                fwhm=0.16,
+            ),
+            SimpleNamespace(
+                two_theta=30.0,
+                area=4.0,
+                height=4.0,
+                observed_height=100.0,
+                calculated_height=96.0,
+                residual_height=4.0,
+                noise_floor=5.0,
+                overlaps_accepted_phase=True,
+                fwhm=0.16,
+            ),
+            SimpleNamespace(
+                two_theta=40.0,
+                area=45.0,
+                height=40.0,
+                observed_height=100.0,
+                calculated_height=55.0,
+                residual_height=45.0,
+                noise_floor=4.0,
+                overlaps_accepted_phase=True,
+                fwhm=0.16,
+            ),
+            SimpleNamespace(
+                two_theta=50.0,
+                area=45.0,
+                height=30.0,
+                observed_height=90.0,
+                calculated_height=45.0,
+                residual_height=45.0,
+                noise_floor=4.0,
+                overlaps_accepted_phase=True,
+                fwhm=0.90,
+                fit_quality=0.45,
+            ),
+        ]
+
+        run = overlap_deficit_channel(candidates, overlap, limit=10)
+
+        ids = [hit.phase_id for hit in run.hits]
+        self.assertIn("deficit", ids)
+        self.assertIn("broad-deficit", ids)
+        self.assertNotIn("covered", ids)
+        self.assertNotIn("below-noise", ids)
+        scores = {hit.phase_id: hit.score for hit in run.hits}
+        self.assertGreater(scores["deficit"], scores["broad-deficit"])
 
 
 if __name__ == "__main__":
