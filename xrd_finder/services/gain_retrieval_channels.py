@@ -9,6 +9,10 @@ from xrd_finder.services.gain_shortlist import (
     rare_line_candidate_scores,
     significant_residual_records,
 )
+from xrd_finder.services.residual_geometry import (
+    ResidualGeometryIndex,
+    residual_geometry_scores,
+)
 
 
 RETRIEVAL_CHANNELS = ("strong", "rare", "geometry", "overlap")
@@ -146,6 +150,22 @@ def rare_line_channel(
         str(key): int(value) for key, value in evidence_counts.items()
     }
     ranked = rank_channel_scores("rare", scores, counts, limit=limit)
+    return _with_total_elapsed(ranked, started)
+
+
+def geometry_channel(
+    index: ResidualGeometryIndex,
+    residual_records: Iterable[object],
+    *,
+    limit: int,
+) -> RetrievalChannelRun:
+    """Rank candidates by common-zero-invariant pair/triplet evidence."""
+
+    started = time.perf_counter()
+    scores, evidence_counts = residual_geometry_scores(index, residual_records)
+    ranked = rank_channel_scores(
+        "geometry", scores, evidence_counts, limit=limit
+    )
     return _with_total_elapsed(ranked, started)
 
 
@@ -291,6 +311,7 @@ __all__ = [
     "RETRIEVAL_CHANNELS",
     "RetrievalChannelRun",
     "RetrievalHit",
+    "geometry_channel",
     "rare_line_channel",
     "rank_channel_scores",
     "strong_residual_channel",

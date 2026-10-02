@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from xrd_finder.services.gain_retrieval_channels import (
     RETRIEVAL_CHANNELS,
+    geometry_channel,
     rare_line_channel,
     rank_channel_scores,
     strong_residual_channel,
@@ -149,6 +150,34 @@ class StrongAndRareRetrievalChannelTests(unittest.TestCase):
         )
         self.assertEqual(
             rare_line_channel(candidates, noise, limit=10).hits,
+            (),
+        )
+
+
+class GeometryRetrievalChannelTests(unittest.TestCase):
+    def test_geometry_channel_wraps_scores_and_one_line_stays_empty(self):
+        from xrd_finder.services.residual_geometry import (
+            build_residual_geometry_index,
+        )
+
+        lines = {
+            "phase": [
+                SimpleNamespace(two_theta=20.0, intensity=100.0),
+                SimpleNamespace(two_theta=25.0, intensity=80.0),
+            ]
+        }
+        index = build_residual_geometry_index(lines)
+        two_lines = [
+            SimpleNamespace(two_theta=20.3, area=100.0, height=80.0),
+            SimpleNamespace(two_theta=25.3, area=80.0, height=70.0),
+        ]
+
+        run = geometry_channel(index, two_lines, limit=10)
+
+        self.assertEqual(run.channel, "geometry")
+        self.assertEqual(run.hits[0].phase_id, "phase")
+        self.assertEqual(
+            geometry_channel(index, two_lines[:1], limit=10).hits,
             (),
         )
 
