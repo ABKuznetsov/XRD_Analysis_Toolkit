@@ -99,6 +99,9 @@ class GainScenarioResult:
     search_seconds: float = 0.0
     evaluated_combinations: int = 0
     best_combination: tuple[str, ...] = ()
+    ranked_candidate_ids: tuple[str, ...] = ()
+    ranked_families: tuple[str, ...] = ()
+    suppressed_candidate_count: int = 0
 
 
 class IndistinguishableGainScenario(ValueError):
@@ -646,6 +649,8 @@ def evaluate_gain_scenario(
         gain_engine="greedy",
         retrieval_seconds=float(retrieval_seconds),
         profile_seconds=float(profile_seconds),
+        ranked_candidate_ids=tuple(item.key for item in ranked),
+        ranked_families=tuple(ranked_families),
     )
 
 
@@ -883,6 +888,11 @@ def _evaluate_joint_gain_scenario(
         search_seconds=float(evaluation.search_seconds),
         evaluated_combinations=int(evaluation.evaluated_combinations),
         best_combination=tuple(best.card_keys),
+        ranked_candidate_ids=tuple(evaluation.ranked_phase_ids),
+        ranked_families=tuple(evaluation.ranked_family_keys),
+        suppressed_candidate_count=sum(
+            not item.reportable for item in evaluation.search_result.candidate_gains
+        ),
     )
 
 
