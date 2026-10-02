@@ -15,6 +15,20 @@ from xrd_finder.ui.peak_matching import observed_peak_records
 
 
 @dataclass(frozen=True, slots=True)
+class MatchedRescueFeature:
+    case_index: int
+    truth_position: float
+    detected_position: float
+    prominence: float
+    local_snr: float
+    area_snr: float
+    width_ratio: float
+    profile_match: float
+    curvature: float
+    centroid_offset: float
+
+
+@dataclass(frozen=True, slots=True)
 class PeakDetectionBenchmarkResult:
     cases: int
     true_peaks: int
@@ -28,6 +42,7 @@ class PeakDetectionBenchmarkResult:
     matched_overlap_recall: float
     hybrid_recall: float
     matched_unique_rescues: int
+    rescue_features: tuple[MatchedRescueFeature, ...]
 
 
 def run_peak_detection_benchmark(
@@ -50,9 +65,10 @@ def run_peak_detection_benchmark(
     overlap_total = 0
     hybrid_recovered = 0
     matched_unique_rescues = 0
+    rescue_features: list[MatchedRescueFeature] = []
     legacy_times: list[float] = []
     matched_times: list[float] = []
-    for _case in range(max(1, int(cases))):
+    for case_index in range(max(1, int(cases))):
         x, y, true_peaks, overlap_truth = _synthetic_two_phase_case(rng)
         started = time.perf_counter()
         legacy = observed_peak_records(
@@ -91,11 +107,28 @@ def run_peak_detection_benchmark(
         legacy_truth_indices = {
             truth_index for truth_index, _detected_index in legacy_matches
         }
-        matched_unique_rescues += sum(
-            1
-            for truth_index, _detected_index in matched_matches
-            if truth_index not in legacy_truth_indices
-        )
+        for truth_index, detected_index in matched_matches:
+            if truth_index in legacy_truth_indices:
+                continue
+            matched_unique_rescues += 1
+            hypothesis = matched[detected_index]
+            curvature, centroid_offset = _rescue_shape_diagnostics(
+                x, y, hypothesis.position, hypothesis.effective_fwhm
+            )
+            rescue_features.append(
+                MatchedRescueFeature(
+                    case_index=case_index,
+                    truth_position=float(true_peaks[truth_index][0]),
+                    detected_position=float(hypothesis.position),
+                    prominence=float(hypothesis.prominence),
+                    local_snr=float(hypothesis.local_snr),
+                    area_snr=float(hypothesis.area_snr),
+                    width_ratio=float(hypothesis.broadening_scale),
+                    profile_match=float(hypothesis.profile_match),
+                    curvature=float(curvature),
+                    centroid_offset=float(centroid_offset),
+                )
+            )
         legacy_overlap_recovered += sum(
             1 for truth_index, _detected_index in legacy_matches if truth_index in overlap_truth
         )
@@ -116,7 +149,47 @@ def run_peak_detection_benchmark(
         matched_overlap_recall=matched_overlap_recovered / max(overlap_total, 1),
         hybrid_recall=hybrid_recovered / max(true_total, 1),
         matched_unique_rescues=matched_unique_rescues,
+        rescue_features=tuple(rescue_features),
     )
+
+
+def _rescue_shape_diagnostics(
+    x: np.ndarray,
+    residual: np.ndarray,
+    position: float,
+    fwhm: float,
+) -> tuple[float, float]:
+    width = max(float(fwhm), 0.04)
+    left = int(np.searchsorted(x, position - 2.0 * width, side="left"))
+    right = int(np.searchsorted(x, position + 2.0 * width, side="right"))
+    local_x = np.asarray(x[left:right], dtype=float)
+    local_y = np.asarray(residual[left:right], dtype=float)
+    if len(local_x) < 7:
+        return 0.0, 0.0
+    offset = local_x - float(position)
+    scaled = offset / width
+    edge = np.abs(scaled) >= 1.1
+    if np.count_nonzero(edge) >= 3:
+        baseline_coefficients = np.polyfit(offset[edge], local_y[edge], 1)
+        baseline = np.polyval(baseline_coefficients, offset)
+    else:
+        baseline = np.full_like(local_y, float(np.nanmedian(local_y)))
+    detrended = local_y - baseline
+    central = np.abs(scaled) <= 0.8
+    try:
+        quadratic = np.polyfit(scaled[central], detrended[central], 2)
+        noise = max(float(np.median(np.abs(np.diff(local_y)))) / 0.954, 1.0e-12)
+        curvature = max(-2.0 * float(quadratic[0]) / noise, 0.0)
+    except (TypeError, ValueError, np.linalg.LinAlgError):
+        curvature = 0.0
+    positive = np.maximum(detrended, 0.0)
+    total = float(np.sum(positive))
+    centroid = (
+        float(np.dot(local_x, positive) / total)
+        if total > 0.0
+        else float(position)
+    )
+    return curvature, centroid - float(position)
 
 
 def _synthetic_two_phase_case(
@@ -219,4 +292,8 @@ if __name__ == "__main__":
     main()
 
 
-__all__ = ["PeakDetectionBenchmarkResult", "run_peak_detection_benchmark"]
+__all__ = [
+    "MatchedRescueFeature",
+    "PeakDetectionBenchmarkResult",
+    "run_peak_detection_benchmark",
+]

@@ -23,6 +23,18 @@ class PeakDetectionBenchmarkTests(unittest.TestCase):
             self.assertLessEqual(value, 1.0)
         self.assertGreaterEqual(result.legacy_median_seconds, 0.0)
         self.assertGreaterEqual(result.matched_median_seconds, 0.0)
+        self.assertEqual(len(result.rescue_features), result.matched_unique_rescues)
+        for rescue in result.rescue_features:
+            for value in (
+                rescue.prominence,
+                rescue.local_snr,
+                rescue.area_snr,
+                rescue.width_ratio,
+                rescue.profile_match,
+                rescue.curvature,
+                rescue.centroid_offset,
+            ):
+                self.assertTrue(math.isfinite(value))
 
 
 if __name__ == "__main__":

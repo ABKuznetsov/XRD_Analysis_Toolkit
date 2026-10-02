@@ -34,10 +34,47 @@ class ProfileMatchedPeakDetectorTests(unittest.TestCase):
         self.assertGreaterEqual(broad.broadening_scale, 2.0)
         self.assertGreater(narrow.profile_match, 0.0)
         self.assertGreater(broad.local_snr, 3.0)
+        self.assertGreater(narrow.prominence, 0.0)
+        self.assertGreater(narrow.area_positive, 0.0)
+        self.assertGreater(narrow.area_signed, 0.0)
+        self.assertGreaterEqual(narrow.area_positive, narrow.area_signed)
+        self.assertGreater(narrow.area_snr, 3.0)
         self.assertGreaterEqual(narrow.width_persistence, 2)
         self.assertGreaterEqual(broad.width_persistence, 2)
         self.assertGreater(narrow.delta_chi2, 0.0)
         self.assertIn(narrow.evidence_class, {"strong", "weak"})
+
+    def test_peak_feature_vector_is_finite_and_compact(self):
+        rng = np.random.default_rng(101)
+        x = np.linspace(18.0, 24.0, 2401)
+        y = rng.normal(0.0, 0.25, len(x))
+        y += 5.5 * pseudo_voigt_unit_height(x, 21.0, 0.20, 0.35)
+
+        peak = min(
+            profile_matched_peak_hypotheses(
+                x,
+                y,
+                fwhm_at=lambda _position: 0.10,
+                broadening_scales=(1.0, 1.5, 2.0, 2.5),
+                sigma_threshold=3.0,
+            ),
+            key=lambda item: abs(item.position - 21.0),
+        )
+
+        feature_vector = (
+            peak.position,
+            peak.amplitude,
+            peak.effective_fwhm,
+            peak.broadening_scale,
+            peak.prominence,
+            peak.area_positive,
+            peak.area_signed,
+            peak.area_snr,
+            peak.profile_match,
+            float(peak.width_persistence),
+        )
+        self.assertTrue(all(np.isfinite(value) for value in feature_vector))
+        self.assertGreater(peak.confidence, 0.0)
 
     def test_uses_angle_dependent_instrument_width(self):
         rng = np.random.default_rng(19)

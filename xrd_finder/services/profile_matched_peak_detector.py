@@ -17,6 +17,10 @@ class ProfileMatchedPeakHypothesis:
     position: float
     amplitude: float
     area: float
+    prominence: float
+    area_positive: float
+    area_signed: float
+    area_snr: float
     broadening_scale: float
     effective_fwhm: float
     profile_match: float
@@ -205,7 +209,14 @@ def profile_matched_peak_hypotheses(
                 threshold * 0.55, quality_at_peak * 0.22
             ):
                 width_persistence += 1
-        delta_chi2, fitted_amplitude = _local_delta_chi2(
+        (
+            delta_chi2,
+            fitted_amplitude,
+            prominence,
+            area_positive,
+            area_signed,
+            area_snr,
+        ) = _local_peak_fit_statistics(
             x_values,
             signal,
             index=int(index),
@@ -267,7 +278,11 @@ def profile_matched_peak_hypotheses(
             ProfileMatchedPeakHypothesis(
                 position=float(x_values[index]),
                 amplitude=amplitude,
-                area=max(area, amplitude * step),
+                area=max(area, area_positive, amplitude * step),
+                prominence=max(float(prominence), 0.0),
+                area_positive=max(float(area_positive), 0.0),
+                area_signed=float(area_signed),
+                area_snr=float(area_snr),
                 broadening_scale=float(scales[scale_index]),
                 effective_fwhm=fwhm,
                 profile_match=profile_match,
@@ -321,7 +336,7 @@ def _deduplicate_hypotheses(
     return selected
 
 
-def _local_delta_chi2(
+def _local_peak_fit_statistics(
     x: np.ndarray,
     signal: np.ndarray,
     *,
@@ -331,7 +346,7 @@ def _local_delta_chi2(
     noise: float,
     kernel_hwhm: float,
     satellites: Sequence[tuple[float, float]],
-) -> tuple[float, float]:
+) -> tuple[float, float, float, float, float, float]:
     half_width = max(float(fwhm) * 0.5 * float(kernel_hwhm), 0.06)
     position = float(x[index])
     left = int(np.searchsorted(x, position - half_width, side="left"))
@@ -339,7 +354,7 @@ def _local_delta_chi2(
     local_x = x[left:right]
     local_y = signal[left:right]
     if len(local_x) < 5:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     offset = local_x - position
     baseline_design = np.column_stack(
         [np.ones(len(local_x), dtype=float), offset]
@@ -360,16 +375,68 @@ def _local_delta_chi2(
             full_design, local_y, rcond=None
         )
     except np.linalg.LinAlgError:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     amplitude = max(float(full_coefficients[-1]), 0.0)
     baseline_residual = local_y - baseline_design @ baseline_coefficients
-    full_model = baseline_design @ full_coefficients[:2] + amplitude * peak
+    fitted_baseline = baseline_design @ full_coefficients[:2]
+    full_model = fitted_baseline + amplitude * peak
     full_residual = local_y - full_model
     delta = float(
         np.dot(baseline_residual, baseline_residual)
         - np.dot(full_residual, full_residual)
     ) / max(float(noise) ** 2, 1.0e-24)
-    return max(delta, 0.0), amplitude
+    detrended = local_y - fitted_baseline
+    area_signed = float(np.trapezoid(detrended, local_x))
+    area_positive = float(np.trapezoid(np.maximum(detrended, 0.0), local_x))
+    prominence = _local_prominence(local_x, detrended, position, fwhm)
+    integration_weights = _trapezoid_weights(local_x)
+    area_noise = max(
+        float(noise) * math.sqrt(float(np.dot(integration_weights, integration_weights))),
+        1.0e-12,
+    )
+    area_snr = area_signed / area_noise
+    return (
+        max(delta, 0.0),
+        amplitude,
+        max(prominence, 0.0),
+        max(area_positive, 0.0),
+        area_signed,
+        area_snr,
+    )
+
+
+def _local_prominence(
+    x: np.ndarray,
+    detrended: np.ndarray,
+    position: float,
+    fwhm: float,
+) -> float:
+    if len(x) < 3:
+        return 0.0
+    central = np.flatnonzero(np.abs(x - position) <= max(float(fwhm) * 0.65, 1.0e-6))
+    if not len(central):
+        peak_index = int(np.argmin(np.abs(x - position)))
+    else:
+        peak_index = int(central[int(np.argmax(detrended[central]))])
+    left = detrended[: peak_index + 1]
+    right = detrended[peak_index:]
+    if not len(left) or not len(right):
+        return 0.0
+    contour = max(float(np.nanmin(left)), float(np.nanmin(right)))
+    return max(float(detrended[peak_index]) - contour, 0.0)
+
+
+def _trapezoid_weights(x: np.ndarray) -> np.ndarray:
+    values = np.asarray(x, dtype=float)
+    if len(values) < 2:
+        return np.zeros(len(values), dtype=float)
+    differences = np.diff(values)
+    weights = np.empty(len(values), dtype=float)
+    weights[0] = differences[0] * 0.5
+    weights[-1] = differences[-1] * 0.5
+    if len(values) > 2:
+        weights[1:-1] = (differences[:-1] + differences[1:]) * 0.5
+    return weights
 
 
 def _safe_fwhm(

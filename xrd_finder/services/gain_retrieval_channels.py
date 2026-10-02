@@ -231,7 +231,17 @@ def overlap_deficit_channel(
 def _weighted_residual_records(
     records: Iterable[object],
 ) -> tuple[tuple[float, float], ...]:
-    parsed: list[tuple[float, float, float | None, float, float | None]] = []
+    parsed: list[
+        tuple[
+            float,
+            float,
+            float | None,
+            float,
+            float | None,
+            float | None,
+            str,
+        ]
+    ] = []
     valid_widths: list[float] = []
     for record in records:
         try:
@@ -266,17 +276,34 @@ def _weighted_residual_records(
                 snr = None
         except (TypeError, ValueError):
             snr = None
-        parsed.append((position, strength, width, fit_quality, snr))
+        try:
+            area_snr = float(getattr(record, "area_snr", math.nan))
+            if not math.isfinite(area_snr):
+                area_snr = None
+        except (TypeError, ValueError):
+            area_snr = None
+        evidence_class = str(getattr(record, "evidence_class", "") or "")
+        parsed.append(
+            (
+                position,
+                strength,
+                width,
+                fit_quality,
+                snr,
+                area_snr,
+                evidence_class,
+            )
+        )
     if not parsed:
         return ()
-    maximum = max(strength for _position, strength, _width, _fit, _snr in parsed)
+    maximum = max(strength for _position, strength, *_rest in parsed)
     typical_width = (
         sorted(valid_widths)[max(0, (len(valid_widths) - 1) // 2)]
         if valid_widths
         else None
     )
     weighted: list[tuple[float, float]] = []
-    for position, strength, width, fit_quality, snr in parsed:
+    for position, strength, width, fit_quality, snr, area_snr, evidence_class in parsed:
         strength_weight = strength / max(maximum, 1.0e-12)
         if width is None or typical_width is None:
             width_reliability = 0.85
@@ -289,23 +316,16 @@ def _weighted_residual_records(
             if fit_quality <= 0.0
             else 0.55 + 0.45 * min(max(fit_quality, 0.0), 1.0)
         )
+        signal_scores = [
+            min(1.0, max(value, 0.0) / 8.0)
+            for value in (snr, area_snr)
+            if value is not None
+        ]
         snr_reliability = (
-            0.80 if snr is None else min(1.0, max(snr, 0.0) / 8.0)
+            sum(signal_scores) / len(signal_scores) if signal_scores else 0.80
         )
         # Matched-profile hypotheses may stay available to rescue channels
         # while contributing less to the primary strong-line channel.
-        source_record = next(
-            (
-                record
-                for record in records
-                if abs(float(getattr(record, "two_theta", math.inf)) - position)
-                <= 1.0e-6
-            ),
-            None,
-        )
-        evidence_class = str(
-            getattr(source_record, "evidence_class", "") or ""
-        )
         class_reliability = {
             "strong": 1.0,
             "weak": 0.60,
