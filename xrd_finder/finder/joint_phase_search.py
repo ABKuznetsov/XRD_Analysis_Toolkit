@@ -7,6 +7,8 @@ from typing import Collection, Sequence
 import numpy as np
 from scipy.optimize import nnls
 
+from xrd_finder.finder.gain_evidence import phase_signal_to_noise
+
 
 def _readonly_vector(values: np.ndarray | Sequence[float]) -> np.ndarray:
     array = np.array(values, dtype=float, copy=True)
@@ -113,25 +115,46 @@ def search_phase_combinations(
     config: JointPhaseSearchConfig | None = None,
 ) -> JointPhaseSearchResult:
     started = perf_counter()
+    search_config = config or JointPhaseSearchConfig()
     x_values, target_values, weight_values, normalized = _validate_inputs(
         x=x,
         target=target,
         weights=weights,
         candidates=candidates,
         required_keys=required_keys,
-        config=config or JointPhaseSearchConfig(),
+        config=search_config,
     )
+    required_key_set = set(str(key) for key in required_keys)
     required = tuple(
-        candidate for candidate in normalized if candidate.key in set(required_keys)
+        sorted(
+            (
+                candidate
+                for candidate in normalized
+                if candidate.key in required_key_set
+            ),
+            key=lambda candidate: (candidate.family_key, candidate.key),
+        )
     )
     baseline = _fit_combination(
         target=target_values,
         weights=weight_values,
         candidates=required,
         required_count=len(required),
-        config=config or JointPhaseSearchConfig(),
+        config=search_config,
     )
-    if not np.any(target_values) or len(required) == len(normalized):
+    accepted_families = {candidate.family_key for candidate in required}
+    optional = tuple(
+        sorted(
+            (
+                candidate
+                for candidate in normalized
+                if candidate.key not in required_key_set
+                and candidate.family_key not in accepted_families
+            ),
+            key=lambda candidate: (candidate.family_key, candidate.key),
+        )
+    )
+    if not np.any(target_values) or not optional or search_config.max_added_phases == 0:
         return JointPhaseSearchResult(
             baseline=baseline,
             combinations=(baseline,),
@@ -139,11 +162,126 @@ def search_phase_combinations(
             evaluated_combinations=1,
             elapsed_seconds=float(perf_counter() - started),
         )
+
+    retained_states: list[
+        tuple[JointPhaseCombination, tuple[JointPhaseCandidate, ...]]
+    ] = [(baseline, required)]
+    retained_combinations: list[JointPhaseCombination] = [baseline]
+    best_edges: dict[str, JointPhaseCandidateGain] = {}
+    evaluated_combinations = 1
+    baseline_denominator = max(abs(baseline.score), np.finfo(float).eps)
+
+    for _depth in range(search_config.max_added_phases):
+        next_states: dict[
+            tuple[str, ...],
+            tuple[JointPhaseCombination, tuple[JointPhaseCandidate, ...]],
+        ] = {}
+        for parent, parent_candidates in retained_states:
+            used_families = {candidate.family_key for candidate in parent_candidates}
+            current_optional = parent_candidates[len(required):]
+            for candidate in optional:
+                if candidate.family_key in used_families:
+                    continue
+                child_optional = tuple(
+                    sorted(
+                        (*current_optional, candidate),
+                        key=lambda item: (item.family_key, item.key),
+                    )
+                )
+                child_candidates = (*required, *child_optional)
+                child = _fit_combination(
+                    target=target_values,
+                    weights=weight_values,
+                    candidates=child_candidates,
+                    required_count=len(required),
+                    config=search_config,
+                )
+                evaluated_combinations += 1
+                candidate_index = child.card_keys.index(candidate.key)
+                candidate_curve = child.scales[candidate_index] * candidate.profile
+                candidate_snr = _phase_support_snr(
+                    x=x_values,
+                    residual_after=child.residual,
+                    candidate=candidate,
+                    candidate_curve=candidate_curve,
+                    fwhm=_profile_fwhm(x_values, candidate.profile),
+                )
+                phase_snrs = list(child.phase_snrs)
+                if len(phase_snrs) != len(child_candidates):
+                    phase_snrs = [0.0] * len(child_candidates)
+                phase_snrs[candidate_index] = candidate_snr
+                child = JointPhaseCombination(
+                    family_keys=child.family_keys,
+                    card_keys=child.card_keys,
+                    scales=child.scales,
+                    score=child.score,
+                    phase_snrs=tuple(phase_snrs),
+                    model=child.model,
+                    residual=child.residual,
+                )
+
+                improvement = parent.score - child.score
+                relative_improvement = improvement / max(
+                    abs(parent.score),
+                    np.finfo(float).eps,
+                )
+                gain = max(100.0 * improvement / baseline_denominator, 0.0)
+                if candidate_snr < search_config.minimum_phase_snr:
+                    rejection_reason = "phase_snr_below_threshold"
+                elif relative_improvement < search_config.minimum_relative_improvement:
+                    rejection_reason = "minimum_improvement"
+                elif gain < search_config.minimum_reported_gain:
+                    rejection_reason = "gain_below_reporting_threshold"
+                else:
+                    rejection_reason = ""
+
+                edge = JointPhaseCandidateGain(
+                    key=candidate.key,
+                    family_key=candidate.family_key,
+                    gain=float(gain),
+                    phase_snr=float(candidate_snr),
+                    supporting_family_keys=tuple(sorted(child.family_keys)),
+                    reportable=not rejection_reason,
+                    rejection_reason=rejection_reason,
+                )
+                previous = best_edges.get(candidate.family_key)
+                if previous is None or _gain_sort_key(edge) < _gain_sort_key(previous):
+                    best_edges[candidate.family_key] = edge
+
+                if rejection_reason in {
+                    "phase_snr_below_threshold",
+                    "minimum_improvement",
+                }:
+                    continue
+                state_key = tuple(sorted(child.family_keys))
+                existing = next_states.get(state_key)
+                state = (child, tuple(child_candidates))
+                if existing is None or _combination_sort_key(child) < _combination_sort_key(existing[0]):
+                    next_states[state_key] = state
+
+        retained_states = sorted(
+            next_states.values(),
+            key=lambda state: _combination_sort_key(state[0]),
+        )[: search_config.beam_width]
+        if not retained_states:
+            break
+        retained_combinations.extend(state[0] for state in retained_states)
+
+    unique_combinations: dict[tuple[str, ...], JointPhaseCombination] = {}
+    for combination in retained_combinations:
+        key = tuple(sorted(combination.family_keys))
+        current = unique_combinations.get(key)
+        if current is None or _combination_sort_key(combination) < _combination_sort_key(current):
+            unique_combinations[key] = combination
+    combinations = tuple(
+        sorted(unique_combinations.values(), key=_combination_sort_key)
+    )
+    candidate_gains = tuple(sorted(best_edges.values(), key=_gain_sort_key))
     return JointPhaseSearchResult(
         baseline=baseline,
-        combinations=(baseline,),
-        candidate_gains=(),
-        evaluated_combinations=1,
+        combinations=combinations,
+        candidate_gains=candidate_gains,
+        evaluated_combinations=evaluated_combinations,
         elapsed_seconds=float(perf_counter() - started),
     )
 
@@ -197,7 +335,92 @@ def _validate_inputs(
         raise ValueError(f"required candidate keys are missing: {', '.join(missing)}")
     if config.beam_width <= 0 or config.max_added_phases < 0:
         raise ValueError("beam limits must be positive")
+    if (
+        config.derivative_weight < 0.0
+        or config.complexity_penalty < 0.0
+        or config.excess_penalty < 0.0
+        or config.minimum_phase_snr < 0.0
+        or config.minimum_relative_improvement < 0.0
+        or config.minimum_reported_gain < 0.0
+    ):
+        raise ValueError("search thresholds and score weights must be nonnegative")
     return x_values, target_values, weight_values, normalized
+
+
+def _combination_sort_key(
+    combination: JointPhaseCombination,
+) -> tuple[float, tuple[str, ...], tuple[str, ...]]:
+    return (
+        float(combination.score),
+        tuple(sorted(combination.family_keys)),
+        tuple(combination.card_keys),
+    )
+
+
+def _gain_sort_key(
+    gain: JointPhaseCandidateGain,
+) -> tuple[float, str, str]:
+    return (-float(gain.gain), gain.family_key, gain.key)
+
+
+def _profile_fwhm(x: np.ndarray, profile: np.ndarray) -> float:
+    if len(x) < 2 or len(profile) != len(x):
+        return 0.05
+    finite = np.isfinite(x) & np.isfinite(profile)
+    if np.count_nonzero(finite) < 2:
+        return 0.05
+    index = int(np.nanargmax(np.where(finite, profile, -np.inf)))
+    maximum = float(profile[index])
+    spacing = float(np.nanmedian(np.diff(x[finite])))
+    fallback = max(abs(spacing), 0.05)
+    if maximum <= 0.0:
+        return fallback
+    threshold = maximum * 0.5
+    left = index
+    while left > 0 and profile[left - 1] >= threshold:
+        left -= 1
+    right = index
+    while right + 1 < len(profile) and profile[right + 1] >= threshold:
+        right += 1
+    if right == left:
+        return fallback
+    return max(float(abs(x[right] - x[left])), fallback)
+
+
+def _phase_support_snr(
+    *,
+    x: np.ndarray,
+    residual_after: np.ndarray,
+    candidate: JointPhaseCandidate,
+    candidate_curve: np.ndarray,
+    fwhm: float,
+) -> float:
+    base_snr = phase_signal_to_noise(
+        x=x,
+        residual_after=residual_after,
+        candidate_curve=candidate_curve,
+        peak_positions=candidate.peak_positions,
+        peak_amplitudes=candidate.peak_amplitudes,
+        fwhm=fwhm,
+    )
+    if not len(x):
+        return 0.0
+    x_min = float(np.min(x))
+    x_max = float(np.max(x))
+    usable_lines = sum(
+        1
+        for position, amplitude in zip(
+            candidate.peak_positions,
+            candidate.peak_amplitudes,
+            strict=False,
+        )
+        if np.isfinite(position)
+        and np.isfinite(amplitude)
+        and x_min <= float(position) <= x_max
+        and float(amplitude) > 0.0
+    )
+    repeatability = np.sqrt(min(usable_lines, 3) / 3.0)
+    return float(base_snr * repeatability)
 
 
 def _fit_combination(
