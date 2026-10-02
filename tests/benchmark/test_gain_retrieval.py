@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 
 from benchmarks.match.gain_retrieval import (
@@ -17,6 +18,38 @@ from benchmarks.match.generate_profiles import ReferenceLine
 
 
 class GainRetrievalTests(unittest.TestCase):
+    def test_joint_pool_does_not_compare_unselected_database_tail_for_diagnostics(self):
+        references = {
+            "accepted": self._lines(10, 20, 30, 40),
+            "leader": self._lines(12, 24, 36, 48),
+            **{
+                f"tail-{index}": self._lines(50 + index, 80 + index)
+                for index in range(100)
+            },
+        }
+        scores = {key: 0.0 for key in references}
+        scores["leader"] = 100.0
+        from benchmarks.match import gain_retrieval
+
+        original = gain_retrieval.phase_patterns_equivalent
+        with patch(
+            "benchmarks.match.gain_retrieval.phase_patterns_equivalent",
+            wraps=original,
+        ) as equivalent:
+            joint_gain_candidate_pool(
+                references,
+                original_scores=scores,
+                residual_scores=scores,
+                rare_candidate_ids=(),
+                accepted_phase_ids=("accepted",),
+                original_limit=1,
+                residual_limit=1,
+                rare_limit=0,
+                optional_limit=1,
+            )
+
+        self.assertLess(equivalent.call_count, 30)
+
     def test_joint_pool_combines_channels_and_keeps_required_outside_cap(self):
         references = {
             "accepted": self._lines(10.0, 20.0, 31.0, 43.0),

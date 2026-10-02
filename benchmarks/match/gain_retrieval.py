@@ -55,6 +55,68 @@ def joint_gain_candidate_pool(
         sorted({str(key) for key in accepted_phase_ids if str(key) in references})
     )
     equivalence_cache: dict[tuple[str, str], bool] = {}
+    position_cache: dict[str, tuple[float, ...]] = {}
+    hash_cache: dict[str, frozenset[object]] = {}
+
+    def strong_positions(phase_id: str) -> tuple[float, ...]:
+        cached = position_cache.get(phase_id)
+        if cached is not None:
+            return cached
+        usable = [
+            line
+            for line in references[phase_id]
+            if math.isfinite(float(line.two_theta))
+            and math.isfinite(float(line.intensity))
+            and float(line.intensity) > 0.0
+        ]
+        maximum = max((float(line.intensity) for line in usable), default=0.0)
+        positions = tuple(
+            sorted(
+                float(line.two_theta)
+                for line in sorted(
+                    (
+                        line
+                        for line in usable
+                        if float(line.intensity) >= maximum * 0.01
+                    ),
+                    key=lambda line: float(line.intensity),
+                    reverse=True,
+                )[:24]
+            )
+        )
+        position_cache[phase_id] = positions
+        return positions
+
+    def geometric_hashes(phase_id: str) -> frozenset[object]:
+        cached = hash_cache.get(phase_id)
+        if cached is None:
+            cached = frozenset(peak_geometric_hashes(references[phase_id], max_peaks=14))
+            hash_cache[phase_id] = cached
+        return cached
+
+    def may_be_equivalent(first: str, second: str) -> bool:
+        first_positions = strong_positions(first)
+        second_positions = strong_positions(second)
+        matched_first: set[int] = set()
+        matched_second: set[int] = set()
+        possible = sorted(
+            (
+                abs(first_value - second_value),
+                first_index,
+                second_index,
+            )
+            for first_index, first_value in enumerate(first_positions)
+            for second_index, second_value in enumerate(second_positions)
+            if abs(first_value - second_value) <= 0.28
+        )
+        for _delta, first_index, second_index in possible:
+            if first_index in matched_first or second_index in matched_second:
+                continue
+            matched_first.add(first_index)
+            matched_second.add(second_index)
+            if len(matched_first) >= 3:
+                return True
+        return len(geometric_hashes(first).intersection(geometric_hashes(second))) >= 48
 
     def equivalent(first: str, second: str) -> bool:
         if first == second:
@@ -63,6 +125,9 @@ def joint_gain_candidate_pool(
         cached = equivalence_cache.get(pair)
         if cached is not None:
             return cached
+        if not may_be_equivalent(first, second):
+            equivalence_cache[pair] = False
+            return False
         value = phase_patterns_equivalent(
             references[first],
             references[second],
@@ -175,12 +240,22 @@ def joint_gain_candidate_pool(
         )[: max(0, int(optional_limit))]
     )
 
-    # Assign every known card to a selected/required pattern family when it is
-    # equivalent, so diagnostics can identify collapsed cards by ID.
+    # Diagnostics only need cards that participated in a retrieval channel,
+    # the required cards, and the explicit benchmark target. Mapping the full
+    # database here makes one interactive query perform O(database * pool)
+    # expensive fingerprint comparisons without affecting beam search.
     representatives = tuple(
         sorted({*accepted, *cluster_representatives.values()})
     )
-    for phase_id in known_ids:
+    diagnostic_ids = {
+        *cluster_ids,
+        *original_order[: max(0, int(original_limit))],
+        *residual_order[: max(0, int(residual_limit))],
+        *rare_order[: max(0, int(rare_limit))],
+    }
+    if target_phase_id is not None and target_phase_id in references:
+        diagnostic_ids.add(target_phase_id)
+    for phase_id in sorted(diagnostic_ids):
         if phase_id in family_by_id:
             continue
         matched = next(

@@ -57,6 +57,37 @@ The Gain CSV and Markdown summary report retrieval, candidate-profile constructi
 
 ## Optimization conclusions
 
+### Residual-window joint Gain prototype (2026-10-02)
+
+The current joint prototype uses one operator-facing strategy: fit the accepted
+phases, detect positive maxima on the remaining profile, build a common set of
+local windows around those maxima, and compare candidate phase combinations in
+those same windows. The windows are selected only by the residual; candidate
+cards do not choose their own evaluation regions. The complete-profile path is
+retained only as a benchmark comparator and is not proposed as a second UI
+mode.
+
+A balanced 24-case validation/test smoke set (eight mixtures each with two,
+three, and four phases) gave the following result against the previous greedy
+Gain implementation:
+
+| Engine / profile candidates | Top-1 | Top-5 | Top-10 | Pool recall | Conditional Top-5 | Median | P95 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Greedy | 25.0% | 37.5% | 50.0% | 58.3% | 64.3% | 1.45 s | 1.52 s |
+| Joint residual windows / 12 | 33.3% | 41.7% | 41.7% | 45.8% | 90.9% | 1.85 s | 2.34 s |
+| Joint residual windows / 24 | **37.5%** | **54.2%** | **54.2%** | **62.5%** | **86.7%** | 2.01 s | 2.54 s |
+
+Twelve profiles save only about 0.16 s while dropping too many correct phases
+before joint scoring. Twenty-four profiles are therefore the current benchmark
+choice. Once the correct powder-pattern family reaches joint scoring, its
+conditional Top-1/Top-5/Top-10 rates are 60.0%/86.7%/86.7%; retrieval remains
+the main limitation. The best internal beam combination still contains a
+median of 2.5 families outside the synthetic truth set. These supporting
+families are not accepted automatically in the application, but this metric
+must be reduced or redefined around reportable operator-visible candidates
+before claiming automatic phase-set recovery. Raw smoke output is stored under
+`build/joint-fast-benchmark` and remains uncommitted.
+
 With phase-specific widths and anisotropic metric perturbations, changing the four linear Match weights has a measurable effect. Relative to the current `0.44/0.43/0.08/0.05` weights, the validation-selected `0.170/0.830/0.000/0.000` weights improve held-out Top-1 from 60.94% to 65.62%, Top-10 from 84.38% to 85.94%, and mixture Recall@10 from 48.44% to 49.48%; Top-5 remains 79.69%. The zero weights assigned to the line-count and alignment-seed components on this synthetic set make experimental confirmation especially important. The selected weights are therefore reported as a sensitivity result and are not promoted to the application default.
 
 The Gain shortlist sweep isolates a similar limitation:

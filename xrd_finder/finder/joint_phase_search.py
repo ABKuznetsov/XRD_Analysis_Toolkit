@@ -431,19 +431,23 @@ def _fit_combination(
     required_count: int,
     config: JointPhaseSearchConfig,
 ) -> JointPhaseCombination:
+    active = weights > 0.0
     if candidates:
         matrix = np.column_stack([candidate.profile for candidate in candidates])
-        root_weights = np.sqrt(weights)
-        weighted_matrix = matrix * root_weights[:, None]
-        weighted_target = target * root_weights
-        try:
-            scales = nnls(weighted_matrix, weighted_target)[0]
-        except (RuntimeError, ValueError, np.linalg.LinAlgError):
-            scales = np.clip(
-                np.linalg.lstsq(weighted_matrix, weighted_target, rcond=None)[0],
-                0.0,
-                None,
-            )
+        if np.any(active):
+            root_weights = np.sqrt(weights[active])
+            weighted_matrix = matrix[active] * root_weights[:, None]
+            weighted_target = target[active] * root_weights
+            try:
+                scales = nnls(weighted_matrix, weighted_target)[0]
+            except (RuntimeError, ValueError, np.linalg.LinAlgError):
+                scales = np.clip(
+                    np.linalg.lstsq(weighted_matrix, weighted_target, rcond=None)[0],
+                    0.0,
+                    None,
+                )
+        else:
+            scales = np.zeros(len(candidates), dtype=float)
         model = matrix @ scales
     else:
         scales = np.zeros(0, dtype=float)
@@ -456,8 +460,9 @@ def _fit_combination(
         np.sum(weights * (under * under + config.excess_penalty * over * over))
         / denominator
     )
-    target_gradient = np.diff(target)
-    model_gradient = np.diff(model)
+    active_pairs = active[:-1] & active[1:]
+    target_gradient = np.diff(target)[active_pairs]
+    model_gradient = np.diff(model)[active_pairs]
     derivative_denominator = max(
         float(np.sum(np.abs(target_gradient))),
         np.finfo(float).eps,

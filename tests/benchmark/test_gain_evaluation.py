@@ -7,6 +7,7 @@ from benchmarks.match.evaluate_gain import (
     _gain_csv_row,
     _gain_summary,
     _joint_nonnegative_scales,
+    _ranked_family_position,
     evaluate_gain_scenario,
 )
 from benchmarks.match.generate_profiles import ReferenceLine
@@ -15,6 +16,22 @@ from xrd_finder.finder.gain_policy import GainStage
 
 
 class GainEvaluationTests(unittest.TestCase):
+    def test_missing_joint_family_ranks_after_the_complete_shortlist(self):
+        self.assertEqual(
+            _ranked_family_position(("family-a",), "family-target", candidate_count=12),
+            13,
+        )
+
+    def test_present_joint_family_uses_its_reported_position(self):
+        self.assertEqual(
+            _ranked_family_position(
+                ("family-a", "family-target"),
+                "family-target",
+                candidate_count=12,
+            ),
+            2,
+        )
+
     def _overlap_fixture(self):
         references = {
             "accepted": tuple(ReferenceLine(value, intensity) for value, intensity in ((20, 100), (30, 80), (40, 60), (50, 40))),
@@ -110,6 +127,33 @@ class GainEvaluationTests(unittest.TestCase):
         self.assertEqual(result.gain_engine, "joint-beam")
         self.assertEqual(result.target_rank, 1)
         self.assertEqual(result.top_candidate_id, "next")
+
+    def test_joint_peak_window_mode_keeps_overlap_phase(self):
+        references, families, scenario = self._overlap_fixture()
+
+        result = evaluate_gain_scenario(
+            references,
+            families,
+            scenario,
+            shortlist_limit=3,
+            gain_engine="joint-beam",
+            joint_profile_mode="peak-windows",
+        )
+
+        self.assertEqual(result.target_rank, 1)
+        self.assertEqual(result.top_candidate_id, "next")
+
+    def test_unknown_joint_profile_mode_raises_value_error(self):
+        references, families, scenario = self._overlap_fixture()
+
+        with self.assertRaisesRegex(ValueError, "Unsupported joint profile mode"):
+            evaluate_gain_scenario(
+                references,
+                families,
+                scenario,
+                gain_engine="joint-beam",
+                joint_profile_mode="unknown",
+            )
 
     def test_joint_engine_records_retrieval_profile_and_search_timings(self):
         references, families, scenario = self._overlap_fixture()

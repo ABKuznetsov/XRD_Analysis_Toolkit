@@ -30,7 +30,12 @@ from benchmarks.match.gain_retrieval import (
     hybrid_gain_shortlist,
     rare_line_gain_shortlist,
 )
-from benchmarks.match.joint_gain import build_joint_candidate_pool, evaluate_joint_gain
+from benchmarks.match.joint_gain import (
+    build_joint_candidate_pool,
+    evaluate_joint_gain,
+    prefilter_joint_profile_ids,
+    select_informative_residual_peaks,
+)
 from benchmarks.match.scenarios import ScenarioDefinition
 from benchmarks.match.dataset import BenchmarkDataset
 from benchmarks.match.scenarios import ScenarioConfig, build_scenario_manifest
@@ -48,6 +53,17 @@ from xrd_finder.services.phase_pattern_equivalence import (
     compare_phase_patterns,
     phase_patterns_equivalent,
 )
+
+
+def _ranked_family_position(
+    ranked_families: Sequence[str],
+    target_family: str,
+    *,
+    candidate_count: int,
+) -> int:
+    if target_family in ranked_families:
+        return ranked_families.index(target_family) + 1
+    return max(int(candidate_count), len(ranked_families)) + 1
 from xrd_finder.ui.gain_scoring import fit_residual_candidate_scale, profile_residual_gain
 
 
@@ -157,10 +173,13 @@ def evaluate_gain_scenario(
     accepted_phase_ids: Sequence[str] | None = None,
     gain_engine: str = "greedy",
     joint_config: JointPhaseSearchConfig | None = None,
+    joint_profile_mode: str = "full",
 ) -> GainScenarioResult:
     started = time.perf_counter()
     if gain_engine not in {"greedy", "joint-beam"}:
         raise ValueError(f"Unsupported Gain engine: {gain_engine}")
+    if joint_profile_mode not in {"full", "peak-windows"}:
+        raise ValueError(f"Unsupported joint profile mode: {joint_profile_mode}")
     if len(scenario.components) < 2:
         raise ValueError("Gain evaluation requires at least two phases.")
     generated = generate_profile(
@@ -318,10 +337,15 @@ def evaluate_gain_scenario(
         tuple(item.phase_id for item in accepted_components),
         fwhm=accepted_fwhm,
     )
+    quick_records = (
+        select_informative_residual_peaks(residual_records, limit=12)
+        if gain_engine == "joint-beam" and joint_profile_mode == "peak-windows"
+        else residual_records
+    )
     quick = {
         candidate_id: fingerprint_match_score(
             references[candidate_id],
-            list(residual_records),
+            list(quick_records),
             wavelength=1.5406,
             refine_alignment=False,
         )
@@ -366,6 +390,7 @@ def evaluate_gain_scenario(
             match_dominant_rank=match_dominant_rank,
             accepted_family_correct=accepted_family_correct,
             joint_config=joint_config,
+            joint_profile_mode=joint_profile_mode,
             started=started,
         )
     if shortlist_strategy == "adaptive":
@@ -688,13 +713,19 @@ def _evaluate_joint_gain_scenario(
     match_dominant_rank,
     accepted_family_correct,
     joint_config,
+    joint_profile_mode,
     started,
 ) -> GainScenarioResult:
     retrieval_started = time.perf_counter()
+    original_records = (
+        select_informative_residual_peaks(generated.observed_records, limit=12)
+        if joint_profile_mode == "peak-windows"
+        else generated.observed_records
+    )
     original_scores = {
         candidate_id: fingerprint_match_score(
             references[candidate_id],
-            list(generated.observed_records),
+            list(original_records),
             wavelength=1.5406,
             refine_alignment=False,
         )
@@ -719,6 +750,16 @@ def _evaluate_joint_gain_scenario(
         target_phase_id=target_component.phase_id,
         fwhm=accepted_fwhm,
     )
+    if joint_profile_mode == "peak-windows":
+        pool = replace(
+            pool,
+            optional_ids=prefilter_joint_profile_ids(
+                pool,
+                residual_scores=quick,
+                limit=min(24, max(1, int(shortlist_limit))),
+                rescue_count=4,
+            ),
+        )
     retrieval_seconds = time.perf_counter() - retrieval_started
 
     profile_started = time.perf_counter()
@@ -774,20 +815,24 @@ def _evaluate_joint_gain_scenario(
         joint_references[candidate_id] = aligned_lines
     profile_seconds = time.perf_counter() - profile_started
 
+    residual_window_mode = joint_profile_mode == "peak-windows"
+    evaluation_pool = replace(pool, required_ids=()) if residual_window_mode else pool
     evaluation = evaluate_joint_gain(
         x=generated.x,
-        target=target,
+        target=residual if residual_window_mode else target,
         weights=np.ones_like(target),
         profiles=profiles,
         references=joint_references,
-        pool=pool,
+        pool=evaluation_pool,
         config=joint_config,
+        profile_mode=joint_profile_mode,
+        window_centers=tuple(record.two_theta for record in residual_records),
     )
     target_pattern_family = pool.family_for(target_component.phase_id)
-    target_rank = (
-        evaluation.ranked_family_keys.index(target_pattern_family) + 1
-        if target_pattern_family in evaluation.ranked_family_keys
-        else len(evaluation.ranked_family_keys) + 1
+    target_rank = _ranked_family_position(
+        evaluation.ranked_family_keys,
+        target_pattern_family,
+        candidate_count=len(pool.optional_ids),
     )
     gain_by_family = {
         item.family_key: item for item in evaluation.search_result.candidate_gains
@@ -847,6 +892,7 @@ def _evaluate_joint_gain_scenario(
         for phase_id in best.card_keys
         if phase_id in family_by_phase
     }
+    best_families.update(component.family_id for component in accepted_components)
     return GainScenarioResult(
         query_id=scenario.scenario_id,
         split=scenario.split,
@@ -862,7 +908,7 @@ def _evaluate_joint_gain_scenario(
         shortlist_count=len(pool.optional_ids),
         before_fit=before_fit,
         residual_share=residual_share,
-        target_in_shortlist=bool(pool.target_present_after_collapse),
+        target_in_shortlist=target_representative is not None,
         global_zero_shift=global_zero_shift,
         true_zero_shift=float(scenario.zero_shift),
         accepted_fwhm=float(accepted_fwhm),
@@ -924,6 +970,7 @@ def run_gain_benchmark(
     accepted_from_match: bool = False,
     gain_engine: str = "greedy",
     joint_config: JointPhaseSearchConfig | None = None,
+    joint_profile_mode: str = "full",
 ) -> Path:
     with BenchmarkDataset.open(dataset_path) as dataset:
         phases = dataset.phase_descriptors()
@@ -963,6 +1010,7 @@ def run_gain_benchmark(
                 accepted_from_match,
                 gain_engine,
                 joint_config,
+                joint_profile_mode,
             )
         )
     else:
@@ -980,6 +1028,7 @@ def run_gain_benchmark(
                 accepted_from_match,
                 gain_engine,
                 joint_config,
+                joint_profile_mode,
             )
             for start in range(0, len(scenarios), chunk_size)
         ]
@@ -1011,6 +1060,7 @@ def _evaluate_gain_chunk(arguments):
         accepted_from_match,
         gain_engine,
         joint_config,
+        joint_profile_mode,
     ) = arguments
     results = []
     for scenario in scenarios:
@@ -1028,6 +1078,7 @@ def _evaluate_gain_chunk(arguments):
                     accepted_from_match=accepted_from_match,
                     gain_engine=gain_engine,
                     joint_config=joint_config,
+                    joint_profile_mode=joint_profile_mode,
                 )
             )
         except IndistinguishableGainScenario:
@@ -1175,6 +1226,12 @@ def main() -> int:
     parser.add_argument("--excess-penalty", type=float, default=3.0)
     parser.add_argument("--minimum-phase-snr", type=float, default=3.0)
     parser.add_argument("--minimum-relative-improvement", type=float, default=0.003)
+    parser.add_argument(
+        "--joint-profile-mode",
+        choices=("peak-windows", "full"),
+        default="peak-windows",
+        help="Fit informative peak windows or the complete profile.",
+    )
     args = parser.parse_args()
     output = run_gain_benchmark(
         args.dataset,
@@ -1203,6 +1260,7 @@ def main() -> int:
             minimum_phase_snr=args.minimum_phase_snr,
             minimum_relative_improvement=args.minimum_relative_improvement,
         ),
+        joint_profile_mode=args.joint_profile_mode,
     )
     print(f"Wrote {output}")
     return 0

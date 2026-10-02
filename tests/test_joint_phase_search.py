@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -163,6 +164,31 @@ class JointPhaseValidationTests(unittest.TestCase):
 
 
 class JointPhaseFitTests(unittest.TestCase):
+    def test_zero_weight_regions_are_removed_before_nnls(self):
+        target = np.zeros(101, dtype=float)
+        target[50] = 4.0
+        candidate = _candidate(profile=tuple(target / 4.0))
+        weights = np.zeros_like(target)
+        weights[[0, 50, 100]] = 1.0
+
+        with patch(
+            "xrd_finder.finder.joint_phase_search.nnls",
+            wraps=__import__("scipy.optimize", fromlist=["nnls"]).nnls,
+        ) as mocked_nnls:
+            result = _fit_combination(
+                target=target,
+                weights=weights,
+                candidates=(candidate,),
+                required_count=0,
+                config=JointPhaseSearchConfig(
+                    derivative_weight=0.0,
+                    complexity_penalty=0.0,
+                ),
+            )
+
+        self.assertEqual(mocked_nnls.call_args.args[0].shape, (3, 1))
+        self.assertAlmostEqual(result.scales[0], 4.0, places=7)
+
     def test_joint_nnls_releases_shared_intensity_to_supported_second_phase(self):
         required = _candidate(
             key="accepted",
