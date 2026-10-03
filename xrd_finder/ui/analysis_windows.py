@@ -2881,9 +2881,6 @@ class PhaseFinderWindow(
                 self._last_gain_debug = "Gain: no significant unexplained peaks"
             else:
                 # Keep the production shortlist on the validated Quick score.
-                # The residual-class 0/25/50% Rare-line reservation is retained
-                # in the benchmark, where it did not generalize across noise,
-                # width and phase-count strata well enough to ship.
                 for row_index in select_profile_candidate_indices(
                     preliminary_gains,
                 ):

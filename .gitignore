@@ -16,14 +16,15 @@ dist/
 .mypy_cache/
 .coverage
 htmlcov/
+/benchmarks/
+/tests/
+/docs/
 data/
 cod_cache/
 rruff_cache/
 *.sqlite
 *.sqlite3
 *.db
-!benchmarks/match/data/
-!benchmarks/match/data/match_benchmark.sqlite
 runtime_install.log
 runtime_repair.log
 *.pkg
