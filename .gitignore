@@ -19,6 +19,7 @@ htmlcov/
 /benchmarks/
 /tests/
 /docs/
+/installer/
 data/
 cod_cache/
 rruff_cache/

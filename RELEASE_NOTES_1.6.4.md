@@ -1,36 +1,23 @@
 # XRD Phase Finder 1.6.4
 
-This release improves the everyday phase-identification workflow while keeping phase acceptance under user control.
+Version 1.6.4 improves the main Finder interface and everyday analysis workflow.
 
-## Phase identification
+## What changed
 
-- Match gives a more stable shortlist for multi-phase patterns.
-- Accepted phase profiles are rescaled together before Gain is calculated, reducing dependence on the order in which phases are accepted.
-- Candidates equivalent to an accepted phase are suppressed by their diffraction fingerprint instead of relying on database identifiers or phase names.
-- Unreliable Gain values are displayed as dashes rather than ranking candidates from residual noise.
+- simplified smoothing, background and amorphous-contribution controls;
+- clearer display of the amorphous contribution on the plot and in the legend;
+- more stable Match and Gain suggestions for multi-phase patterns;
+- duplicate records of an already selected phase are no longer suggested again;
+- unreliable Gain values are shown as dashes instead of being estimated from noise;
+- candidate loading remains interactive and can be cancelled with **Reset table**;
+- broad searches ask for confirmation before more than 100 cards are prepared;
+- diffraction tables support copying selected cells, columns and the complete table;
+- faster structure-based diffraction calculation with CRiStMa 0.1.0b12.
 
-## Diffraction and preprocessing
+## Download
 
-- CRiStMa 0.1.0b12 is used for faster structure-based powder calculations and corrected reflection generation.
-- Peak measurements use a lightly smoothed detection signal and retain positions, areas and widths from the unsmoothed background-corrected profile.
-- The simplified smoothing and background controls preserve the original data and expose the estimated amorphous contribution separately.
-- Instrument profiles, radiation components and phase-specific broadening are included when calculated profiles are reconstructed.
+- Windows: `XRD_Phase_Finder_Setup_v1_6_4.exe`.
+- Linux 1.6.4 package will be added after the native Linux build is complete.
+- The current macOS package remains version 1.6.3.
 
-## Workflow and reliability
-
-- Online database results remain interactive while structures are downloaded and indexed in the background.
-- Resetting the candidate table cancels pending preparation work and prevents stale Gain refresh cycles.
-- Broad searches report the number of matching cards and request confirmation before preparing more than 100 entries.
-- Diffraction-data tables support copying selected cells, complete columns and the full table.
-
-## Assets
-
-- Windows installer: `XRD_Phase_Finder_Setup_v1_6_4.exe`.
-- Linux package for Debian/Ubuntu amd64 will be added after the native Linux build is complete.
-- The most recent macOS package remains `XRD_Phase_Finder_macOS_1.6.3.pkg` until a 1.6.4 package is built on macOS.
-
-## Notes
-
-Match and Gain are heuristic ranking scores, not probabilities. Quant. (%) is a semi-quantitative profile contribution and is not a Rietveld-derived phase fraction.
-
-The public installers do not contain local user data, database caches or secure/offline runtime snapshots.
+The Windows installer contains the application and launch files. It does not contain user projects, downloaded databases or local caches.
