@@ -28,6 +28,7 @@ _LAYER_LABELS = {
     CanvasLayer.CALCULATED_TOTAL: "Calculated total",
     CanvasLayer.PHASE_PROFILES: "Phase profiles",
     CanvasLayer.PHYSICAL_BACKGROUND: "Physical background",
+    CanvasLayer.AMORPHOUS_PHASE: "Amorphous phase",
     CanvasLayer.DIFFERENCE: "Difference",
     CanvasLayer.CANDIDATE_PREVIEW: "Candidate preview",
     CanvasLayer.PHASE_TICKS: "Phase ticks",

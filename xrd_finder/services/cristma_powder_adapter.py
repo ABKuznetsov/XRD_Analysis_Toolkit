@@ -21,6 +21,7 @@ from cristma.diffraction import (
     PowderLineCalculator,
     PowderPatternCalculator,
     RadiationSpectrum,
+    ReferencePowderLineCalculator,
     TchProfile,
     UniformTwoThetaGrid,
     XRayScatteringContext,
@@ -28,6 +29,7 @@ from cristma.diffraction import (
 
 from xrd_finder.core.structure import CellParameters
 from xrd_finder.instrument.models import InstrumentProfile
+from xrd_finder.instrument.resolution import cristma_tch_profile
 from xrd_finder.instrument.radiation_catalog import cristma_spectrum_from_profile
 from xrd_finder.services.calculated_pattern_service import HKLPeak
 
@@ -83,6 +85,7 @@ class CristmaPowderAdapter:
 
     def __init__(self, calculator: PowderPatternCalculator | None = None) -> None:
         self._calculator = calculator or PowderPatternCalculator()
+        self._reference_line_calculator = ReferencePowderLineCalculator()
         self._profile_calculator_supports_d_scale = (
             "d_spacing_scale"
             in signature(self._calculator.profile_calculator.calculate).parameters
@@ -100,13 +103,7 @@ class CristmaPowderAdapter:
         resolution = profile.resolution
         if resolution.model == "constant_fwhm":
             return ConstantWidthProfile(float(resolution.constant_fwhm_deg))
-        return TchProfile(
-            u=float(resolution.u),
-            v=float(resolution.v),
-            w=float(resolution.w),
-            x=float(resolution.x),
-            y=float(resolution.y),
-        )
+        return cristma_tch_profile(resolution)
 
     @staticmethod
     def _geometry_from_profile(profile: InstrumentProfile, use_lp: bool):
@@ -449,14 +446,87 @@ class CristmaPowderAdapter:
         use_lp: bool,
         cell_override: CellParameters | None = None,
     ) -> tuple[HKLPeak, ...]:
-        return self.lines_from_cif(
-            cif_path,
-            two_theta_min=two_theta_min,
-            two_theta_max=two_theta_max,
-            instrument_profile=instrument_profile,
-            use_lp=use_lp,
-            cell_override=cell_override,
-        ).peaks
+        try:
+            return self.reference_sticks_from_cif(
+                cif_path,
+                two_theta_min=two_theta_min,
+                two_theta_max=two_theta_max,
+                instrument_profile=instrument_profile,
+                use_lp=use_lp,
+                cell_override=cell_override,
+            )
+        except Exception:
+            return self.lines_from_cif(
+                cif_path,
+                two_theta_min=two_theta_min,
+                two_theta_max=two_theta_max,
+                instrument_profile=instrument_profile,
+                use_lp=use_lp,
+                cell_override=cell_override,
+            ).peaks
+
+    def reference_sticks_from_cif(
+        self,
+        cif_path: str | Path,
+        *,
+        two_theta_min: float,
+        two_theta_max: float,
+        instrument_profile: InstrumentProfile,
+        use_lp: bool,
+        cell_override: CellParameters | None = None,
+    ) -> tuple[HKLPeak, ...]:
+        structure, setting = self._structure_and_setting(cif_path, cell_override)
+        radiation = self.radiation_from_profile(instrument_profile)
+        reference_lines = self._reference_line_calculator.calculate(
+            structure,
+            setting,
+            radiation,
+            two_theta_min_deg=float(two_theta_min),
+            two_theta_max_deg=float(two_theta_max),
+        )
+        geometry = self._geometry_from_profile(instrument_profile, use_lp)
+        primary_component_id = radiation.components[0].component_id
+        raw_peaks: list[HKLPeak] = []
+        for line in reference_lines.lines:
+            if line.radiation_component_id != primary_component_id:
+                continue
+            hkl = line.representative_hkls[0]
+            lp = self._lorentz_polarization_factor(
+                float(line.two_theta_deg),
+                geometry,
+            )
+            raw_intensity = float(line.intrinsic_line_intensity) * lp
+            raw_peaks.append(
+                HKLPeak(
+                    h=int(hkl.h),
+                    k=int(hkl.k),
+                    l=int(hkl.l),
+                    d=float(line.d_spacing),
+                    two_theta=float(line.two_theta_deg),
+                    intensity=raw_intensity,
+                    multiplicity=int(line.multiplicity_crystallographic),
+                    f2=float(line.family_strength),
+                    lp=lp,
+                    raw_intensity=raw_intensity,
+                )
+            )
+        maximum = max((peak.raw_intensity for peak in raw_peaks), default=0.0)
+        if maximum > 0.0:
+            for peak in raw_peaks:
+                peak.intensity = 100.0 * peak.raw_intensity / maximum
+        return tuple(raw_peaks)
+
+    @staticmethod
+    def _lorentz_polarization_factor(two_theta_deg: float, geometry) -> float:
+        if geometry is None:
+            return 1.0
+        theta = math.radians(float(two_theta_deg) / 2.0)
+        lorentz = 1.0 / (math.sin(theta) ** 2 * math.cos(theta))
+        perpendicular = float(geometry.perpendicular_polarization_fraction)
+        polarization = perpendicular + (1.0 - perpendicular) * math.cos(
+            2.0 * theta
+        ) ** 2
+        return lorentz * polarization
 
     def lines_from_cif(
         self,

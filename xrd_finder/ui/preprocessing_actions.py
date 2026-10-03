@@ -1,19 +1,104 @@
 from __future__ import annotations
 
+from dataclasses import replace
+import hashlib
+
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 from scipy.signal import find_peaks
 
 from xrd_finder.services.preprocessing_service import (
+    adjust_background_components,
     auto_background_plan,
     auto_smoothing_plan,
-    smooth_observed_curve,
+    estimate_amorphous_snip_component,
+    peak_preserving_smooth,
+    restore_amorphous_contribution,
 )
-from xrd_finder.services.background_model_selection import select_background_model
+from xrd_finder.services.background_model_selection import BackgroundModelSelection, select_background_model
 from xrd_finder.ui.observed_patterns import observed_pattern_data
-from xrd_finder.ui.preprocessing_dialogs import BackgroundRemovalPanel, SmoothPanel, XrdCropPanel, background_method_label
+from xrd_finder.ui.preprocessing_dialogs import BackgroundRemovalPanel, SmoothPanel, XrdCropPanel
 from xrd_finder.ui.theme import preprocessing_panel_style
+
+
+_PREPROCESSING_ANALYSIS_MAX_POINTS = 2048
+
+
+def _preprocessing_analysis_sample(
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    max_points: int = _PREPROCESSING_ANALYSIS_MAX_POINTS,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return an evenly spaced analysis view without copying the full trace."""
+    x_values = np.asarray(x, dtype=float)
+    y_values = np.asarray(y, dtype=float)
+    if len(x_values) != len(y_values):
+        raise ValueError("X and Y arrays must have the same length")
+    limit = max(32, int(max_points))
+    if len(x_values) <= limit:
+        return x_values, y_values
+    indices = np.linspace(0, len(x_values) - 1, limit, dtype=np.int64)
+    indices = np.unique(indices)
+    return x_values[indices], y_values[indices]
+
+
+def _median_positive_step(values: np.ndarray) -> float:
+    differences = np.diff(np.asarray(values, dtype=float))
+    differences = differences[np.isfinite(differences) & (differences > 0.0)]
+    return float(np.nanmedian(differences)) if len(differences) else 0.03
+
+
+def _smoothing_plan_for_full_signal(
+    sampled_plan,
+    sampled_x: np.ndarray,
+    full_x: np.ndarray,
+):
+    if len(full_x) < 3 or len(sampled_x) < 3:
+        return sampled_plan
+    width_degrees = float(sampled_plan.window) * _median_positive_step(sampled_x)
+    full_window = max(5, int(round(width_degrees / max(_median_positive_step(full_x), 1.0e-9))))
+    full_window = min(full_window, 21, len(full_x) if len(full_x) % 2 else len(full_x) - 1)
+    if full_window % 2 == 0:
+        full_window = max(5, full_window - 1)
+    return replace(sampled_plan, window=full_window)
+
+
+def _expand_background_model(
+    model: BackgroundModelSelection,
+    sampled_x: np.ndarray,
+    full_x: np.ndarray,
+) -> BackgroundModelSelection:
+    sampled_x = np.asarray(sampled_x, dtype=float)
+    full_x = np.asarray(full_x, dtype=float)
+    if len(sampled_x) == len(full_x) and np.array_equal(sampled_x, full_x):
+        return model
+    if len(sampled_x) < 2:
+        physical = np.full_like(full_x, float(model.physical_background[0]) if len(model.physical_background) else 0.0)
+        amorphous = np.full_like(full_x, float(model.amorphous_component[0]) if len(model.amorphous_component) else 0.0)
+    else:
+        physical = np.interp(full_x, sampled_x, np.asarray(model.physical_background, dtype=float))
+        amorphous = np.interp(full_x, sampled_x, np.asarray(model.amorphous_component, dtype=float))
+    return replace(model, physical_background=physical, amorphous_component=amorphous)
+
+
+def _expand_sampled_signal(
+    sampled_x: np.ndarray,
+    sampled_y: np.ndarray,
+    full_x: np.ndarray,
+) -> np.ndarray:
+    """Interpolate a sampled working signal onto the original XRD grid."""
+    sampled_x = np.asarray(sampled_x, dtype=float)
+    sampled_y = np.asarray(sampled_y, dtype=float)
+    full_x = np.asarray(full_x, dtype=float)
+    if len(sampled_x) != len(sampled_y):
+        raise ValueError("Sampled X and Y arrays must have the same length")
+    if len(sampled_x) == len(full_x) and np.array_equal(sampled_x, full_x):
+        return sampled_y
+    if len(sampled_x) < 2:
+        return np.full_like(full_x, float(sampled_y[0]) if len(sampled_y) else 0.0)
+    return np.interp(full_x, sampled_x, sampled_y)
 
 
 class PhaseFinderPreprocessingActionsMixin:
@@ -40,6 +125,7 @@ class PhaseFinderPreprocessingActionsMixin:
         preview_callback,
         cancel_callback,
         subtract_callback=None,
+        apply_callback=None,
     ) -> None:
         if getattr(self, "_preprocessing_panel", None) is not None:
             if getattr(self, "_preprocessing_panel_key", None) == key:
@@ -56,7 +142,7 @@ class PhaseFinderPreprocessingActionsMixin:
         panel.setStyleSheet(preprocessing_panel_style(self._is_dark_theme()))
 
         def accept_panel() -> None:
-            preview_callback()
+            (apply_callback or preview_callback)()
             self._close_preprocessing_panel()
 
         def cancel_panel() -> None:
@@ -101,25 +187,28 @@ class PhaseFinderPreprocessingActionsMixin:
         original_processed_label = pattern.processed_label
         original_background_removed = pattern.processed_background_removed
         source_label = pattern.processed_label or "Observed"
-        plan = auto_smoothing_plan(x, y)
+        analysis_x, analysis_y = _preprocessing_analysis_sample(x, y)
+        sampled_plan = auto_smoothing_plan(analysis_x, analysis_y)
+        plan = _smoothing_plan_for_full_signal(sampled_plan, analysis_x, x)
         panel = SmoothPanel(plan.window, auto_plan=plan, parent=self)
 
-        def preview_smoothing() -> None:
+        def smoothed_curve() -> tuple[np.ndarray, str]:
             window = panel.window_size()
-            method = panel.method()
-            smooth_y = np.asarray(y, dtype=float)
-            for _ in range(panel.passes()):
-                smooth_y = smooth_observed_curve(smooth_y, method, window, panel.polyorder(), panel.gaussian_sigma())
-            label_method = {
-                "savgol": "Savitzky-Golay",
-                "moving": "moving average",
-                "gaussian": "Gaussian",
-            }.get(method, method)
-            pass_text = "pass" if panel.passes() == 1 else "passes"
+            strength = panel.noise_reduction()
+            smooth_y = peak_preserving_smooth(y, window=window, strength=strength)
+            label = f"{source_label} noise reduced ({strength:.0%}, peak-preserving SG w{window})"
+            return smooth_y, label
+
+        def preview_smoothing() -> None:
+            smooth_y, label = smoothed_curve()
+            self._replace_observed_curve(x, smooth_y, label)
+
+        def apply_smoothing() -> None:
+            smooth_y, label = smoothed_curve()
             self._set_preprocessed_observed_curve(
                 x,
                 smooth_y,
-                f"{source_label} smoothed ({label_method}, window {window}, {panel.passes()} {pass_text})",
+                label,
                 pattern.processed_background_removed,
             )
 
@@ -139,6 +228,7 @@ class PhaseFinderPreprocessingActionsMixin:
             panel,
             preview_smoothing,
             cancel_smoothing,
+            apply_callback=apply_smoothing,
         )
     def _subtract_active_background_plot(self) -> None:
         data = self._active_processed_observed_data()
@@ -157,9 +247,36 @@ class PhaseFinderPreprocessingActionsMixin:
         original_background_points = [list(point) for point in pattern.estimated_background_points]
         original_background_with_halo_points = [list(point) for point in pattern.estimated_background_with_halo_points]
         source_label = pattern.processed_label or "Observed"
-        background_fit_y = self._background_estimation_signal(pattern, x, y)
-        plan = auto_background_plan(x, background_fit_y)
-        auto_model = select_background_model(x, background_fit_y)
+        analysis_x, analysis_y = _preprocessing_analysis_sample(x, y)
+        sampled_background_fit_y = self._background_estimation_signal(pattern, analysis_x, analysis_y)
+        preview_background_fit_y = _expand_sampled_signal(analysis_x, sampled_background_fit_y, x)
+        fit_signature = hashlib.blake2b(
+            np.asarray(sampled_background_fit_y, dtype="<f8").tobytes(),
+            digest_size=12,
+        ).hexdigest()
+        preparation_key = (
+            str(getattr(pattern, "id", "")),
+            len(x),
+            round(float(x[0]), 6) if len(x) else 0.0,
+            round(float(x[-1]), 6) if len(x) else 0.0,
+            fit_signature,
+        )
+        cached_preparation = getattr(self, "_background_panel_preparation_cache", None)
+        if cached_preparation is not None and cached_preparation[0] == preparation_key:
+            plan, sampled_auto_model = cached_preparation[1], cached_preparation[2]
+        else:
+            plan = auto_background_plan(analysis_x, sampled_background_fit_y)
+            sampled_auto_model = select_background_model(analysis_x, sampled_background_fit_y)
+            self._background_panel_preparation_cache = (
+                preparation_key,
+                plan,
+                sampled_auto_model,
+            )
+        auto_model = _expand_background_model(
+            sampled_auto_model,
+            analysis_x,
+            x,
+        )
         panel = BackgroundRemovalPanel(
             default_degree=plan.degree,
             auto_plan=plan,
@@ -167,40 +284,20 @@ class PhaseFinderPreprocessingActionsMixin:
             initial_state=getattr(self, "_background_removal_panel_state", None),
             parent=self,
         )
+        preview_amorphous_component = estimate_amorphous_snip_component(
+            x,
+            preview_background_fit_y,
+            np.asarray(auto_model.physical_background, dtype=float),
+        )
 
         def save_background_panel_state() -> None:
             self._background_removal_panel_state = panel.export_state()
 
-        def settings_model_curve(settings: dict[str, int | str]) -> np.ndarray:
-            method = str(settings["method"])
-            if method == "auto_physical_model":
-                physical = getattr(auto_model, "physical_background", None)
-                if physical is not None:
-                    values = np.asarray(physical, dtype=float)
-                    if len(values) == len(y):
-                        return values
-                method = "auto"
-            elif method == "auto_total_model":
-                physical = getattr(auto_model, "physical_background", None)
-                halo = getattr(auto_model, "amorphous_component", None)
-                if physical is not None and halo is not None:
-                    physical_values = np.asarray(physical, dtype=float)
-                    halo_values = np.asarray(halo, dtype=float)
-                    if len(physical_values) == len(y) and len(halo_values) == len(y):
-                        return physical_values + np.clip(halo_values, 0.0, None)
-                method = "snip"
-            if method == "exponential":
-                method = f"exponential_{int(settings['exponential_terms'])}"
-            elif method == "snip":
-                method = f"snip_{int(settings['snip_window'])}"
-            if method == "constant":
-                return np.full_like(y, float(np.nanpercentile(background_fit_y, int(settings["floor_percentile"]))))
-            return self._estimate_background(x, background_fit_y, degree=int(settings["degree"]), method=method)
-
-        def estimate_components() -> tuple[np.ndarray, np.ndarray]:
+        def estimate_components(*, exact: bool = False) -> tuple[np.ndarray, np.ndarray]:
             save_background_panel_state()
-            background = np.asarray(settings_model_curve(panel.settings_for("physical")), dtype=float)
-            combined = np.asarray(settings_model_curve(panel.settings_for("total")), dtype=float)
+            selected_model = auto_model
+            background = np.asarray(selected_model.physical_background, dtype=float)
+            combined = background + preview_amorphous_component
             combined = np.maximum(combined, background)
             if panel.low_angle_cuvette():
                 halo = np.clip(combined - background, 0.0, None)
@@ -212,39 +309,64 @@ class PhaseFinderPreprocessingActionsMixin:
                 strength = float(panel.low_angle_strength())
                 keep_fraction = (1.0 - strength) + strength * transition
                 combined = background + halo * keep_fraction
+            level = float(getattr(panel, "background_level", lambda: 0.0)())
+            background, combined = adjust_background_components(
+                x,
+                y,
+                background,
+                combined,
+                level,
+            )
             return np.asarray(background, dtype=float), np.asarray(combined, dtype=float)
+
+        def processed_background_result(
+            background: np.ndarray,
+            combined: np.ndarray,
+        ) -> tuple[np.ndarray, np.ndarray, str]:
+            include_amorphous = bool(getattr(panel, "include_amorphous", lambda: False)())
+            strength = float(getattr(panel, "amorphous_strength", lambda: 1.0)()) if include_amorphous else 0.0
+            corrected, restored = restore_amorphous_contribution(
+                y,
+                background,
+                combined,
+                strength,
+            )
+            if include_amorphous:
+                label = f"{source_label} - background; amorphous phase restored {strength:.0%}"
+            else:
+                label = f"{source_label} - background - amorphous contribution"
+            return corrected, background + restored, label
 
         def preview_background_components() -> None:
             background, combined = estimate_components()
+            corrected, displayed_total, processed_label = processed_background_result(background, combined)
             pattern.estimated_background_points = (
                 np.column_stack([x, background]).astype(float).tolist() if panel.estimate_background() else []
             )
             pattern.estimated_background_with_halo_points = (
-                np.column_stack([x, combined]).astype(float).tolist() if panel.estimate_amorphous() else []
+                np.column_stack([x, displayed_total]).astype(float).tolist() if panel.estimate_amorphous() else []
             )
-            self.project.touch()
-            self.project_changed.emit()
-            self._clear_probability_caches()
-            if hasattr(self, "_invalidate_match_profile_cache"):
-                self._invalidate_match_profile_cache(pattern.id)
-            self._refresh_observed_pattern_plot()
-            self._rerun_active_calculation()
+            pattern.processed_background_removed = True
+            self._replace_observed_curve(
+                x,
+                corrected,
+                processed_label,
+            )
 
-        def subtract_background_components() -> None:
+        def apply_background_components() -> None:
             save_background_panel_state()
-            background, combined = estimate_components()
-            baseline = combined if panel.target() == "total" else background
-            current_settings = panel.settings_for(panel.target())
-            label_method = background_method_label(str(current_settings["method"]), int(current_settings["degree"]))
-            component = {
-                "physical": "physical background",
-                "total": "background + amorphous phase",
-            }.get(panel.target(), "background")
-            preview_background_components()
+            background, combined = estimate_components(exact=True)
+            corrected, displayed_total, processed_label = processed_background_result(background, combined)
+            pattern.estimated_background_points = (
+                np.column_stack([x, background]).astype(float).tolist() if panel.estimate_background() else []
+            )
+            pattern.estimated_background_with_halo_points = (
+                np.column_stack([x, displayed_total]).astype(float).tolist() if panel.estimate_amorphous() else []
+            )
             self._set_preprocessed_observed_curve(
                 x,
-                y - baseline,
-                f"{source_label} - {component} ({label_method})",
+                corrected,
+                processed_label,
                 True,
             )
 
@@ -260,13 +382,15 @@ class PhaseFinderPreprocessingActionsMixin:
             self._refresh_observed_pattern_plot()
             self._rerun_active_calculation()
 
+        preview_background_components()
         self._show_preprocessing_panel(
             "background",
             self.finder_action_bar.background_button,
             panel,
             preview_background_components,
             cancel_background_removal,
-            subtract_background_components,
+            apply_background_components,
+            apply_callback=apply_background_components,
         )
 
     def _background_estimation_signal(self, pattern, x: np.ndarray, y: np.ndarray) -> np.ndarray:

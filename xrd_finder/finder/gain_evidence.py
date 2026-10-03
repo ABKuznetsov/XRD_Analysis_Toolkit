@@ -18,6 +18,73 @@ class GainEvidence:
     strongest_independent_snr: float
 
 
+def phase_signal_to_noise(
+    *,
+    x: np.ndarray,
+    residual_after: np.ndarray,
+    candidate_curve: np.ndarray,
+    peak_positions: np.ndarray,
+    peak_amplitudes: np.ndarray,
+    fwhm: float,
+    maximum_peaks: int = 3,
+) -> float:
+    """Estimate phase-level support from its strongest calculated reflections.
+
+    Candidate signal is measured from the fitted phase contribution, while the
+    noise estimate comes from the signed residual after adding the candidate.
+    Using up to three reflections prevents one accidental high point from
+    carrying the same weight as a phase supported repeatedly across the scan.
+    """
+
+    x_values = np.asarray(x, dtype=float)
+    residual = np.asarray(residual_after, dtype=float)
+    curve = np.asarray(candidate_curve, dtype=float)
+    if (
+        len(x_values) < 5
+        or len(residual) != len(x_values)
+        or len(curve) != len(x_values)
+        or int(maximum_peaks) <= 0
+    ):
+        return 0.0
+    finite = np.isfinite(x_values) & np.isfinite(residual) & np.isfinite(curve)
+    if np.count_nonzero(finite) < 5 or float(np.nanmax(curve[finite], initial=0.0)) <= 0.0:
+        return 0.0
+
+    strongest = _merge_peak_positions(
+        x_values,
+        np.asarray(peak_positions, dtype=float),
+        np.asarray(peak_amplitudes, dtype=float),
+        merge_tolerance=max(0.06, max(float(fwhm), 0.05) * 0.55),
+    )[: int(maximum_peaks)]
+    if not strongest:
+        return 0.0
+
+    global_sigma = estimate_noise_sigma(residual[finite])
+    half_width = max(0.06, max(float(fwhm), 0.05) * 0.75)
+    peak_snrs: list[float] = []
+    for position, _amplitude in strongest:
+        signal = _local_max(x_values, curve, position, half_width)
+        if signal <= 0.0:
+            continue
+        local_sigma = _local_noise_sigma(
+            x_values,
+            residual,
+            position,
+            fwhm=max(float(fwhm), 0.05),
+            fallback=global_sigma,
+        )
+        peak_snrs.append(signal / max(local_sigma, 1.0e-9))
+    if not peak_snrs:
+        return 0.0
+
+    # RMS retains the information from a dominant diagnostic reflection.  The
+    # correction makes one or two available reflections less conclusive than
+    # three independently supported reflections without rejecting them.
+    rms = math.sqrt(float(np.mean(np.square(peak_snrs))))
+    coverage_correction = math.sqrt(len(peak_snrs) / max(int(maximum_peaks), 1))
+    return float(max(rms * coverage_correction, 0.0))
+
+
 def evaluate_gain_evidence(
     *,
     x: np.ndarray,

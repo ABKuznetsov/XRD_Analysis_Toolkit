@@ -33,6 +33,7 @@ class GainRetrievalPool:
     channel_runs: tuple[RetrievalChannelRun, ...]
     raw_union_count: int
     collapsed_family_count: int
+    raw_candidate_ids: tuple[str, ...] = ()
 
     def family_for(self, phase_id: str) -> str:
         key = str(phase_id)
@@ -50,6 +51,8 @@ def build_gain_retrieval_pool(
     overlap_positions: Iterable[float] = (),
     *,
     config: GainRetrievalConfig,
+    wavelength: float = 1.5406,
+    zero_shift: float = 0.0,
 ) -> GainRetrievalPool:
     """Fuse bounded channel prefixes and return diffraction-family representatives."""
 
@@ -60,7 +63,7 @@ def build_gain_retrieval_pool(
     raw_union = _round_robin_union(prefixes, limit=max(0, int(config.union_limit)))
     if not raw_union:
         assignments = tuple((phase_id, f"pattern:{phase_id}") for phase_id in accepted)
-        return GainRetrievalPool((), assignments, runs, 0, 0)
+        return GainRetrievalPool((), assignments, runs, 0, 0, ())
 
     resolver = _PatternEquivalence(known)
     cluster_ids = tuple(sorted({*accepted, *raw_union}))
@@ -75,11 +78,16 @@ def build_gain_retrieval_pool(
             accepted_families.add(family)
 
     channel_evidence = _normalized_channel_evidence(prefixes)
-    residual = _residual_evidence(residual_records)
+    residual = _residual_evidence(
+        residual_records,
+        wavelength=wavelength,
+        zero_shift=zero_shift,
+    )
     overlap = tuple(
-        value
+        q
         for raw_value in overlap_positions
         if (value := _finite_float(raw_value)) is not None
+        and (q := _q_from_two_theta(value - zero_shift, wavelength)) is not None
     )
     family_members: dict[str, list[str]] = {}
     for phase_id in raw_union:
@@ -105,7 +113,10 @@ def build_gain_retrieval_pool(
                 phase_id, channel_evidence, config.rank_corroboration
             )
             coverage, missing_fraction = _line_level_terms(
-                known[phase_id], residual, overlap
+                known[phase_id],
+                residual,
+                overlap,
+                wavelength=wavelength,
             )
             total = (
                 retrieval_score
@@ -134,6 +145,7 @@ def build_gain_retrieval_pool(
         channel_runs=runs,
         raw_union_count=len(raw_union),
         collapsed_family_count=len(family_members),
+        raw_candidate_ids=raw_union,
     )
 
 
@@ -225,11 +237,16 @@ def _candidate_retrieval_score(
     return terms[0] + max(0.0, float(corroboration)) * extra
 
 
-def _residual_evidence(records: Iterable[object]) -> tuple[tuple[float, float], ...]:
-    parsed: list[tuple[float, float]] = []
+def _residual_evidence(
+    records: Iterable[object],
+    *,
+    wavelength: float,
+    zero_shift: float,
+) -> tuple[tuple[float, float, float], ...]:
+    parsed: list[tuple[float, float, float]] = []
     for record in records:
-        position = _finite_float(getattr(record, "two_theta", None))
-        if position is None:
+        q = _record_q(record, wavelength=wavelength, zero_shift=zero_shift)
+        if q is None:
             continue
         strengths = (
             _finite_float(getattr(record, "area", None)),
@@ -238,51 +255,113 @@ def _residual_evidence(records: Iterable[object]) -> tuple[tuple[float, float], 
         )
         strength = next((value for value in strengths if value is not None and value > 0.0), 0.0)
         if strength > 0.0:
-            parsed.append((position, strength))
-    maximum = max((strength for _position, strength in parsed), default=0.0)
+            snr = _finite_float(
+                getattr(record, "area_snr", None)
+                or getattr(record, "local_snr", None)
+                or getattr(record, "snr", None)
+            )
+            parsed.append((q, strength, max(snr or 0.0, 0.0)))
+    maximum = max((strength for _q, strength, _snr in parsed), default=0.0)
     if maximum <= 0.0:
         return ()
-    return tuple((position, strength / maximum) for position, strength in parsed)
+    return tuple(
+        (q, strength / maximum, snr)
+        for q, strength, snr in parsed
+    )
 
 
 def _line_level_terms(
     lines: Sequence[object],
-    residual: tuple[tuple[float, float], ...],
+    residual: tuple[tuple[float, float, float], ...],
     overlap_positions: tuple[float, ...],
     *,
-    tolerance: float = 0.45,
+    wavelength: float,
+    q_log_tolerance: float = 0.012,
 ) -> tuple[float, float]:
-    candidate = _candidate_lines(lines)
+    candidate = _candidate_q_lines(lines, wavelength=wavelength)
     if not candidate:
         return 0.0, 0.0
-    total_residual = sum(weight for _position, weight in residual)
+    tolerance = max(float(q_log_tolerance), 1.0e-4)
+    total_residual = sum(weight for _q, weight, _snr in residual)
     coverage = 0.0
-    for position, residual_weight in residual:
+    matched_scales: list[float] = []
+    for residual_q, residual_weight, _snr in residual:
         support = max(
             (
                 math.sqrt(line_weight)
-                * math.exp(-0.5 * ((line_position - position) / tolerance) ** 2)
-                for line_position, line_weight in candidate
-                if abs(line_position - position) <= tolerance
+                * math.exp(-0.5 * (math.log(line_q / residual_q) / tolerance) ** 2)
+                for line_q, line_weight in candidate
+                if abs(math.log(line_q / residual_q)) <= tolerance
             ),
             default=0.0,
         )
         coverage += residual_weight * support
+        closest = min(
+            (
+                (abs(math.log(line_q / residual_q)), line_weight)
+                for line_q, line_weight in candidate
+                if abs(math.log(line_q / residual_q)) <= tolerance
+            ),
+            default=None,
+        )
+        if closest is not None and closest[1] > 0.0:
+            matched_scales.append(residual_weight / closest[1])
     coverage = coverage / total_residual if total_residual > 0.0 else 0.0
 
-    strong_lines = tuple((position, weight) for position, weight in candidate if weight >= 0.15)
+    if not matched_scales:
+        return min(max(coverage, 0.0), 1.0), 0.0
+    matched_scales.sort()
+    phase_scale = matched_scales[len(matched_scales) // 2]
+    observed_floor = min(
+        (weight for _q, weight, snr in residual if snr <= 0.0 or snr >= 3.0),
+        default=0.16,
+    )
+    detection_floor = max(0.04, min(0.25, observed_floor * 0.75))
     missing_weight = 0.0
-    considered_weight = sum(weight for _position, weight in strong_lines)
-    for position, weight in strong_lines:
-        observed = any(abs(position - residual_position) <= tolerance for residual_position, _ in residual)
-        accepted_overlap = any(abs(position - overlap_position) <= tolerance for overlap_position in overlap_positions)
+    considered_weight = 0.0
+    for line_q, weight in candidate:
+        expected_weight = phase_scale * weight
+        if expected_weight < detection_floor:
+            continue
+        considered_weight += expected_weight
+        observed = any(
+            abs(math.log(line_q / residual_q)) <= tolerance
+            for residual_q, _weight, _snr in residual
+        )
+        accepted_overlap = any(
+            abs(math.log(line_q / overlap_q)) <= tolerance
+            for overlap_q in overlap_positions
+        )
         if not observed and not accepted_overlap:
-            missing_weight += weight
+            missing_weight += expected_weight
     missing_fraction = missing_weight / considered_weight if considered_weight > 0.0 else 0.0
     return min(max(coverage, 0.0), 1.0), min(max(missing_fraction, 0.0), 1.0)
 
 
+def _candidate_q_lines(
+    lines: Sequence[object],
+    *,
+    wavelength: float,
+) -> tuple[tuple[float, float], ...]:
+    parsed: list[tuple[float, float]] = []
+    for line in lines:
+        q = _record_q(line, wavelength=wavelength, zero_shift=0.0)
+        intensity = _finite_float(getattr(line, "intensity", None))
+        if q is not None and intensity is not None and intensity > 0.0:
+            parsed.append((q, intensity))
+    maximum = max((intensity for _q, intensity in parsed), default=0.0)
+    if maximum <= 0.0:
+        return ()
+    return tuple(
+        (q, intensity / maximum)
+        for q, intensity in sorted(parsed, key=lambda value: -value[1])[:24]
+        if intensity / maximum >= 0.01
+    )
+
+
 def _candidate_lines(lines: Sequence[object]) -> tuple[tuple[float, float], ...]:
+    """Legacy 2theta view used only by diffraction-family collapse."""
+
     parsed: list[tuple[float, float]] = []
     for line in lines:
         position = _finite_float(getattr(line, "two_theta", None))
@@ -297,6 +376,23 @@ def _candidate_lines(lines: Sequence[object]) -> tuple[tuple[float, float], ...]
         for position, intensity in sorted(parsed, key=lambda value: -value[1])[:24]
         if intensity / maximum >= 0.01
     )
+
+
+def _record_q(record: object, *, wavelength: float, zero_shift: float) -> float | None:
+    d_spacing = _finite_float(getattr(record, "d", None))
+    if d_spacing is not None and d_spacing > 0.0:
+        return 1.0 / d_spacing
+    two_theta = _finite_float(getattr(record, "two_theta", None))
+    if two_theta is None:
+        return None
+    return _q_from_two_theta(two_theta - float(zero_shift), wavelength)
+
+
+def _q_from_two_theta(two_theta: float, wavelength: float) -> float | None:
+    if not 0.0 < float(two_theta) < 180.0 or float(wavelength) <= 0.0:
+        return None
+    q = 2.0 * math.sin(math.radians(float(two_theta) / 2.0)) / float(wavelength)
+    return q if math.isfinite(q) and q > 0.0 else None
 
 
 class _PatternEquivalence:

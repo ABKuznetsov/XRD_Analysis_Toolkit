@@ -376,6 +376,7 @@ class PhaseFinderPlotViewActionsMixin:
             "calculated_profile": settings.layer_total_profile_visible,
             "phase_profiles": settings.layer_phase_profiles_visible,
             "background": settings.layer_background_visible,
+            "amorphous": True,
             "difference": settings.layer_difference_visible,
             "phase_ticks": settings.layer_phase_ticks_visible,
             "coverage_markers": settings.layer_coverage_markers_visible,

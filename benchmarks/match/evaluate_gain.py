@@ -19,6 +19,7 @@ from benchmarks.match.generate_profiles import (
     _detect_observed_records,
     _fit_reciprocal_metric,
     benchmark_instrument_fwhm,
+    benchmark_instrument_profile,
     generate_profile,
 )
 from benchmarks.match.gain_scenarios import GainScenarioConfig, build_gain_scenario_manifest
@@ -31,9 +32,8 @@ from benchmarks.match.gain_retrieval import (
     rare_line_gain_shortlist,
 )
 from benchmarks.match.joint_gain import (
-    build_joint_candidate_pool,
+    adapt_multichannel_retrieval_pool,
     evaluate_joint_gain,
-    prefilter_joint_profile_ids,
     select_informative_residual_peaks,
 )
 from benchmarks.match.scenarios import ScenarioDefinition
@@ -49,6 +49,20 @@ from xrd_finder.finder.gain_ranking import GainCandidate, GainQuery, rank_gain_c
 from xrd_finder.finder.joint_phase_search import JointPhaseSearchConfig
 from xrd_finder.services.calculated_pattern_service import HKLPeak, pseudo_voigt_values
 from xrd_finder.services.gain_shortlist import estimate_matched_profile_fwhm
+from xrd_finder.services.gain_retrieval_channels import (
+    RetrievalChannelRun,
+    geometry_channel,
+    overlap_deficit_channel,
+    rank_channel_scores,
+    rare_line_channel,
+    strong_residual_channel,
+)
+from xrd_finder.services.gain_retrieval_union import (
+    GainRetrievalConfig,
+    GainRetrievalPool,
+    build_gain_retrieval_pool,
+)
+from xrd_finder.services.residual_geometry import build_residual_geometry_index
 from xrd_finder.services.phase_pattern_equivalence import (
     compare_phase_patterns,
     phase_patterns_equivalent,
@@ -65,6 +79,18 @@ def _ranked_family_position(
         return ranked_families.index(target_family) + 1
     return max(int(candidate_count), len(ranked_families)) + 1
 from xrd_finder.ui.gain_scoring import fit_residual_candidate_scale, profile_residual_gain
+
+
+@dataclass(frozen=True, slots=True)
+class GainRetrievalDiagnostics:
+    channel_target_ranks: tuple[tuple[str, int], ...]
+    channel_seconds: tuple[tuple[str, float], ...]
+    channel_counts: tuple[tuple[str, int], ...]
+    raw_union_count: int
+    collapsed_family_count: int
+    profile_pool_count: int
+    target_present_before_compression: bool
+    target_present_after_compression: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +149,7 @@ class GainScenarioResult:
     false_positive_families: int = 0
     variant_group: str = ""
     variant_kind: str = ""
+    retrieval_diagnostics: GainRetrievalDiagnostics | None = None
 
 
 class IndistinguishableGainScenario(ValueError):
@@ -174,6 +201,7 @@ def evaluate_gain_scenario(
     gain_engine: str = "greedy",
     joint_config: JointPhaseSearchConfig | None = None,
     joint_profile_mode: str = "full",
+    geometry_index=None,
 ) -> GainScenarioResult:
     started = time.perf_counter()
     if gain_engine not in {"greedy", "joint-beam"}:
@@ -309,13 +337,17 @@ def evaluate_gain_scenario(
         (profile * scale for profile, scale in zip(accepted_profiles, accepted_scales, strict=True)),
         np.zeros_like(target),
     )
-    residual = np.clip(target - selected_total, 0.0, None)
+    signed_residual = target - selected_total
+    residual = np.clip(signed_residual, 0.0, None)
     residual_records = tuple(
         _detect_observed_records(
             generated.x,
-            residual,
+            signed_residual,
             limit=80,
             distance_scale=1.0,
+            instrument_profile=(
+                benchmark_instrument_profile() if instrument_data else None
+            ),
         )
     )
     selected_positions = np.asarray(sorted(selected_positions_list), dtype=float)
@@ -391,6 +423,7 @@ def evaluate_gain_scenario(
             accepted_family_correct=accepted_family_correct,
             joint_config=joint_config,
             joint_profile_mode=joint_profile_mode,
+            geometry_index=geometry_index,
             started=started,
         )
     if shortlist_strategy == "adaptive":
@@ -684,6 +717,91 @@ def evaluate_gain_scenario(
     )
 
 
+def _equivalent_candidate_predicate(
+    references: Mapping[str, Sequence[ReferenceLine]],
+    target_phase_id: str,
+    *,
+    fwhm: float,
+):
+    target_lines = references[target_phase_id]
+    cache: dict[str, bool] = {}
+
+    def equivalent(candidate_id: str) -> bool:
+        phase_id = str(candidate_id)
+        if phase_id not in cache:
+            cache[phase_id] = bool(
+                phase_id == target_phase_id
+                or phase_patterns_equivalent(
+                    target_lines,
+                    references[phase_id],
+                    fwhm=fwhm,
+                )
+            )
+        return cache[phase_id]
+
+    return equivalent
+
+
+def _gain_retrieval_diagnostics(
+    pool: GainRetrievalPool,
+    *,
+    target_equivalent,
+) -> GainRetrievalDiagnostics:
+    ranks = []
+    seconds = []
+    counts = []
+    for run in pool.channel_runs:
+        rank = next(
+            (hit.rank for hit in run.hits if target_equivalent(hit.phase_id)),
+            0,
+        )
+        ranks.append((run.channel, int(rank)))
+        seconds.append((run.channel, max(float(run.elapsed_seconds), 0.0)))
+        counts.append((run.channel, len(run.hits)))
+    return GainRetrievalDiagnostics(
+        channel_target_ranks=tuple(ranks),
+        channel_seconds=tuple(seconds),
+        channel_counts=tuple(counts),
+        raw_union_count=int(pool.raw_union_count),
+        collapsed_family_count=int(pool.collapsed_family_count),
+        profile_pool_count=len(pool.optional_ids),
+        target_present_before_compression=any(
+            target_equivalent(phase_id) for phase_id in pool.raw_candidate_ids
+        ),
+        target_present_after_compression=any(
+            target_equivalent(phase_id) for phase_id in pool.optional_ids
+        ),
+    )
+
+
+def _observed_fallback_channel(
+    references: Mapping[str, Sequence[ReferenceLine]],
+    observed_records: Sequence[object],
+    *,
+    limit: int,
+) -> RetrievalChannelRun:
+    """Keep joint Gain usable when residual thresholding yields no evidence."""
+
+    started = time.perf_counter()
+    scores = {}
+    counts = {}
+    for phase_id, lines in references.items():
+        result = fingerprint_match_score(
+            lines,
+            list(observed_records),
+            wavelength=1.5406,
+            refine_alignment=False,
+        )
+        scores[phase_id] = float(result.score)
+        counts[phase_id] = int(result.features.observed_matched)
+    ranked = rank_channel_scores("strong", scores, counts, limit=limit)
+    return replace(
+        ranked,
+        elapsed_seconds=max(0.0, time.perf_counter() - started),
+        diagnostic="observed fallback after empty residual retrieval",
+    )
+
+
 def _evaluate_joint_gain_scenario(
     *,
     references,
@@ -714,52 +832,86 @@ def _evaluate_joint_gain_scenario(
     accepted_family_correct,
     joint_config,
     joint_profile_mode,
+    geometry_index,
     started,
 ) -> GainScenarioResult:
     retrieval_started = time.perf_counter()
-    original_records = (
-        select_informative_residual_peaks(generated.observed_records, limit=12)
-        if joint_profile_mode == "peak-windows"
-        else generated.observed_records
-    )
-    original_scores = {
-        candidate_id: fingerprint_match_score(
-            references[candidate_id],
-            list(original_records),
-            wavelength=1.5406,
-            refine_alignment=False,
-        )
-        for candidate_id in candidate_ids
+    candidate_references = {
+        candidate_id: references[candidate_id] for candidate_id in candidate_ids
     }
-    rare_ids = rare_line_gain_shortlist(
-        {candidate_id: references[candidate_id] for candidate_id in candidate_ids},
-        residual_records,
-        quick,
-        limit=min(12, max(1, len(candidate_ids))),
+    accepted_ids = tuple(item.phase_id for item in accepted_components)
+    retrieval_references = {
+        **candidate_references,
+        **{phase_id: references[phase_id] for phase_id in accepted_ids},
+    }
+    channel_limits = (
+        ("strong", min(40, len(candidate_references))),
+        ("rare", min(40, len(candidate_references))),
+        ("geometry", min(40, len(candidate_references))),
+        ("overlap", min(40, len(candidate_references))),
     )
-    pool = build_joint_candidate_pool(
+    if geometry_index is None:
+        geometry_index = build_residual_geometry_index(candidate_references)
+    channel_runs = (
+        strong_residual_channel(
+            candidate_references,
+            residual_records,
+            limit=dict(channel_limits)["strong"],
+        ),
+        rare_line_channel(
+            candidate_references,
+            residual_records,
+            limit=dict(channel_limits)["rare"],
+        ),
+        geometry_channel(
+            geometry_index,
+            residual_records,
+            limit=dict(channel_limits)["geometry"],
+            wavelength=1.5406,
+            zero_shift=global_zero_shift,
+        ),
+        overlap_deficit_channel(
+            candidate_references,
+            overlap_records,
+            limit=dict(channel_limits)["overlap"],
+        ),
+    )
+    if not any(run.hits for run in channel_runs):
+        channel_runs = (
+            _observed_fallback_channel(
+                candidate_references,
+                generated.observed_records,
+                limit=dict(channel_limits)["strong"],
+            ),
+            *channel_runs[1:],
+        )
+    retrieval_pool = build_gain_retrieval_pool(
+        channel_runs,
+        retrieval_references,
+        accepted_ids,
+        residual_records,
+        (record.two_theta for record in overlap_records),
+        config=GainRetrievalConfig(
+            channel_limits=channel_limits,
+            union_limit=min(80, max(1, len(candidate_references))),
+            profile_limit=min(24, max(1, int(shortlist_limit))),
+        ),
+        wavelength=1.5406,
+        zero_shift=global_zero_shift,
+    )
+    pool = adapt_multichannel_retrieval_pool(
+        retrieval_pool,
+        required_ids=accepted_ids,
+    )
+    target_equivalent = _equivalent_candidate_predicate(
         references,
-        original_scores=original_scores,
-        residual_scores=quick,
-        rare_candidate_ids=rare_ids,
-        accepted_phase_ids=tuple(item.phase_id for item in accepted_components),
-        original_limit=min(40, max(1, len(candidate_ids))),
-        residual_limit=min(40, max(1, len(candidate_ids))),
-        rare_limit=min(12, max(1, len(candidate_ids))),
-        optional_limit=min(max(1, int(shortlist_limit)), 60),
-        target_phase_id=target_component.phase_id,
+        target_component.phase_id,
         fwhm=accepted_fwhm,
     )
-    if joint_profile_mode == "peak-windows":
-        pool = replace(
-            pool,
-            optional_ids=prefilter_joint_profile_ids(
-                pool,
-                residual_scores=quick,
-                limit=min(24, max(1, int(shortlist_limit))),
-                rescue_count=4,
-            ),
-        )
+    retrieval_diagnostics = _gain_retrieval_diagnostics(
+        retrieval_pool,
+        target_equivalent=target_equivalent,
+    )
     retrieval_seconds = time.perf_counter() - retrieval_started
 
     profile_started = time.perf_counter()
@@ -828,7 +980,15 @@ def _evaluate_joint_gain_scenario(
         profile_mode=joint_profile_mode,
         window_centers=tuple(record.two_theta for record in residual_records),
     )
-    target_pattern_family = pool.family_for(target_component.phase_id)
+    target_representative = next(
+        (phase_id for phase_id in pool.optional_ids if target_equivalent(phase_id)),
+        None,
+    )
+    target_pattern_family = (
+        pool.family_for(target_representative)
+        if target_representative is not None
+        else f"pattern:{target_component.phase_id}"
+    )
     target_rank = _ranked_family_position(
         evaluation.ranked_family_keys,
         target_pattern_family,
@@ -849,14 +1009,6 @@ def _evaluate_joint_gain_scenario(
     best = min(
         evaluation.search_result.combinations,
         key=lambda item: (item.score, item.card_keys),
-    )
-    target_representative = next(
-        (
-            phase_id
-            for phase_id in pool.optional_ids
-            if pool.family_for(phase_id) == target_pattern_family
-        ),
-        None,
     )
     target_direct = (
         fingerprint_match_score(
@@ -952,6 +1104,7 @@ def _evaluate_joint_gain_scenario(
         ),
         full_set_recovered=true_families.issubset(best_families),
         false_positive_families=len(best_families - true_families),
+        retrieval_diagnostics=retrieval_diagnostics,
     )
 
 
@@ -971,6 +1124,8 @@ def run_gain_benchmark(
     gain_engine: str = "greedy",
     joint_config: JointPhaseSearchConfig | None = None,
     joint_profile_mode: str = "full",
+    geometry_shells: int = 12,
+    geometry_selection: str = "low_q",
 ) -> Path:
     with BenchmarkDataset.open(dataset_path) as dataset:
         phases = dataset.phase_descriptors()
@@ -1011,6 +1166,8 @@ def run_gain_benchmark(
                 gain_engine,
                 joint_config,
                 joint_profile_mode,
+                geometry_shells,
+                geometry_selection,
             )
         )
     else:
@@ -1029,6 +1186,8 @@ def run_gain_benchmark(
                 gain_engine,
                 joint_config,
                 joint_profile_mode,
+                geometry_shells,
+                geometry_selection,
             )
             for start in range(0, len(scenarios), chunk_size)
         ]
@@ -1038,7 +1197,7 @@ def run_gain_benchmark(
     output_dir.mkdir(parents=True, exist_ok=True)
     csv_path = output_dir / "gain_results.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=tuple(asdict(results[0])))
+        writer = csv.DictWriter(stream, fieldnames=tuple(_gain_csv_row(results[0])))
         writer.writeheader()
         for result in results:
             writer.writerow(_gain_csv_row(result))
@@ -1061,7 +1220,18 @@ def _evaluate_gain_chunk(arguments):
         gain_engine,
         joint_config,
         joint_profile_mode,
+        geometry_shells,
+        geometry_selection,
     ) = arguments
+    geometry_index = (
+        build_residual_geometry_index(
+            references,
+            max_lines=geometry_shells,
+            shell_selection=geometry_selection,
+        )
+        if gain_engine == "joint-beam"
+        else None
+    )
     results = []
     for scenario in scenarios:
         try:
@@ -1079,6 +1249,7 @@ def _evaluate_gain_chunk(arguments):
                     gain_engine=gain_engine,
                     joint_config=joint_config,
                     joint_profile_mode=joint_profile_mode,
+                    geometry_index=geometry_index,
                 )
             )
         except IndistinguishableGainScenario:
@@ -1088,10 +1259,43 @@ def _evaluate_gain_chunk(arguments):
 
 def _gain_csv_row(result: GainScenarioResult) -> dict[str, object]:
     row = asdict(result)
+    diagnostics = result.retrieval_diagnostics
+    row.pop("retrieval_diagnostics", None)
     row["dominant_evidence"] = str(result.dominant_evidence)
     for key in ("best_combination", "ranked_candidate_ids", "ranked_families"):
         row[key] = json.dumps(list(row[key]), ensure_ascii=False, separators=(",", ":"))
+    row["retrieval_channel_ranks"] = _diagnostic_json(
+        () if diagnostics is None else diagnostics.channel_target_ranks
+    )
+    row["retrieval_channel_seconds"] = _diagnostic_json(
+        () if diagnostics is None else diagnostics.channel_seconds
+    )
+    row["retrieval_channel_counts"] = _diagnostic_json(
+        () if diagnostics is None else diagnostics.channel_counts
+    )
+    row["retrieval_raw_union_count"] = 0 if diagnostics is None else diagnostics.raw_union_count
+    row["retrieval_collapsed_family_count"] = (
+        0 if diagnostics is None else diagnostics.collapsed_family_count
+    )
+    row["retrieval_profile_pool_count"] = (
+        0 if diagnostics is None else diagnostics.profile_pool_count
+    )
+    row["retrieval_target_before_compression"] = (
+        False if diagnostics is None else diagnostics.target_present_before_compression
+    )
+    row["retrieval_target_after_compression"] = (
+        False if diagnostics is None else diagnostics.target_present_after_compression
+    )
     return row
+
+
+def _diagnostic_json(values: Sequence[tuple[str, object]]) -> str:
+    return json.dumps(
+        {str(key): value for key, value in values},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _gain_summary(results: Sequence[GainScenarioResult]) -> str:
@@ -1232,6 +1436,12 @@ def main() -> int:
         default="peak-windows",
         help="Fit informative peak windows or the complete profile.",
     )
+    parser.add_argument("--geometry-shells", type=int, default=12)
+    parser.add_argument(
+        "--geometry-selection",
+        choices=("low_q", "strongest", "hybrid"),
+        default="low_q",
+    )
     args = parser.parse_args()
     output = run_gain_benchmark(
         args.dataset,
@@ -1261,6 +1471,8 @@ def main() -> int:
             minimum_relative_improvement=args.minimum_relative_improvement,
         ),
         joint_profile_mode=args.joint_profile_mode,
+        geometry_shells=args.geometry_shells,
+        geometry_selection=args.geometry_selection,
     )
     print(f"Wrote {output}")
     return 0

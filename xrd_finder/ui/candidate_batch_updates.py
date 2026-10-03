@@ -29,6 +29,7 @@ class CandidateBatchUpdateController(QObject):
         title_callback: Callable[[str], None] | None = None,
         detail_callback: Callable[[str], None] | None = None,
         interval_ms: int = 250,
+        max_batch_rows: int = 12,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -37,6 +38,7 @@ class CandidateBatchUpdateController(QObject):
         self._status_callback = status_callback
         self._title_callback = title_callback
         self._detail_callback = detail_callback
+        self._max_batch_rows = max(1, int(max_batch_rows))
         self._active_session_token: int | None = None
         self._searching = False
         self._pending: dict[tuple[str, str], None] = {}
@@ -87,6 +89,8 @@ class CandidateBatchUpdateController(QObject):
         self._emit_status()
 
     def accept_progress(self, progress: CandidatePreparationProgress) -> None:
+        if self._active_session_token is None:
+            return
         self._queued = max(0, int(progress.queued))
         self._downloading = max(0, int(progress.downloading))
         self._indexing = max(0, int(progress.indexing))
@@ -117,8 +121,9 @@ class CandidateBatchUpdateController(QObject):
 
     def flush_now(self) -> int:
         self._timer.stop()
-        keys = tuple(self._pending)
-        self._pending.clear()
+        keys = tuple(self._pending)[: self._max_batch_rows]
+        for key in keys:
+            self._pending.pop(key, None)
         rows: list[list[str]] = []
         for source, entry_id in keys:
             row = self._row_loader(source, entry_id)
@@ -130,13 +135,18 @@ class CandidateBatchUpdateController(QObject):
             self._rows_ready(rows)
             self._displayed += len(rows)
             self._ranking = 0
+        if self._pending:
+            self._timer.start()
         self._emit_status()
         return len(rows)
 
     def finish(self) -> int:
         self._searching = False
         self._emit_status()
-        return self.flush_now()
+        displayed = 0
+        while self._pending:
+            displayed += self.flush_now()
+        return displayed
 
     def mark_search_complete(self, session_token: int | None = None) -> bool:
         if session_token is not None and session_token != self._active_session_token:
@@ -150,6 +160,15 @@ class CandidateBatchUpdateController(QObject):
         self._active_session_token = None
         self._pending.clear()
         self._searching = False
+        self._local = 0
+        self._queued = 0
+        self._downloading = 0
+        self._indexing = 0
+        self._ready = 0
+        self._ranking = 0
+        self._indexed = 0
+        self._displayed = 0
+        self._failed = 0
         self._notice = ""
         if self._title_callback is not None:
             self._title_callback("Candidate list")

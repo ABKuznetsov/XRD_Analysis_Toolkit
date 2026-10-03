@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from PySide6.QtWidgets import QFileDialog, QMenu, QMessageBox, QTableWidgetItem
 
 from xrd_finder.core.structure import CellParameters
+from xrd_finder.finder.gain_policy import DEFAULT_GAIN_POLICY
 from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.ui.candidate_enrichment import (
     crystal_system_from_cell,
@@ -55,13 +56,12 @@ class PhaseFinderCandidateInfoActionsMixin:
             if gain_context is None:
                 candidate.pop("Gain (%)", None)
                 return
-            gain_context["gain_stage"] = self._gain_stage_for_context(gain_context)
+            gain_context["gain_stage"] = "combined"
             try:
-                gain_records = self._gain_stage_records(
-                    gain_context,
-                    gain_context["gain_stage"],
-                    limit=80,
-                )
+                gain_records = [
+                    *self._gain_stage_records(gain_context, "direct", limit=80),
+                    *self._gain_stage_records(gain_context, "overlap", limit=80),
+                ]
             except Exception:
                 gain_records = []
         row = [
@@ -89,6 +89,19 @@ class PhaseFinderCandidateInfoActionsMixin:
                 )
                 if gain_records
                 else 0.0
+            )
+        if gain_context is not None:
+            candidate_key = self._candidate_key(candidate)
+            profile_evaluated, profile_gain = gain_context.get(
+                "_gain_profile_support_by_key", {}
+            ).get(candidate_key, (False, None))
+            gain = DEFAULT_GAIN_POLICY.reportable_gain(
+                gain,
+                dominant_evidence=gain_context.get(
+                    "_gain_dominant_evidence_by_key", {}
+                ).get(candidate_key),
+                profile_gain=profile_gain,
+                profile_evaluated=profile_evaluated,
             )
         if gain > 0:
             candidate["Gain (%)"] = f"{gain:.1f}%" if gain < 10.0 else f"{gain:.0f}%"
@@ -218,6 +231,17 @@ class PhaseFinderCandidateInfoActionsMixin:
         if self._candidate_source(candidate) not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"} or not candidate.get("Entry"):
             return
         if self._enrich_candidate_from_local_cache(candidate):
+            return
+        source = self._candidate_source(candidate)
+        entry_id = candidate.get("Entry", "")
+        if (
+            source != "USER"
+            and entry_id
+            and self.local_phase_cache.cif_path(source, entry_id) is not None
+            and getattr(self, "_candidate_preparation_is_busy", lambda: False)()
+        ):
+            # The CIF exists because the preparation worker is indexing it.  Do
+            # not parse or calculate it again synchronously from a table click.
             return
         try:
             cif_path = self._candidate_cif_path(candidate)

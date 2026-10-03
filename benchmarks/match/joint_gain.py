@@ -18,6 +18,7 @@ from xrd_finder.finder.joint_phase_search import (
     JointPhaseSearchResult,
     search_phase_combinations,
 )
+from xrd_finder.services.gain_retrieval_union import GainRetrievalPool
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +42,27 @@ def build_joint_candidate_pool(
     **kwargs,
 ) -> JointGainCandidatePool:
     return joint_gain_candidate_pool(references, **kwargs)
+
+
+def adapt_multichannel_retrieval_pool(
+    pool: GainRetrievalPool,
+    *,
+    required_ids: Sequence[str],
+) -> JointGainCandidatePool:
+    """Adapt retrieval-only diagnostics to the frozen profile-Gain contract."""
+
+    required = tuple(str(phase_id) for phase_id in required_ids)
+    assignments = dict(pool.family_assignments)
+    for phase_id in required:
+        assignments.setdefault(phase_id, f"pattern:{phase_id}")
+    return JointGainCandidatePool(
+        required_ids=required,
+        optional_ids=tuple(pool.optional_ids),
+        raw_candidate_ids=tuple(pool.raw_candidate_ids),
+        family_assignments=tuple(sorted(assignments.items())),
+        target_present_before_collapse=None,
+        target_present_after_collapse=None,
+    )
 
 
 def build_joint_fit_mask(
@@ -231,6 +253,7 @@ def evaluate_joint_gain(
 
 __all__ = [
     "JointGainEvaluation",
+    "adapt_multichannel_retrieval_pool",
     "build_joint_candidate_pool",
     "build_joint_fit_mask",
     "evaluate_joint_gain",

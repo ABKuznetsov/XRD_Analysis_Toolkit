@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Protocol
 import math
 
 import numpy as np
-from cristma.diffraction import ConstantWidthProfile, TchProfile
+from cristma.diffraction import ConstantWidthProfile
 
 from xrd_finder.finder.context import CalculationContext
 from xrd_finder.instrument.models import InstrumentProfile
+from xrd_finder.instrument.resolution import cristma_tch_profile
 from xrd_finder.services.calculated_pattern_service import (
     HKLPeak,
     PROFILE_WINDOW_FACTOR,
@@ -25,6 +27,40 @@ class PeakProfileBackend(Protocol):
         x_grid: np.ndarray,
         context: CalculationContext,
     ) -> np.ndarray: ...
+
+
+def instrument_profile_with_width_floor(
+    instrument_profile: InstrumentProfile,
+    minimum_fwhm: float,
+    two_theta: float,
+) -> InstrumentProfile:
+    """Return a calculation copy whose resolution is at least the observed width."""
+    floor = max(float(minimum_fwhm), 1.0e-6)
+    resolution = instrument_profile.resolution
+    if resolution.model == "constant_fwhm":
+        if float(resolution.constant_fwhm_deg) >= floor:
+            return instrument_profile
+        return replace(
+            instrument_profile,
+            resolution=replace(resolution, constant_fwhm_deg=floor),
+        )
+
+    broadening = cristma_tch_profile(resolution)
+    current = max(float(broadening.fwhm_deg_at(float(two_theta))), 1.0e-6)
+    if current >= floor:
+        return instrument_profile
+    scale = floor / current
+    return replace(
+        instrument_profile,
+        resolution=replace(
+            resolution,
+            u=float(resolution.u) * scale * scale,
+            v=float(resolution.v) * scale * scale,
+            w=float(resolution.w) * scale * scale,
+            x=float(resolution.x) * scale,
+            y=float(resolution.y) * scale,
+        ),
+    )
 
 
 class FinderPeakProfileBackend:
@@ -68,13 +104,7 @@ class FinderPeakProfileBackend:
         broadening = (
             ConstantWidthProfile(float(resolution.constant_fwhm_deg))
             if resolution.model == "constant_fwhm"
-            else TchProfile(
-                u=float(resolution.u),
-                v=float(resolution.v),
-                w=float(resolution.w),
-                x=float(resolution.x),
-                y=float(resolution.y),
-            )
+            else cristma_tch_profile(resolution)
         )
 
         for peak in peaks:
@@ -101,6 +131,12 @@ class FinderPeakProfileBackend:
                     if isinstance(broadening, ConstantWidthProfile)
                     else float(broadening.fwhm_deg_at(center))
                 )
+                # The instrument profile describes the resolution floor.  A
+                # real sample can be broader because of crystallite size,
+                # strain, disorder, or unresolved overlap.  Finder estimates
+                # that observed phase width in ``context.fwhm``; discarding it
+                # here recreated an artificially narrow instrument-only line.
+                width = max(width, float(context.fwhm))
                 self._add_peak(
                     x,
                     y,

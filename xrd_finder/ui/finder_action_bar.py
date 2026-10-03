@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -232,6 +232,12 @@ class FinderActionBar(QWidget):
 
     def _preprocessing_section_toggled(self, key: str, checked: bool) -> None:
         if not checked:
+            return
+        QTimer.singleShot(0, lambda item_key=key: self._emit_preprocessing_request(item_key))
+
+    def _emit_preprocessing_request(self, key: str) -> None:
+        section = self._preprocessing_sections.get(key)
+        if section is None or not section.toggle.isChecked():
             return
         if key == "smooth":
             self.smoothRequested.emit()

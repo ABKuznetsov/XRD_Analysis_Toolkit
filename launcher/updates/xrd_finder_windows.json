@@ -1,32 +1,32 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "channel": "stable",
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
-  "published_at": "2026-09-15",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.3/XRD_Phase_Finder_Setup_v1_6_3.exe",
-  "release_notes_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/RELEASE_NOTES_1.6.3.md",
+  "published_at": "2026-10-03",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.4/XRD_Phase_Finder_Setup_v1_6_4.exe",
+  "release_notes_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/RELEASE_NOTES_1.6.4.md",
   "assets": [
     {
-      "name": "XRD_Phase_Finder_Setup_v1_6_3.exe",
+      "name": "XRD_Phase_Finder_Setup_v1_6_4.exe",
       "type": "installer",
       "platform": "windows",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.3/XRD_Phase_Finder_Setup_v1_6_3.exe",
-      "sha256": "c66176780df17444fc696620f3b859893b444c15c9846764369092aad672435c",
-      "size_bytes": 5300406
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.4/XRD_Phase_Finder_Setup_v1_6_4.exe",
+      "sha256": "2324882691ee9fb65e000095674ceae8d3008f01e76d0504cd11443f43a9a24d",
+      "size_bytes": 5347785
     }
   ],
   "summary": [
-    "Fix COD online search, repeated element searches and online database progress messages."
+    "Align Match/Gain, peak processing and database workflow with the revised manuscript."
   ],
-  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.3/XRD_Phase_Finder_Setup_v1_6_3.exe",
-  "installer_sha256": "c66176780df17444fc696620f3b859893b444c15c9846764369092aad672435c",
-  "installer_filename": "XRD_Phase_Finder_Setup_v1_6_3.exe",
-  "installer_size_bytes": 5300406,
+  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.4/XRD_Phase_Finder_Setup_v1_6_4.exe",
+  "installer_sha256": "2324882691ee9fb65e000095674ceae8d3008f01e76d0504cd11443f43a9a24d",
+  "installer_filename": "XRD_Phase_Finder_Setup_v1_6_4.exe",
+  "installer_size_bytes": 5347785,
   "platform_versions": {
-    "windows": "1.6.3"
+    "windows": "1.6.4"
   },
-  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.3"
+  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.4"
 }

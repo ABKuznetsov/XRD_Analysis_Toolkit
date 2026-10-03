@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QGridLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 
 def periodic_table_positions() -> list[tuple[str, int, int]]:
@@ -52,7 +52,7 @@ def element_sort_key(symbol: str) -> int:
 
 def element_state_style(state: str) -> str:
     palette = {
-        "neutral": ("#202328", "#3d444d", "#b7c0ca"),
+        "neutral": ("#0f8a75", "#42c7ad", "#ffffff"),
         "excluded": ("#9b1b59", "#d85a98", "#ffffff"),
         "required": ("#315f92", "#69a7e8", "#f3f9ff"),
         "optional": ("#0f8a75", "#42c7ad", "#ffffff"),
@@ -70,6 +70,9 @@ def element_state_style(state: str) -> str:
 class ElementFilterButton(QPushButton):
     leftClicked = Signal(str)
     rightClicked = Signal(str)
+    gestureStarted = Signal(str, object)
+    gestureMoved = Signal(object)
+    gestureFinished = Signal(object)
 
     def __init__(self, symbol: str) -> None:
         super().__init__(symbol)
@@ -77,25 +80,35 @@ class ElementFilterButton(QPushButton):
         self.setToolTip(
             f"{symbol}\n"
             "Left click: required element (blue).\n"
-            "Right click: optional element (green).\n"
-            "Click again to remove the filter."
+            "Right click: element absent (pink).\n"
+            "Click again to remove the filter.\n"
+            "Hold and drag to select several elements."
         )
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.RightButton:
-            self.rightClicked.emit(self.symbol)
-            event.accept()
-            return
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.leftClicked.emit(self.symbol)
+        if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
+            self.gestureStarted.emit(self.symbol, event.button())
             event.accept()
             return
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        self.gestureMoved.emit(event.globalPosition().toPoint())
+        event.accept()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
+            self.gestureFinished.emit(event.globalPosition().toPoint())
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
 
 class PeriodicTableWidget(QWidget):
     leftClicked = Signal(str)
     rightClicked = Signal(str)
+    elementsPainted = Signal(list, str)
+    modeToggleRequested = Signal()
     _GRID_COLUMNS = 19
     _GRID_ROWS = 11
 
@@ -105,13 +118,63 @@ class PeriodicTableWidget(QWidget):
         self.setToolTip(
             "Element filter table\n"
             "Left click marks an element as required.\n"
-            "Right click marks an element as optional.\n"
+            "Right click marks an element as absent.\n"
+            "Green elements may be present.\n"
             "Pink elements are excluded from the current search gate."
         )
         self._widgets: list[QWidget] = []
         self._buttons: dict[str, ElementFilterButton] = {}
+        self._element_states: dict[str, str] = {}
         self._grid: QGridLayout | None = None
+        self.mode_button: QPushButton | None = None
+        self._excluded_mode = False
+        self._drag_button = None
+        self._drag_state = ""
+        self._drag_symbols: list[str] = []
+        self._legend_labels: list[QLabel] = []
+        self._legend_swatches: list[QLabel] = []
         self._build_ui()
+
+    def _start_element_gesture(self, symbol: str, button) -> None:
+        self._drag_button = button
+        self._drag_symbols = [symbol]
+        selected_state = "required" if button == Qt.MouseButton.LeftButton else "excluded"
+        current_state = self._element_states.get(symbol, "neutral")
+        self._drag_state = "neutral" if current_state == selected_state else selected_state
+        self._buttons[symbol].setStyleSheet(element_state_style(self._drag_state))
+
+    def _extend_element_gesture(self, global_position) -> None:
+        if self._drag_button is None:
+            return
+        widget = self.childAt(self.mapFromGlobal(global_position))
+        if not isinstance(widget, ElementFilterButton):
+            return
+        if widget.symbol in self._drag_symbols:
+            previous_index = self._drag_symbols.index(widget.symbol)
+            for symbol in self._drag_symbols[previous_index + 1:]:
+                original_state = self._element_states[symbol]
+                self._buttons[symbol].setStyleSheet(element_state_style(original_state))
+            del self._drag_symbols[previous_index + 1:]
+        else:
+            self._drag_symbols.append(widget.symbol)
+            widget.setStyleSheet(element_state_style(self._drag_state))
+
+    def _finish_element_gesture(self, global_position) -> None:
+        if self._drag_button is None:
+            return
+        self._extend_element_gesture(global_position)
+        button = self._drag_button
+        state = self._drag_state
+        symbols = self._drag_symbols
+        self._drag_button = None
+        self._drag_state = ""
+        self._drag_symbols = []
+        if len(symbols) > 1:
+            self.elementsPainted.emit(symbols, state)
+        elif button == Qt.MouseButton.LeftButton:
+            self.leftClicked.emit(symbols[0])
+        else:
+            self.rightClicked.emit(symbols[0])
 
     @property
     def element_symbols(self) -> list[str]:
@@ -120,7 +183,33 @@ class PeriodicTableWidget(QWidget):
     def set_element_state(self, element: str, state: str) -> None:
         button = self._buttons.get(element)
         if button is not None:
+            self._element_states[element] = state
             button.setStyleSheet(element_state_style(state))
+
+    def set_excluded_mode(self, strict: bool) -> None:
+        self._excluded_mode = bool(strict)
+        if self.mode_button is None:
+            return
+        self.mode_button.setText("May be present" if strict else "Element absent")
+        self.mode_button.setToolTip(
+            "Allow all pink elements; keep blue required cells."
+            if strict else
+            "Mark all green elements as absent; keep blue required cells."
+        )
+        if strict:
+            self.mode_button.setStyleSheet(
+                "QPushButton { background: #0f8a75; color: #ffffff; "
+                "border: 2px solid #42c7ad; border-radius: 5px; "
+                "font-weight: 700; padding: 3px; } "
+                "QPushButton:hover { background: #159d87; }"
+            )
+        else:
+            self.mode_button.setStyleSheet(
+                "QPushButton { background: #9b1b59; color: #ffffff; "
+                "border: 2px solid #d85a98; border-radius: 5px; "
+                "font-weight: 700; padding: 3px; } "
+                "QPushButton:hover { background: #b52b6d; }"
+            )
 
     def set_scale(self, value: str) -> None:
         factor = int(value.removesuffix("%")) / 100
@@ -140,7 +229,7 @@ class PeriodicTableWidget(QWidget):
         section_gap = 10
         available_height = max(
             1,
-            self.height() - margins.top() - margins.bottom() - spacing_y * (self._GRID_ROWS - 1) - section_gap,
+            self.height() - margins.top() - margins.bottom() - spacing_y * (self._GRID_ROWS - 1) - section_gap - 22,
         )
         width = max(16, available_width // self._GRID_COLUMNS)
         height = max(14, available_height // self._GRID_ROWS)
@@ -179,6 +268,15 @@ class PeriodicTableWidget(QWidget):
         for symbol, period, group in periodic_table_positions():
             self._add_element_button(grid, symbol, period, group)
 
+        self.mode_button = QPushButton(self)
+        self.mode_button.setFixedSize(140, 32)
+        self.mode_button.clicked.connect(self.modeToggleRequested)
+        self.set_excluded_mode(False)
+        grid.addWidget(
+            self.mode_button, 2, 4, 2, 6,
+            alignment=Qt.AlignmentFlag.AlignCenter,
+        )
+
         grid.setRowMinimumHeight(8, 10)
         lanth_label = self._header_label("L")
         act_label = self._header_label("A")
@@ -193,7 +291,26 @@ class PeriodicTableWidget(QWidget):
             self._add_element_button(grid, symbol, 10, 4 + index)
 
         layout.addLayout(grid)
-        self.setMinimumHeight(190)
+        legend = QHBoxLayout()
+        legend.setContentsMargins(2, 0, 2, 0)
+        legend.setSpacing(5)
+        for state, label_text in (
+            ("required", "Required"),
+            ("neutral", "May be present"),
+            ("excluded", "Element absent"),
+        ):
+            swatch = QLabel("H", self)
+            swatch.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            swatch.setFixedSize(20, 18)
+            swatch.setStyleSheet(element_state_style(state).replace("QPushButton", "QLabel"))
+            label = QLabel(label_text, self)
+            self._legend_swatches.append(swatch)
+            self._legend_labels.append(label)
+            legend.addWidget(swatch)
+            legend.addWidget(label)
+        legend.addStretch()
+        layout.addLayout(legend)
+        self.setMinimumHeight(215)
         self._fit_cells_to_area()
 
     def _header_label(self, text: str) -> QLabel:
@@ -206,9 +323,11 @@ class PeriodicTableWidget(QWidget):
     def _add_element_button(self, grid: QGridLayout, symbol: str, row: int, column: int) -> None:
         button = ElementFilterButton(symbol)
         button.setFixedSize(22, 18)
-        button.setStyleSheet(element_state_style("excluded"))
-        button.leftClicked.connect(self.leftClicked)
-        button.rightClicked.connect(self.rightClicked)
+        button.setStyleSheet(element_state_style("neutral"))
+        self._element_states[symbol] = "neutral"
+        button.gestureStarted.connect(self._start_element_gesture)
+        button.gestureMoved.connect(self._extend_element_gesture)
+        button.gestureFinished.connect(self._finish_element_gesture)
         self._buttons[symbol] = button
         self._widgets.append(button)
         grid.addWidget(button, row, column)

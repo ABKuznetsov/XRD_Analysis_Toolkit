@@ -11,7 +11,7 @@ from packaging.specifiers import SpecifierSet
 
 REQUIRED_RUNTIME_PACKAGES = (
     ("certifi", "certifi", ""),
-    ("cristma", "cristma", "==0.1.0b9"),
+    ("cristma", "cristma", "==0.1.0b12"),
     ("numpy", "numpy", ""),
     ("packaging", "packaging", ""),
     ("pybaselines", "pybaselines", ""),
@@ -31,6 +31,7 @@ def _check_cristma_powder_api() -> None:
         from cristma.diffraction import (  # noqa: F401
             PowderPatternCalculator,
             PowderProfileCalculator,
+            ReferencePowderLineCalculator,
         )
     except ImportError as exc:
         raise RuntimeError(
@@ -40,7 +41,7 @@ def _check_cristma_powder_api() -> None:
 
     if "d_spacing_scale" not in signature(PowderProfileCalculator.calculate).parameters:
         raise RuntimeError(
-            "The installed CrIStMa 0.1.0b9 build is outdated and does not support "
+            "The installed CrIStMa build is outdated and does not support "
             "d_spacing_scale. Reinstall the Finder runtime."
         )
 

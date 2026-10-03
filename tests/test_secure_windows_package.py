@@ -31,6 +31,8 @@ class SecureWindowsPackageTests(unittest.TestCase):
             (source / "__pycache__").mkdir()
             (source / "__pycache__" / "noise.pyc").write_bytes(b"pyc")
             (source / "download.part").write_text("partial", encoding="utf-8")
+            conflict_copy = source / "module (копия с компьютера DESKTOP-S23DO39).py"
+            conflict_copy.write_text("stale code", encoding="utf-8")
 
             copy_secure_tree(source, target)
             settings_path = write_secure_mode_settings(target)
@@ -43,6 +45,7 @@ class SecureWindowsPackageTests(unittest.TestCase):
             self.assertFalse((target / "logs").exists())
             self.assertFalse((target / "__pycache__").exists())
             self.assertFalse((target / "download.part").exists())
+            self.assertFalse((target / conflict_copy.name).exists())
 
     def test_secure_seed_rejects_venv_without_base_python(self) -> None:
         from xrd_finder.tools.secure_windows_package import _prepare_secure_seed
@@ -66,6 +69,43 @@ class SecureWindowsPackageTests(unittest.TestCase):
                     data_root=data_root,
                     progress=None,
                 )
+
+    def test_secure_seed_does_not_bundle_user_settings_keys_or_databases(self) -> None:
+        from xrd_finder.tools.secure_windows_package import _prepare_secure_seed
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            sci_root = tmp_path / "Sci"
+            env_dir = sci_root / "env"
+            base_python = tmp_path / "Python311"
+            (env_dir / "Scripts").mkdir(parents=True)
+            (env_dir / "Scripts" / "python.exe").write_bytes(b"launcher")
+            base_python.mkdir()
+            (base_python / "python.exe").write_bytes(b"runtime")
+            (env_dir / "pyvenv.cfg").write_text(
+                f"home = {base_python}\nversion = 3.11.9\n",
+                encoding="utf-8",
+            )
+            data_root = tmp_path / "personal-data"
+            (data_root / "settings" / "qt" / "Xrdfinder").mkdir(parents=True)
+            (data_root / "settings" / "qt" / "Xrdfinder" / "Standalone.ini").write_text(
+                "api_key=SECRET\n", encoding="utf-8"
+            )
+            (data_root / "cod_cache").mkdir()
+            (data_root / "cod_cache" / "index.sqlite").write_bytes(b"personal database")
+
+            seed_root = tmp_path / "seed"
+            _prepare_secure_seed(
+                seed_root,
+                sci_root=sci_root,
+                data_root=data_root,
+                progress=None,
+            )
+
+            installed_data = seed_root / "Sci" / "apps" / "xrd_phase_finder" / "data"
+            self.assertTrue((installed_data / "settings" / "security.json").is_file())
+            self.assertFalse((installed_data / "settings" / "qt").exists())
+            self.assertFalse((installed_data / "cod_cache").exists())
 
     def test_inno_script_installs_prepared_runtime_and_data_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -104,6 +144,4 @@ class SecureWindowsPackageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
 

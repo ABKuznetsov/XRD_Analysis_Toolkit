@@ -6,6 +6,8 @@ __pycache__/
 __MACOSX/
 .venv/
 venv/
+.codex-test-deps/
+tmp/
 build/
 dist/
 *.egg-info/
@@ -20,8 +22,12 @@ rruff_cache/
 *.sqlite
 *.sqlite3
 *.db
+!benchmarks/match/data/
+!benchmarks/match/data/match_benchmark.sqlite
 runtime_install.log
 runtime_repair.log
 *.pkg
 *.zip
 *.7z
+*копия с компьютера*
+*conflicted copy*

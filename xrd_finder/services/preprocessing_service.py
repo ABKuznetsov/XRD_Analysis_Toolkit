@@ -248,6 +248,43 @@ def smooth_observed_curve(
         return np.convolve(values, kernel, mode="same")
 
 
+def peak_preserving_smooth(
+    y: np.ndarray,
+    *,
+    window: int,
+    strength: float = 0.6,
+) -> np.ndarray:
+    """Reduce point noise with a conservative, peak-width-limited SG filter.
+
+    The caller chooses ``window`` from the measured XRD peak width.  ``strength``
+    only blends the filtered curve with the original data, so the UI can expose
+    one intuitive control without changing the automatically selected window or
+    polynomial order.  Savitzky-Golay filtering is linear and a quadratic fit is
+    conservative for narrow diffraction peaks; the small mean correction keeps
+    the integrated signal stable at the trace boundaries.
+    """
+    values = np.asarray(y, dtype=float)
+    if len(values) < 5:
+        return np.array(values, dtype=float, copy=True)
+    fraction = float(np.clip(strength, 0.0, 1.0))
+    if fraction <= 0.0:
+        return np.array(values, dtype=float, copy=True)
+
+    finite = np.isfinite(values)
+    if int(np.count_nonzero(finite)) < 5:
+        return np.array(values, dtype=float, copy=True)
+    working = np.array(values, dtype=float, copy=True)
+    if not np.all(finite):
+        indices = np.arange(len(working), dtype=float)
+        working[~finite] = np.interp(indices[~finite], indices[finite], working[finite])
+
+    filtered = smooth_observed_curve(working, "savgol", window, polyorder=2)
+    result = working + fraction * (filtered - working)
+    result += float(np.mean(working) - np.mean(result))
+    result[~finite] = values[~finite]
+    return np.asarray(result, dtype=float)
+
+
 def estimate_background(x, y, degree: int = 10, method: str = "auto") -> np.ndarray:
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -285,9 +322,119 @@ def estimate_background(x, y, degree: int = 10, method: str = "auto") -> np.ndar
         except Exception:
             background = np.full_like(y, float(np.nanpercentile(y, 15)))
     background = _stabilize_background_edges(x, y, background)
-    floor = 0.0 if float(np.nanmin(y)) >= 0.0 else float(np.nanpercentile(y, 1))
     ceiling = float(np.nanpercentile(y, 99.5))
-    return np.clip(background, floor, ceiling)
+    return np.minimum(background, ceiling)
+
+
+def adjust_background_level(
+    x: np.ndarray,
+    y: np.ndarray,
+    background: np.ndarray,
+    level: float = 0.0,
+) -> np.ndarray:
+    """Move an automatic baseline while keeping it below local low signal.
+
+    ``level`` is limited to ``[-1, 1]``. Negative values lower the curve;
+    positive values bring it closer to the local minima. The result is not
+    clipped at zero, so a valid negative baseline remains negative.
+    """
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    background = np.asarray(background, dtype=float)
+    if x.shape != y.shape or y.shape != background.shape or len(y) < 3:
+        return np.array(background, dtype=float, copy=True)
+
+    level = float(np.clip(level, -1.0, 1.0))
+    step = _median_step(x)
+    window = _odd_window(0.55, step, minimum=9, maximum=max(9, len(y) // 6))
+    lower_envelope = percentile_filter(y, percentile=10, size=window, mode="nearest")
+    noise = max(_robust_noise(y), np.finfo(float).eps)
+
+    shifted = background + level * noise
+    clearance = noise * (1.0 - 0.7 * level)
+    local_cap = lower_envelope - clearance
+    return np.minimum(shifted, local_cap)
+
+
+def adjust_background_components(
+    x: np.ndarray,
+    y: np.ndarray,
+    physical_background: np.ndarray,
+    total_background: np.ndarray,
+    level: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Move the physical baseline without changing the broad component."""
+
+    physical = np.asarray(physical_background, dtype=float)
+    total = np.asarray(total_background, dtype=float)
+    if physical.shape != total.shape:
+        raise ValueError("Physical and total background arrays must have the same shape")
+    amorphous = np.maximum(total - physical, 0.0)
+    adjusted_physical = adjust_background_level(x, y, physical, level)
+    return adjusted_physical, adjusted_physical + amorphous
+
+
+def combine_amorphous_contribution(
+    physical_background: np.ndarray,
+    snip_total: np.ndarray,
+    strength: float,
+) -> np.ndarray:
+    """Add a selected fraction of the non-negative SNIP broad component."""
+
+    physical = np.asarray(physical_background, dtype=float)
+    total = np.asarray(snip_total, dtype=float)
+    if physical.shape != total.shape:
+        raise ValueError("Physical and SNIP background arrays must have the same shape")
+    fraction = float(np.clip(strength, 0.0, 1.0))
+    amorphous = np.maximum(total - physical, 0.0)
+    return physical + amorphous * fraction
+
+
+def restore_amorphous_contribution(
+    observed: np.ndarray,
+    physical_background: np.ndarray,
+    snip_total: np.ndarray,
+    strength: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Subtract the SNIP baseline and restore a selected amorphous fraction.
+
+    The broad contribution is the non-negative difference between the total
+    SNIP estimate and the physical background. At zero strength the complete
+    SNIP estimate is removed. At full strength only the physical background
+    is removed.
+    """
+
+    signal = np.asarray(observed, dtype=float)
+    physical = np.asarray(physical_background, dtype=float)
+    total = np.asarray(snip_total, dtype=float)
+    if signal.shape != physical.shape or physical.shape != total.shape:
+        raise ValueError("Observed and background arrays must have the same shape")
+    fraction = float(np.clip(strength, 0.0, 1.0))
+    total = np.maximum(total, physical)
+    amorphous = total - physical
+    restored = amorphous * fraction
+    return signal - total + restored, restored
+
+
+def estimate_amorphous_snip_component(
+    x: np.ndarray,
+    y: np.ndarray,
+    physical_background: np.ndarray,
+) -> np.ndarray:
+    """Estimate broad amorphous scattering above a physical baseline with SNIP."""
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    physical = np.asarray(physical_background, dtype=float)
+    if x.shape != y.shape or y.shape != physical.shape or len(y) < 15:
+        return np.zeros_like(y)
+    step = _median_step(x)
+    half_window = int(np.clip(round(0.60 / max(step, 1.0e-6)), 12, 60))
+    snip_total = estimate_background(x, y, method=f"snip_{half_window}")
+    component = np.maximum(np.asarray(snip_total, dtype=float) - physical, 0.0)
+    sigma = max(0.10 / max(step, 1.0e-6), 1.0)
+    return np.maximum(gaussian_filter1d(component, sigma=sigma, mode="nearest"), 0.0)
 
 def estimate_amorphous_chebyshev(
     x: np.ndarray,
@@ -393,8 +540,6 @@ def _cap_background_to_local_signal(x: np.ndarray, y: np.ndarray, background: np
     cap_window = _odd_window(0.65, step, minimum=9, maximum=max(9, len(ys) // 6))
     local_cap = percentile_filter(ys, percentile=62, size=cap_window, mode="nearest") + max(noise * 2.0, 1.0)
     bg_sorted = np.minimum(bg_sorted, local_cap)
-    floor = 0.0 if float(np.nanmin(y)) >= 0.0 else float(np.nanpercentile(y, 0.5))
-    bg_sorted = np.maximum(bg_sorted, floor)
     capped = np.empty_like(bg_sorted)
     capped[order] = bg_sorted
     return capped

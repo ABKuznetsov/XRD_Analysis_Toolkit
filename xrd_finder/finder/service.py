@@ -21,6 +21,7 @@ from xrd_finder.finder.models import (
 from xrd_finder.finder.matching import XrdMatchingOptions, XrdSearchMatchResult, search_match_result
 from xrd_finder.finder.observed_pattern_processor import ObservedPatternData, ObservedPatternProcessor
 from xrd_finder.finder.profile_calculator import CachedProfileCalculator, array_fingerprint
+from xrd_finder.finder.profile_width_estimator import estimate_phase_fwhm_from_signal
 from xrd_finder.services.calculated_pattern_service import (
     CU_KA1_WAVELENGTH,
     CalculatedPatternService,
@@ -927,33 +928,12 @@ class FinderService:
         *,
         base_fwhm: float,
     ) -> float:
-        x = np.asarray(x_grid, dtype=float)
-        y = np.asarray(target_y, dtype=float)
-        fallback = float(np.clip(base_fwhm, 0.04, 0.80))
-        if not peaks or len(x) < 8 or len(x) != len(y) or float(np.nanmax(y)) <= 0.0:
-            return fallback
-        strong = sorted(
-            (peak for peak in peaks if float(getattr(peak, "intensity", 0.0) or 0.0) >= 4.0),
-            key=lambda peak: float(getattr(peak, "intensity", 0.0) or 0.0),
-            reverse=True,
-        )[:24]
-        widths: list[float] = []
-        for peak in strong:
-            width = self._local_signal_fwhm(
-                x,
-                y,
-                float(peak.two_theta),
-                search_radius=max(0.18, min(0.85, fallback * 3.0)),
-                window_radius=max(0.45, min(1.8, fallback * 7.0)),
-            )
-            if width is None:
-                continue
-            intensity = max(float(getattr(peak, "intensity", 1.0) or 1.0), 1.0)
-            repeats = max(1, min(7, int(round(intensity / 16.0))))
-            widths.extend([width] * repeats)
-        if len(widths) < 2:
-            return fallback
-        return float(np.clip(np.nanpercentile(np.asarray(widths, dtype=float), 60), 0.04, 0.80))
+        return estimate_phase_fwhm_from_signal(
+            peaks,
+            x_grid,
+            target_y,
+            base_fwhm=base_fwhm,
+        )
 
     def _local_signal_fwhm(
         self,

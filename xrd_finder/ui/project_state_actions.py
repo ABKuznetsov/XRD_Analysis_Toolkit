@@ -230,16 +230,33 @@ class PhaseFinderProjectStateActionsMixin:
                 )
 
     def _restore_filter_state(self, state: FinderProjectState) -> None:
-        self.element_states = dict(state.element_states)
-        self.selected_elements = set(state.selected_elements)
-        self.selected_element_order = list(state.selected_element_order)
+        stored_states = dict(state.element_states)
+        symbols = self._element_symbols()
+        required = {
+            element for element, value in stored_states.items() if value == "required"
+        } | set(state.selected_elements)
+        legacy_allowed = {
+            element for element, value in stored_states.items() if value in {"optional", "neutral", "any"}
+        }
+        excluded = {
+            element for element, value in stored_states.items() if value == "excluded"
+        }
+        if state.exclude_all_other_elements:
+            excluded.update(set(symbols) - required - legacy_allowed)
+        self.element_states = {
+            **{element: "required" for element in required},
+            **{element: "excluded" for element in excluded - required},
+        }
+        self.selected_elements = set(required)
+        self.selected_element_order = [
+            element for element in state.selected_element_order if element in self.selected_elements
+        ]
         self.exclude_all_other_elements = bool(state.exclude_all_other_elements)
         if self.element_table is not None:
-            default_state = "excluded" if self.exclude_all_other_elements else "neutral"
-            for element in self._element_symbols():
+            for element in symbols:
                 self.element_table.set_element_state(
                     element,
-                    self.element_states.get(element, default_state),
+                    self.element_states.get(element, "neutral"),
                 )
         if self.search_input is not None:
             self.search_input.setText(state.search_text)

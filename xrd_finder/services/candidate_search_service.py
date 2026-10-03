@@ -42,11 +42,14 @@ class CandidateSearchOptions:
     optional_elements: list[str] = field(default_factory=list)
     required_elements: list[str] = field(default_factory=list)
     observed_peak_positions: list[float] = field(default_factory=list)
+    restrict_to_selected_elements: bool = True
+    defer_candidate_preparation: bool = False
 
 
 class CandidateSearchService:
     STRUCTURAL_RESULT_LIMIT = 500
     LOCAL_INDEXED_RESULT_LIMIT = 5000
+    LOCAL_FINGERPRINT_RESULT_LIMIT = 500
     ONLINE_RESULT_LIMIT = 300
     ONLINE_MAX_RESULT_LIMIT = 1200
     COMPUTATIONAL_RESULT_LIMIT = 150
@@ -242,7 +245,11 @@ class CandidateSearchService:
             cod_key = self.search_cache_key("text", query, options.excluded_elements)
             cod_cache_has_rows = self._candidate_rows_have_source(rows, "COD")
             cod_search_is_fresh = self.local_phase_cache.search_is_fresh("COD", cod_key)
-            if cod_cache_has_rows and not cod_search_is_fresh:
+            if (
+                cod_cache_has_rows
+                and not cod_search_is_fresh
+                and not bool(getattr(options, "defer_candidate_preparation", False))
+            ):
                 self._queue_background_cod_text_refresh(
                     cod_key=cod_key,
                     query=query,
@@ -311,10 +318,12 @@ class CandidateSearchService:
                         )
                         self.local_phase_cache.upsert_materials_project_entries(mp_entries)
                         self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                        queued = self.queue_background_mp_downloads(
-                            mp_entries,
-                            session_token=session_token,
-                        )
+                        queued = 0
+                        if not bool(getattr(options, "defer_candidate_preparation", False)):
+                            queued = self.queue_background_mp_downloads(
+                                mp_entries,
+                                session_token=session_token,
+                            )
                         self._emit_search_progress(progress, f"Materials Project: found {len(mp_entries)}, queued {queued} CIF downloads", len(rows), queued, 9)
                     except Exception as exc:
                         if not rows:
@@ -335,10 +344,12 @@ class CandidateSearchService:
                         )
                         self.local_phase_cache.upsert_computational_entries(aflow_entries)
                         self._mark_search_if_complete("AFLOW", aflow_key, len(aflow_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                        queued = self.queue_background_aflow_downloads(
-                            aflow_entries,
-                            session_token=session_token,
-                        )
+                        queued = 0
+                        if not bool(getattr(options, "defer_candidate_preparation", False)):
+                            queued = self.queue_background_aflow_downloads(
+                                aflow_entries,
+                                session_token=session_token,
+                            )
                         self._emit_search_progress(progress, f"AFLOW: found {len(aflow_entries)}, queued {queued} CIF downloads", len(rows), queued, 10)
                     except Exception as exc:
                         if not rows:
@@ -359,10 +370,12 @@ class CandidateSearchService:
                         )
                         self.local_phase_cache.upsert_computational_entries(oqmd_entries)
                         self._mark_search_if_complete("OQMD", oqmd_key, len(oqmd_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                        queued = self.queue_background_oqmd_downloads(
-                            oqmd_entries,
-                            session_token=session_token,
-                        )
+                        queued = 0
+                        if not bool(getattr(options, "defer_candidate_preparation", False)):
+                            queued = self.queue_background_oqmd_downloads(
+                                oqmd_entries,
+                                session_token=session_token,
+                            )
                         self._emit_search_progress(progress, f"OQMD: found {len(oqmd_entries)}, queued {queued} CIF downloads", len(rows), queued, 11)
                     except Exception as exc:
                         if not rows:
@@ -439,7 +452,11 @@ class CandidateSearchService:
             cod_key = self.search_cache_key("elements", elements, options.excluded_elements)
             cod_cache_has_rows = self._candidate_rows_have_source(rows, "COD")
             cod_search_is_fresh = self.local_phase_cache.search_is_fresh("COD", cod_key)
-            if cod_cache_has_rows and not cod_search_is_fresh:
+            if (
+                cod_cache_has_rows
+                and not cod_search_is_fresh
+                and not bool(getattr(options, "defer_candidate_preparation", False))
+            ):
                 self._queue_background_cod_elements_refresh(
                     cod_key,
                     elements,
@@ -504,10 +521,12 @@ class CandidateSearchService:
                         )
                         self.local_phase_cache.upsert_materials_project_entries(mp_entries)
                         self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                        queued = self.queue_background_mp_downloads(
-                            mp_entries,
-                            session_token=session_token,
-                        )
+                        queued = 0
+                        if not bool(getattr(options, "defer_candidate_preparation", False)):
+                            queued = self.queue_background_mp_downloads(
+                                mp_entries,
+                                session_token=session_token,
+                            )
                         self._emit_search_progress(progress, f"Materials Project: found {len(mp_entries)}, queued {queued} CIF downloads", len(rows), queued, 8)
                     except Exception as exc:
                         rows.append(["MP", "", "", "Materials Project search failed", "", str(exc)])
@@ -535,10 +554,12 @@ class CandidateSearchService:
                         )
                         self.local_phase_cache.upsert_computational_entries(aflow_entries)
                         self._mark_search_if_complete("AFLOW", aflow_key, len(aflow_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                        queued = self.queue_background_aflow_downloads(
-                            aflow_entries,
-                            session_token=session_token,
-                        )
+                        queued = 0
+                        if not bool(getattr(options, "defer_candidate_preparation", False)):
+                            queued = self.queue_background_aflow_downloads(
+                                aflow_entries,
+                                session_token=session_token,
+                            )
                         self._emit_search_progress(progress, f"AFLOW: found {len(aflow_entries)}, queued {queued} CIF downloads", len(rows), queued, 10)
                     except Exception as exc:
                         rows.append(["AFLOW", "", "", "AFLOW search failed", "", str(exc)])
@@ -566,10 +587,12 @@ class CandidateSearchService:
                         )
                         self.local_phase_cache.upsert_computational_entries(oqmd_entries)
                         self._mark_search_if_complete("OQMD", oqmd_key, len(oqmd_entries), self.COMPUTATIONAL_RESULT_LIMIT)
-                        queued = self.queue_background_oqmd_downloads(
-                            oqmd_entries,
-                            session_token=session_token,
-                        )
+                        queued = 0
+                        if not bool(getattr(options, "defer_candidate_preparation", False)):
+                            queued = self.queue_background_oqmd_downloads(
+                                oqmd_entries,
+                                session_token=session_token,
+                            )
                         self._emit_search_progress(progress, f"OQMD: found {len(oqmd_entries)}, queued {queued} CIF downloads", len(rows), queued, 11)
                     except Exception as exc:
                         rows.append(["OQMD", "", "", "OQMD search failed", "", str(exc)])
@@ -584,14 +607,30 @@ class CandidateSearchService:
         elements: list[str] | None = None,
     ):
         if options.observed_peak_positions:
-            peak_entries = self.local_phase_cache.search_by_peaks(
-                options.observed_peak_positions,
-                text=text,
-                elements=elements,
-                excluded_elements=options.excluded_elements,
-                sources=options.local_sources,
-                limit=self.LOCAL_INDEXED_RESULT_LIMIT,
-            )
+            fingerprint_entries = []
+            if not text:
+                fingerprint_entries = self.local_phase_cache.search_by_geometric_fingerprint(
+                    options.observed_peak_positions,
+                    elements=elements,
+                    excluded_elements=options.excluded_elements,
+                    sources=options.local_sources,
+                    limit=self.LOCAL_FINGERPRINT_RESULT_LIMIT,
+                )
+            if fingerprint_entries:
+                return fingerprint_entries
+            peak_entries = []
+            positions = options.observed_peak_positions
+            for count in [len(positions), *[size for size in (32, 16) if size < len(positions)]]:
+                peak_entries = self.local_phase_cache.search_by_peaks(
+                    positions[:count],
+                    text=text,
+                    elements=elements,
+                    excluded_elements=options.excluded_elements,
+                    sources=options.local_sources,
+                    limit=self.LOCAL_INDEXED_RESULT_LIMIT,
+                )
+                if peak_entries:
+                    break
             text_entries = []
             if text or elements:
                 text_entries = self.local_phase_cache.search(
@@ -822,6 +861,7 @@ class CandidateSearchService:
                 result_limit=limit,
             ),
             session_token=session_token,
+            queue_downloads=not bool(getattr(options, "defer_candidate_preparation", False)),
         )
 
     def _refresh_cod_elements_cache(
@@ -848,6 +888,7 @@ class CandidateSearchService:
             result_limit=result_limit,
             fetch=fetch,
             session_token=session_token,
+            queue_downloads=not bool(getattr(options, "defer_candidate_preparation", False)),
         )
 
     def _refresh_cod_batches(
@@ -857,6 +898,7 @@ class CandidateSearchService:
         result_limit: int | None,
         fetch: Callable[[int], tuple[list[CodEntry], int]],
         session_token: int | None,
+        queue_downloads: bool = True,
     ) -> list[CodEntry]:
         limit = max(1, int(result_limit or self.ONLINE_RESULT_LIMIT))
         collected: list[CodEntry] = []
@@ -865,10 +907,11 @@ class CandidateSearchService:
             collected.extend(cod_entries)
             self.local_phase_cache.upsert_cod_entries(cod_entries)
             self._mark_search_if_complete("COD", cod_key, result_count, limit)
-            self.queue_background_cod_downloads(
-                cod_entries,
-                session_token=session_token,
-            )
+            if queue_downloads:
+                self.queue_background_cod_downloads(
+                    cod_entries,
+                    session_token=session_token,
+                )
             if result_count < limit or limit >= self.ONLINE_MAX_RESULT_LIMIT:
                 return self._dedupe_cod_entries(collected)
             limit = min(
@@ -1038,6 +1081,79 @@ class CandidateSearchService:
                     session_token=session_token,
                 )
             )
+        return queued
+
+    def queue_candidate_rows(
+        self,
+        rows: list[list[str]],
+        *,
+        session_token: int | None = None,
+    ) -> int:
+        """Queue CIF preparation only after a broad manual search is accepted."""
+
+        queued = 0
+        seen: set[tuple[str, str]] = set()
+        for row in rows:
+            normalized = normalize_candidate_row(row)
+            source = normalized[0].strip().upper()
+            entry_id = normalized[1].strip()
+            key = source, entry_id
+            if not source or not entry_id or key in seen:
+                continue
+            seen.add(key)
+            cached = self.local_phase_cache.get(source, entry_id)
+            formula = normalized[2].strip()
+            name = normalized[3].strip()
+            spacegroup = normalized[4].strip()
+            if source == "COD":
+                fallback = CodEntry(
+                    cod_id=entry_id,
+                    formula=formula,
+                    name=name,
+                    spacegroup=spacegroup,
+                )
+                target = self.local_phase_cache.cif_dir / f"{entry_id}.cif"
+                queued += int(self._queue_candidate_preparation(
+                    source=source,
+                    entry_id=entry_id,
+                    fetch=lambda entry_id=entry_id: self.cod_online.download_cif(
+                        entry_id, self.local_phase_cache.cif_dir
+                    ),
+                    existing_path=target if target.is_file() else None,
+                    fallback=fallback,
+                    session_token=session_token,
+                ))
+            elif source == "MP" and self.materials_project is not None:
+                target_dir = self.local_phase_cache.root / "materials_project_cif"
+                target = target_dir / f"{entry_id}.cif"
+                queued += int(self._queue_candidate_preparation(
+                    source=source,
+                    entry_id=entry_id,
+                    fetch=lambda entry_id=entry_id: self.materials_project.download_cif(
+                        entry_id, target_dir
+                    ),
+                    existing_path=target if target.is_file() else None,
+                    session_token=session_token,
+                ))
+            elif source in {"AFLOW", "OQMD"}:
+                service = self.aflow if source == "AFLOW" else self.oqmd
+                if service is None:
+                    continue
+                target_dir = self.local_phase_cache.root / f"{source.lower()}_cif"
+                url_hint = str(getattr(cached, "source_text", "") or "")
+                queued += int(self._queue_candidate_preparation(
+                    source=source,
+                    entry_id=entry_id,
+                    fetch=lambda service=service, entry_id=entry_id, target_dir=target_dir,
+                    url_hint=url_hint, formula=formula: service.download_cif(
+                        entry_id,
+                        target_dir,
+                        url_hint=url_hint,
+                        formula_hint=formula,
+                    ),
+                    existing_path=self.local_phase_cache.cif_path(source, entry_id),
+                    session_token=session_token,
+                ))
         return queued
 
     def queue_background_mp_downloads(self, entries, *, session_token: int | None = None) -> int:
@@ -1211,9 +1327,7 @@ class CandidateSearchService:
         return task()
 
     def cancel_background_downloads(self) -> int:
-        # Search sessions are invalidated by token. Useful cache preparation is
-        # allowed to finish and can serve a later search.
-        return 0
+        return self.preparation_queue.clear()
 
     def shutdown_background_downloads(self) -> None:
         self.preparation_queue.shutdown(wait=False)
@@ -1350,7 +1464,7 @@ class CandidateSearchService:
                 row_elements = formula_elements(formula)
                 if required and not required.issubset(row_elements):
                     continue
-                if allowed and not row_elements.issubset(allowed):
+                if getattr(options, "restrict_to_selected_elements", True) and allowed and not row_elements.issubset(allowed):
                     continue
                 if excluded and row_elements & excluded:
                     continue

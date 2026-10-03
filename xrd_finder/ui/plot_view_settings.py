@@ -763,9 +763,9 @@ class PlotViewSettingsWidget(QScrollArea):
         self.layer_observed_checkbox.toggled.connect(self._emit_settings)
         self.layer_preview_peak_positions_checkbox = QCheckBox()
         self.layer_preview_peak_positions_checkbox.setChecked(True)
-        self.layer_preview_peak_positions_checkbox.setEnabled(False)
+        self.layer_preview_peak_positions_checkbox.toggled.connect(self._emit_settings)
         self.layer_preview_peak_positions_checkbox.setToolTip(
-            "Temporary candidate preview is always visible and is separate from accepted phase tick marks."
+            "Show or hide the temporary sticks for the candidate selected in the results table."
         )
         self.layer_total_profile_checkbox = QCheckBox()
         self.layer_total_profile_checkbox.setChecked(True)
@@ -1058,7 +1058,9 @@ class PlotViewSettingsWidget(QScrollArea):
             cursor_vertical_line_visible=bool(self.cursor_line_checkbox.isChecked()),
             hkl_labels_visible=bool(self.hkl_labels_checkbox.isChecked()),
             layer_observed_visible=bool(self.layer_observed_checkbox.isChecked()),
-            layer_preview_peak_positions_visible=True,
+            layer_preview_peak_positions_visible=bool(
+                self.layer_preview_peak_positions_checkbox.isChecked()
+            ),
             layer_total_profile_visible=bool(self.layer_total_profile_checkbox.isChecked()),
             layer_phase_profiles_visible=bool(self.layer_phase_profiles_checkbox.isChecked()),
             layer_background_visible=bool(self.layer_background_checkbox.isChecked()),
@@ -1198,7 +1200,9 @@ class PlotViewSettingsWidget(QScrollArea):
         self.cursor_line_checkbox.setChecked(settings.cursor_vertical_line_visible)
         self.hkl_labels_checkbox.setChecked(settings.hkl_labels_visible)
         self.layer_observed_checkbox.setChecked(settings.layer_observed_visible)
-        self.layer_preview_peak_positions_checkbox.setChecked(True)
+        self.layer_preview_peak_positions_checkbox.setChecked(
+            settings.layer_preview_peak_positions_visible
+        )
         self.layer_total_profile_checkbox.setChecked(settings.layer_total_profile_visible)
         self.layer_phase_profiles_checkbox.setChecked(settings.layer_phase_profiles_visible)
         self.layer_background_checkbox.setChecked(settings.layer_background_visible)

@@ -159,11 +159,18 @@ def geometry_channel(
     residual_records: Iterable[object],
     *,
     limit: int,
+    wavelength: float = 1.5406,
+    zero_shift: float = 0.0,
 ) -> RetrievalChannelRun:
-    """Rank candidates by common-zero-invariant pair/triplet evidence."""
+    """Rank candidates by tube-independent powder d-shell geometry."""
 
     started = time.perf_counter()
-    scores, evidence_counts = residual_geometry_scores(index, residual_records)
+    scores, evidence_counts = residual_geometry_scores(
+        index,
+        residual_records,
+        wavelength=wavelength,
+        zero_shift=zero_shift,
+    )
     ranked = rank_channel_scores(
         "geometry", scores, evidence_counts, limit=limit
     )

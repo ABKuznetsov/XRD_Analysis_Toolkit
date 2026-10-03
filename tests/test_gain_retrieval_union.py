@@ -203,6 +203,35 @@ class GainRetrievalUnionTests(unittest.TestCase):
         self.assertLess(pool.optional_ids.index("overlap-exempt"), pool.optional_ids.index("missing"))
         self.assertLess(pool.optional_ids.index("weak-exempt"), pool.optional_ids.index("missing"))
 
+    def test_line_level_compression_uses_d_spacing_across_xray_tubes(self):
+        copper = 1.5406
+        cobalt = 1.7890
+        correct_d = (4.437, 2.976, 2.014)
+        references = {
+            "wrong": self._d_lines((4.10, 2.70, 1.85), copper),
+            "correct": self._d_lines(correct_d, copper),
+        }
+        cobalt_positions = tuple(
+            math.degrees(2.0 * math.asin(cobalt / (2.0 * d_spacing)))
+            for d_spacing in correct_d
+        )
+        runs = (self._run("geometry", [("wrong", 1.0), ("correct", 1.0)]),)
+
+        pool = build_gain_retrieval_pool(
+            runs,
+            references,
+            accepted_ids=(),
+            residual_records=self._records(*cobalt_positions),
+            config=GainRetrievalConfig(
+                channel_limits=(("geometry", 2),),
+                union_limit=2,
+                profile_limit=1,
+            ),
+            wavelength=cobalt,
+        )
+
+        self.assertEqual(pool.optional_ids, ("correct",))
+
     @staticmethod
     def _run(channel, phase_scores):
         hits = tuple(
@@ -229,6 +258,19 @@ class GainRetrievalUnionTests(unittest.TestCase):
         return tuple(
             SimpleNamespace(two_theta=float(position), intensity=float(intensity))
             for position, intensity in values
+        )
+
+    @staticmethod
+    def _d_lines(d_spacings, wavelength):
+        return tuple(
+            SimpleNamespace(
+                d=float(d_spacing),
+                two_theta=math.degrees(
+                    2.0 * math.asin(float(wavelength) / (2.0 * float(d_spacing)))
+                ),
+                intensity=float(100 - index * 10),
+            )
+            for index, d_spacing in enumerate(d_spacings)
         )
 
     @staticmethod

@@ -7,7 +7,11 @@ import numpy as np
 
 from xrd_finder.finder.context import CalculationContext
 from xrd_finder.finder.line_calculator import CachedLineCalculator, CandidateLineData
-from xrd_finder.finder.profile_backend import FinderPeakProfileBackend, PeakProfileBackend
+from xrd_finder.finder.profile_backend import (
+    FinderPeakProfileBackend,
+    PeakProfileBackend,
+    instrument_profile_with_width_floor,
+)
 from xrd_finder.finder.reference_lines import ReferenceLineSet
 from xrd_finder.instrument.models import InstrumentProfile
 from xrd_finder.services.calculated_pattern_service import (
@@ -148,10 +152,22 @@ class CachedProfileCalculator:
                 source_fingerprint=lines.fingerprint,
                 instrument_profile=instrument_profile,
             )
+        representative_two_theta = 40.0
+        if lines.peaks:
+            representative_peak = max(
+                lines.peaks,
+                key=lambda peak: float(getattr(peak, "intensity", 0.0) or 0.0),
+            )
+            representative_two_theta = float(representative_peak.two_theta)
+        effective_instrument_profile = instrument_profile_with_width_floor(
+            instrument_profile,
+            context.fwhm,
+            representative_two_theta,
+        )
         cache_key = (
-            "cristma-lines-v1",
+            "cristma-lines-v2-width-floor",
             lines.fingerprint,
-            instrument_profile.calculation_key(),
+            effective_instrument_profile.calculation_key(),
             context.profile_key,
         )
         cached = self._profile_cache.get(cache_key)
@@ -163,7 +179,7 @@ class CachedProfileCalculator:
         result = adapter.profile_from_lines(
             lines.cristma_lines,
             x_grid=x_grid,
-            instrument_profile=instrument_profile,
+            instrument_profile=effective_instrument_profile,
             zero_shift_deg=context.global_zero_shift,
             d_spacing_scale=context.cell_scale,
         )

@@ -10,7 +10,9 @@ from xrd_finder.ui.theme import command_button_style
 
 class CompositionPanel(QWidget):
     requiredElementToggled = Signal(str)
-    optionalElementToggled = Signal(str)
+    excludedElementToggled = Signal(str)
+    elementsPainted = Signal(list, str)
+    exclusionModeToggleRequested = Signal()
     searchRequested = Signal()
     resetRequested = Signal()
 
@@ -55,7 +57,9 @@ class CompositionPanel(QWidget):
         element_layout.addLayout(top_row)
 
         self.element_table.leftClicked.connect(self.requiredElementToggled)
-        self.element_table.rightClicked.connect(self.optionalElementToggled)
+        self.element_table.rightClicked.connect(self.excludedElementToggled)
+        self.element_table.elementsPainted.connect(self.elementsPainted)
+        self.element_table.modeToggleRequested.connect(self.exclusionModeToggleRequested)
         element_layout.addWidget(self.element_table, 1)
         self.splitter.addWidget(element_panel)
 
@@ -102,7 +106,7 @@ class CompositionPanel(QWidget):
         actions = QHBoxLayout()
         search_button = QPushButton("Find")
         search_button.setMinimumHeight(34)
-        search_button.setToolTip("Search candidate phases using the selected required/optional elements and enabled databases.")
+        search_button.setToolTip("Search candidate phases using required and absent elements and enabled databases.")
         search_button.setStyleSheet(command_button_style("#0b8043", "#35a96c"))
         search_button.clicked.connect(self.searchRequested)
 

@@ -95,6 +95,112 @@ class CandidateTableWidget(QTableWidget):
             self.setUpdatesEnabled(True)
         self.viewport().update()
 
+    def upsert_rows(
+        self,
+        rows: list[list[str]],
+        normalize_row: Callable[[list[str]], list[str]],
+    ) -> tuple[int, int]:
+        """Update keyed rows in place and insert new scored rows without rebuilding."""
+
+        incoming: dict[tuple[str, str], list[str]] = {}
+        for row in rows:
+            normalized = normalize_row(row)
+            key = self._candidate_key_from_values(normalized)
+            if key is not None:
+                incoming[key] = normalized
+        if not incoming:
+            return 0, 0
+
+        context = self.capture_context()
+        previous_block_state = self.blockSignals(True)
+        self.setUpdatesEnabled(False)
+        self.setSortingEnabled(False)
+        added = 0
+        updated = 0
+        try:
+            # Informational placeholder rows do not belong beside real candidates.
+            for row_index in range(self.rowCount() - 1, -1, -1):
+                values = self.row_values(row_index)
+                if not values.get("Source", "") or not values.get("Entry", ""):
+                    self.removeRow(row_index)
+
+            existing = {
+                key: row_index
+                for row_index in range(self.rowCount())
+                if (key := self._candidate_key_from_values(self._row_texts(row_index))) is not None
+            }
+            for key, normalized in incoming.items():
+                row_index = existing.get(key, -1)
+                if row_index >= 0:
+                    self._update_row_values(row_index, normalized)
+                    updated += 1
+            for key, normalized in incoming.items():
+                if key in existing:
+                    continue
+                row_index = self._score_insertion_index(normalized)
+                self.insertRow(row_index)
+                self._update_row_values(row_index, normalized)
+                added += 1
+            self._apply_score_arrows()
+            self.restore_context(context, select_first_if_missing=False)
+        finally:
+            self.blockSignals(previous_block_state)
+            self.setUpdatesEnabled(True)
+        self.viewport().update()
+        return added, updated
+
+    def _update_row_values(self, row_index: int, values: list[str]) -> None:
+        for column in range(self.columnCount()):
+            value = str(values[column] if column < len(values) else "")
+            item = self.item(row_index, column)
+            if item is None:
+                self.setItem(row_index, column, QTableWidgetItem(value))
+            elif value or not item.text().strip():
+                item.setText(value)
+
+    def _row_texts(self, row_index: int) -> list[str]:
+        return [
+            self.item(row_index, column).text().strip()
+            if self.item(row_index, column) is not None
+            else ""
+            for column in range(self.columnCount())
+        ]
+
+    @staticmethod
+    def _candidate_key_from_values(values: list[str]) -> tuple[str, str] | None:
+        if len(values) < 2:
+            return None
+        source = str(values[0] or "").strip().upper()
+        entry_id = str(values[1] or "").strip()
+        return (source, entry_id) if source and entry_id else None
+
+    def _score_insertion_index(self, values: list[str]) -> int:
+        score_column = self._column_index(
+            self.GAIN_HEADER if self._gain_active else self.MATCH_HEADER
+        )
+        if score_column < 0:
+            return self.rowCount()
+        incoming_score = self._score_number(
+            values[score_column] if score_column < len(values) else ""
+        )
+        if incoming_score <= 0.0:
+            return self.rowCount()
+        for row_index in range(self.rowCount()):
+            item = self.item(row_index, score_column)
+            existing_score = self._score_number(item.text() if item is not None else "")
+            if incoming_score > existing_score:
+                return row_index
+        return self.rowCount()
+
+    @staticmethod
+    def _score_number(value: object) -> float:
+        try:
+            text = str(value or "").replace("%", "").replace(",", ".")
+            text = text.removeprefix("←").removeprefix("→").strip()
+            return float(text) if text else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
     def capture_context(self) -> CandidateTableContext:
         values = self.selected_row_values()
         candidate_key = None

@@ -106,6 +106,34 @@ class CandidatePreparationQueue:
         with self._lock:
             return self._progress_locked()
 
+    def cancel_session(self, session_token: int) -> int:
+        """Detach a search session and discard jobs used only by that session."""
+        token = int(session_token)
+        cancelled = 0
+        with self._lock:
+            for key, pending in tuple(self._jobs.items()):
+                if token not in pending.session_tokens:
+                    continue
+                pending.session_tokens.discard(token)
+                if pending.session_tokens:
+                    continue
+                self._jobs.pop(key, None)
+                cancelled += 1
+            progress = self._progress_locked()
+        self._emit_progress(progress)
+        return cancelled
+
+    def clear(self) -> int:
+        """Discard all queued work and detach any preparation already in flight."""
+        with self._lock:
+            cancelled = len(self._jobs)
+            self._jobs.clear()
+            self._ready = 0
+            self._failed = 0
+            progress = self._progress_locked()
+        self._emit_progress(progress)
+        return cancelled
+
     def shutdown(self, *, wait: bool = True) -> None:
         with self._lock:
             if self._shutdown:
@@ -118,6 +146,7 @@ class CandidatePreparationQueue:
     def _run(self) -> None:
         while True:
             _priority, _sequence, key = self._queue.get()
+            pending: _PendingJob | None = None
             try:
                 if key is None:
                     return
@@ -128,15 +157,35 @@ class CandidatePreparationQueue:
                 payload = pending.job.existing_payload
                 if pending.job.fetch is not None:
                     self._set_stage(key, CandidatePreparationStage.DOWNLOADING)
+                    if not self._is_current(key, pending):
+                        continue
                     payload = pending.job.fetch()
+                    if not self._is_current(key, pending):
+                        continue
                 self._set_stage(key, CandidatePreparationStage.INDEXING)
+                if not self._is_current(key, pending):
+                    continue
                 result = pending.job.index(payload)
-                self._finish(key, CandidatePreparationStage.READY, result=result)
+                self._finish(
+                    key,
+                    CandidatePreparationStage.READY,
+                    result=result,
+                    expected=pending,
+                )
             except Exception as exc:
                 if key is not None:
-                    self._finish(key, CandidatePreparationStage.FAILED, error=str(exc))
+                    self._finish(
+                        key,
+                        CandidatePreparationStage.FAILED,
+                        error=str(exc),
+                        expected=pending,
+                    )
             finally:
                 self._queue.task_done()
+
+    def _is_current(self, key: tuple[str, str], pending: _PendingJob) -> bool:
+        with self._lock:
+            return self._jobs.get(key) is pending
 
     def _set_stage(self, key: tuple[str, str], stage: CandidatePreparationStage) -> None:
         with self._lock:
@@ -154,8 +203,12 @@ class CandidatePreparationQueue:
         *,
         result: object | None = None,
         error: str = "",
+        expected: _PendingJob | None = None,
     ) -> None:
         with self._lock:
+            pending = self._jobs.get(key)
+            if expected is not None and pending is not expected:
+                return
             pending = self._jobs.pop(key, None)
             if pending is None:
                 return

@@ -5,12 +5,14 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPalette
+from PySide6.QtGui import QGuiApplication, QKeySequence, QPalette
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QGridLayout,
     QHeaderView,
     QFrame,
     QLabel,
+    QMenu,
     QPushButton,
     QScrollArea,
     QTableWidget,
@@ -21,6 +23,73 @@ from PySide6.QtWidgets import (
 )
 
 from xrd_finder.services.ccdc_service import extract_doi
+
+
+class CopyableTableWidget(QTableWidget):
+    """Read-only table with spreadsheet-style selection and TSV copying."""
+
+    def __init__(self, rows: int = 0, columns: int = 0, parent: QWidget | None = None) -> None:
+        super().__init__(rows, columns, parent)
+        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        header = self.horizontalHeader()
+        header.setSectionsClickable(True)
+        header.sectionClicked.connect(self.selectColumn)
+
+    def selected_text(self) -> str:
+        indexes = self.selectedIndexes()
+        if not indexes:
+            return ""
+        selected = {(index.row(), index.column()) for index in indexes}
+        rows = sorted({row for row, _column in selected})
+        columns = sorted({column for _row, column in selected})
+        includes_every_row = len(rows) == self.rowCount() and rows == list(range(self.rowCount()))
+        lines: list[str] = []
+        if includes_every_row:
+            lines.append("\t".join(self._header_text(column) for column in columns))
+        for row in rows:
+            lines.append(
+                "\t".join(
+                    self._item_text(row, column) if (row, column) in selected else ""
+                    for column in columns
+                )
+            )
+        return "\n".join(lines)
+
+    def copy_selection(self) -> None:
+        text = self.selected_text()
+        if text:
+            QGuiApplication.clipboard().setText(text)
+
+    def keyPressEvent(self, event) -> None:
+        if event.matches(QKeySequence.StandardKey.Copy):
+            self.copy_selection()
+            event.accept()
+            return
+        if event.matches(QKeySequence.StandardKey.SelectAll):
+            self.selectAll()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def contextMenuEvent(self, event) -> None:
+        menu = QMenu(self)
+        copy_action = menu.addAction("Copy")
+        copy_action.setShortcut(QKeySequence.StandardKey.Copy)
+        copy_action.setEnabled(bool(self.selectedIndexes()))
+        copy_action.triggered.connect(self.copy_selection)
+        select_all_action = menu.addAction("Select all")
+        select_all_action.setShortcut(QKeySequence.StandardKey.SelectAll)
+        select_all_action.triggered.connect(self.selectAll)
+        menu.exec(event.globalPos())
+
+    def _header_text(self, column: int) -> str:
+        item = self.horizontalHeaderItem(column)
+        return item.text() if item is not None else ""
+
+    def _item_text(self, row: int, column: int) -> str:
+        item = self.item(row, column)
+        return item.text() if item is not None else ""
 
 
 class CompoundCardWidget(QWidget):
@@ -226,7 +295,11 @@ class CompoundCardWidget(QWidget):
         layout.addWidget(self.atom_table, 2)
 
         layout.addWidget(self._section_title("Diffraction data"))
-        self.diffraction_table = self._table(["d [A]", "2theta", "Int.", "h", "k", "l", "Mult."], stretch_columns={2, 6})
+        self.diffraction_table = self._table(
+            ["d [A]", "2theta", "Int.", "h", "k", "l", "Mult."],
+            stretch_columns={2, 6},
+            copyable=True,
+        )
         self.diffraction_table.setMinimumHeight(300)
         layout.addWidget(self.diffraction_table, 3)
         return scroll
@@ -343,13 +416,21 @@ class CompoundCardWidget(QWidget):
             "color: #f1f3f4; font-weight: 700; padding: 5px 7px;"
         )
 
-    def _table(self, headers: list[str], stretch_columns: set[int] | None = None) -> QTableWidget:
-        table = QTableWidget(0, len(headers))
+    def _table(
+        self,
+        headers: list[str],
+        stretch_columns: set[int] | None = None,
+        *,
+        copyable: bool = False,
+    ) -> QTableWidget:
+        table_class = CopyableTableWidget if copyable else QTableWidget
+        table = table_class(0, len(headers))
         table.setHorizontalHeaderLabels(headers)
         table.verticalHeader().setVisible(False)
         table.setAlternatingRowColors(True)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        if not copyable:
+            table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
         header = table.horizontalHeader()

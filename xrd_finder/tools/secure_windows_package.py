@@ -38,6 +38,10 @@ EXCLUDED_SUFFIXES = {
     ".pyo",
     ".tmp",
 }
+EXCLUDED_NAME_FRAGMENTS = (
+    "копия с компьютера",
+    "conflicted copy",
+)
 
 ProgressCallback = Callable[[str], None]
 
@@ -292,11 +296,12 @@ def _prepare_secure_seed(
     _emit(progress, "Copying base Python runtime")
     copy_secure_tree(base_python, seed_sci_root / "python")
 
-    _emit(progress, "Copying local Finder data and caches")
-    if data_root.exists():
-        copy_secure_tree(data_root, seed_data_root)
-    else:
-        seed_data_root.mkdir(parents=True, exist_ok=True)
+    # Installer payloads must never contain the builder's personal settings,
+    # API keys, instrument profiles, CIF libraries, or database indexes.
+    # data_root remains in the signature for compatibility with build commands.
+    _ = data_root
+    _emit(progress, "Preparing empty Finder user-data area")
+    seed_data_root.mkdir(parents=True, exist_ok=True)
     write_secure_mode_settings(seed_data_root)
 
 
@@ -347,7 +352,15 @@ def _assert_secure_payload(app_stage: Path, seed_root: Path, scripts_dir: Path) 
     if missing:
         raise RuntimeError("Secure Windows installer payload is incomplete:\n" + "\n".join(missing))
     forbidden = list(app_stage.rglob("*.pyc"))
+    forbidden.extend(
+        path
+        for path in app_stage.rglob("*")
+        if any(fragment in path.name.casefold() for fragment in EXCLUDED_NAME_FRAGMENTS)
+    )
     forbidden.extend(seed_root.rglob("*.pyc"))
+    data_seed = seed_root / "Sci" / "apps" / "xrd_phase_finder" / "data"
+    forbidden.extend(data_seed.glob("cod_cache"))
+    forbidden.extend(data_seed.glob("settings/qt"))
     if forbidden:
         raise RuntimeError(f"Forbidden generated file in secure installer payload: {forbidden[0]}")
 
@@ -373,6 +386,8 @@ def _should_copy_path(path: Path) -> bool:
     if path.name in EXCLUDED_NAMES:
         return False
     if path.name.startswith("._"):
+        return False
+    if any(fragment in path.name.casefold() for fragment in EXCLUDED_NAME_FRAGMENTS):
         return False
     if path.suffix in EXCLUDED_SUFFIXES:
         return False

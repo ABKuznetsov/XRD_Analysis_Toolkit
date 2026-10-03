@@ -1,5 +1,5 @@
 #define MyAppName "XRD Phase Finder"
-#define MyAppVersion "1.6.3"
+#define MyAppVersion "1.6.4"
 #define MyAppPublisher "ABKuznetsov"
 #define MyAppURL "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit"
 
@@ -18,7 +18,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 PrivilegesRequired=admin
 OutputDir=..\..\dist\releases
-OutputBaseFilename=XRD_Phase_Finder_Setup_v1_6_3
+OutputBaseFilename=XRD_Phase_Finder_Setup_v1_6_4
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -50,7 +50,7 @@ Source: "..\..\launcher\stop_running_finder.ps1"; DestDir: "{app}\launcher"; Fla
 Source: "..\..\launcher\setup_sci_env.bat"; DestDir: "{app}\launcher"; Flags: ignoreversion
 Source: "..\..\launcher\showcase\*"; DestDir: "{app}\launcher\showcase"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "__pycache__\*,*.pyc,*.pyo,*.log,*.pkg,*.zip,*.7z"
 Source: "..\..\launcher\updates\xrd_finder.json"; DestDir: "{app}\launcher\updates"; Flags: ignoreversion
-Source: "..\..\xrd_finder\*"; DestDir: "{app}\xrd_finder"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "__pycache__\*,*.pyc,*.pyo,*.log,*.pkg,*.zip,*.7z"
+Source: "..\..\xrd_finder\*"; DestDir: "{app}\xrd_finder"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "__pycache__\*,data\*,settings\*,cod_cache\*,*копия с компьютера*,*conflicted copy*,*.sqlite,*.db,*.pyc,*.pyo,*.log,*.pkg,*.zip,*.7z"
 
 [InstallDelete]
 Type: filesandordirs; Name: "{app}\.agents"
@@ -85,7 +85,7 @@ Type: files; Name: "{app}\MANIFEST.in"
 Type: files; Name: "{app}\PROJECT_HEALTH.md"
 Type: files; Name: "{app}\pyproject.toml"
 Type: files; Name: "{app}\README.md"
-Type: files; Name: "{app}\RELEASE_NOTES_1.6.3.md"
+Type: files; Name: "{app}\RELEASE_NOTES_1.6.4.md"
 Type: files; Name: "{app}\repair_xrd_finder_windows_runtime.bat"
 Type: files; Name: "{app}\requirements-dev.txt"
 Type: files; Name: "{app}\run_finder.bat"

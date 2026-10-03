@@ -7,16 +7,82 @@ import numpy as np
 
 from benchmarks.match.generate_profiles import ReferenceLine
 from benchmarks.match.joint_gain import (
+    adapt_multichannel_retrieval_pool,
     build_joint_candidate_pool,
     build_joint_fit_mask,
     evaluate_joint_gain,
     prefilter_joint_profile_ids,
     select_informative_residual_peaks,
 )
+from benchmarks.match.gain_retrieval import JointGainCandidatePool
+from xrd_finder.services.gain_retrieval_channels import RetrievalChannelRun
+from xrd_finder.services.gain_retrieval_union import GainRetrievalPool
 from xrd_finder.finder.joint_phase_search import JointPhaseSearchConfig
 
 
 class JointGainAdapterTests(unittest.TestCase):
+    def test_multichannel_pool_adapter_does_not_change_profile_gain(self):
+        x = np.linspace(10.0, 30.0, 9)
+        profile = np.zeros(len(x))
+        profile[[2, 6]] = (5.0, 2.0)
+        references = {
+            "target": (
+                ReferenceLine(float(x[2]), 100.0),
+                ReferenceLine(float(x[6]), 40.0),
+            )
+        }
+        family_assignments = (("target", "pattern:target"),)
+        baseline_pool = JointGainCandidatePool(
+            required_ids=(),
+            optional_ids=("target",),
+            raw_candidate_ids=("target",),
+            family_assignments=family_assignments,
+            target_present_before_collapse=None,
+            target_present_after_collapse=None,
+        )
+        retrieval_pool = GainRetrievalPool(
+            optional_ids=("target",),
+            family_assignments=family_assignments,
+            channel_runs=(RetrievalChannelRun("strong", (), 0.0),),
+            raw_union_count=1,
+            collapsed_family_count=1,
+            raw_candidate_ids=("target",),
+        )
+        adapted = adapt_multichannel_retrieval_pool(retrieval_pool, required_ids=())
+        config = JointPhaseSearchConfig(
+            max_added_phases=1,
+            derivative_weight=0.0,
+            complexity_penalty=0.0,
+            minimum_phase_snr=0.0,
+            minimum_relative_improvement=0.0,
+            minimum_reported_gain=0.0,
+        )
+
+        baseline = evaluate_joint_gain(
+            x=x,
+            target=profile,
+            weights=np.ones(len(x)),
+            profiles={"target": profile},
+            references=references,
+            pool=baseline_pool,
+            config=config,
+        )
+        candidate = evaluate_joint_gain(
+            x=x,
+            target=profile,
+            weights=np.ones(len(x)),
+            profiles={"target": profile},
+            references=references,
+            pool=adapted,
+            config=config,
+        )
+
+        self.assertEqual(candidate.ranked_phase_ids, baseline.ranked_phase_ids)
+        self.assertEqual(
+            candidate.search_result.candidate_gains,
+            baseline.search_result.candidate_gains,
+        )
+
     def test_fast_residual_selector_keeps_only_strongest_maxima(self):
         peaks = tuple(
             SimpleNamespace(two_theta=float(index), intensity=float(index))

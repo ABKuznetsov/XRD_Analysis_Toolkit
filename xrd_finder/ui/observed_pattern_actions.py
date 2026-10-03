@@ -21,6 +21,83 @@ from xrd_finder.plot_export.metadata import CanvasLayer
 from xrd_finder.ui.plot_layer_items import tag_xrd_plot_item
 
 
+def _processed_amorphous_fill_values(
+    physical_y: np.ndarray,
+    restored_total_y: np.ndarray,
+    local_minimum_y: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the display-space bounds of a restored amorphous component."""
+
+    physical = np.asarray(physical_y, dtype=float)
+    total = np.asarray(restored_total_y, dtype=float)
+    lower = np.asarray(local_minimum_y, dtype=float)
+    if physical.shape != total.shape or total.shape != lower.shape:
+        raise ValueError("Background and local-minimum arrays must have the same shape")
+    restored = np.maximum(total - physical, 0.0)
+    return lower, lower + restored
+
+
+def _minimum_peak_baseline(y: np.ndarray) -> np.ndarray:
+    """Return one robust lower signal level without clipping negatives."""
+
+    y_values = np.asarray(y, dtype=float)
+    if len(y_values) == 0:
+        return np.array(y_values, dtype=float, copy=True)
+    finite = y_values[np.isfinite(y_values)]
+    if not finite.size:
+        return np.zeros_like(y_values)
+    level = float(np.nanpercentile(finite, 10.0))
+    return np.full_like(y_values, level)
+
+
+def _pattern_has_amorphous_fill(pattern: Pattern | object) -> bool:
+    if not bool(getattr(pattern, "processed_background_removed", False)):
+        return False
+    try:
+        physical = np.asarray(getattr(pattern, "estimated_background_points", []), dtype=float)
+        total = np.asarray(getattr(pattern, "estimated_background_with_halo_points", []), dtype=float)
+    except Exception:
+        return False
+    if (
+        physical.ndim != 2
+        or total.ndim != 2
+        or physical.shape[1] < 2
+        or total.shape[1] < 2
+        or len(physical) < 2
+        or len(total) < 2
+    ):
+        return False
+    total_y = np.interp(physical[:, 0], total[:, 0], total[:, 1])
+    return bool(np.nanmax(np.maximum(total_y - physical[:, 1], 0.0)) > 1.0e-9)
+
+
+def _processed_amorphous_background_data(pattern: Pattern | object) -> np.ndarray | None:
+    """Return the displayed amorphous upper curve for profile fitting."""
+
+    if not _pattern_has_amorphous_fill(pattern):
+        return None
+    try:
+        processed = np.asarray(getattr(pattern, "processed_points", []), dtype=float)
+        physical = np.asarray(getattr(pattern, "estimated_background_points", []), dtype=float)
+        total = np.asarray(getattr(pattern, "estimated_background_with_halo_points", []), dtype=float)
+    except Exception:
+        return None
+    if processed.ndim != 2 or processed.shape[1] < 2 or len(processed) < 2:
+        return None
+    x = np.asarray(processed[:, 0], dtype=float)
+    y = np.asarray(processed[:, 1], dtype=float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    if np.count_nonzero(mask) < 2:
+        return None
+    x = x[mask]
+    y = y[mask]
+    physical_y = np.interp(x, physical[:, 0], physical[:, 1])
+    total_y = np.interp(x, total[:, 0], total[:, 1])
+    restored = np.maximum(total_y - physical_y, 0.0)
+    baseline = _minimum_peak_baseline(y)
+    return np.column_stack([x, baseline + restored])
+
+
 class DraggableLegendTextItem(pg.TextItem):
     def __init__(self, *args, moved_callback=None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -52,10 +129,16 @@ class PhaseFinderObservedPatternActionsMixin:
             f'<span style="color:{escape(observed_color)}; font-weight:600;">'
             f'{escape(str(pattern.name))}</span>'
         ]
+        if _pattern_has_amorphous_fill(pattern):
+            lines.append(
+                '<span style="color:#1a73e8; font-size:'
+                f'{font_size + 2}pt;">&#9632;</span>'
+                '&nbsp;<span style="color:#111111;">Amorphous phase</span>'
+            )
         if not bool(getattr(settings, "multi_legend_phase_names_visible", True)):
             return (
                 f'<div style="font-family:Segoe UI; font-size:{font_size}pt; white-space:nowrap;">'
-                + lines[0]
+                + "<br>".join(lines)
                 + "</div>"
             )
         candidates = self._profile_candidates_for_pattern(pattern) if hasattr(self, "_profile_candidates_for_pattern") else []
@@ -542,8 +625,6 @@ class PhaseFinderObservedPatternActionsMixin:
     def _draw_estimated_background_components(self, loaded_patterns) -> None:
         for item in loaded_patterns:
             pattern = item.pattern
-            if getattr(pattern, "processed_background_removed", False):
-                continue
             physical = self._background_component_plot_values(
                 item,
                 getattr(pattern, "estimated_background_points", []),
@@ -552,6 +633,17 @@ class PhaseFinderObservedPatternActionsMixin:
                 item,
                 getattr(pattern, "estimated_background_with_halo_points", []),
             )
+            if getattr(pattern, "processed_background_removed", False):
+                if physical is not None and total is not None:
+                    local_minimum = self._processed_amorphous_floor_plot_values(item)
+                    self._draw_amorphous_background_fill(
+                        pattern.id,
+                        physical,
+                        total,
+                        processed=True,
+                        local_minimum=local_minimum,
+                    )
+                continue
             if physical is not None and total is not None:
                 self._draw_amorphous_background_fill(pattern.id, physical, total)
             for component, color, label, width in (
@@ -576,8 +668,22 @@ class PhaseFinderObservedPatternActionsMixin:
         values = np.asarray(points, dtype=float)
         if values.ndim != 2 or values.shape[1] < 2 or len(values) < 2:
             return None
-        y = np.interp(item.x, values[:, 0], values[:, 1]) + float(item.offset)
+        y = (
+            np.interp(item.x, values[:, 0], values[:, 1]) * float(item.intensity_scale)
+            + float(item.offset)
+        )
         x_plot, y_plot = self._crop_curve_to_ranges(item.x, y, self._valid_crop_ranges(item.pattern))
+        if len(x_plot) == 0:
+            return None
+        return x_plot, y_plot
+
+    def _processed_amorphous_floor_plot_values(self, item) -> tuple[np.ndarray, np.ndarray] | None:
+        floor = _minimum_peak_baseline(item.y) + float(item.offset)
+        x_plot, y_plot = self._crop_curve_to_ranges(
+            item.x,
+            floor,
+            self._valid_crop_ranges(item.pattern),
+        )
         if len(x_plot) == 0:
             return None
         return x_plot, y_plot
@@ -587,6 +693,9 @@ class PhaseFinderObservedPatternActionsMixin:
         pattern_id: str,
         physical: tuple[np.ndarray, np.ndarray],
         total: tuple[np.ndarray, np.ndarray],
+        *,
+        processed: bool = False,
+        local_minimum: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> None:
         physical_x, physical_y = physical
         total_x, total_y = total
@@ -595,20 +704,39 @@ class PhaseFinderObservedPatternActionsMixin:
         if len(physical_x) != len(total_x) or not np.allclose(physical_x, total_x, rtol=0.0, atol=1.0e-9):
             total_y = np.interp(physical_x, total_x, total_y)
             total_x = physical_x
-        lower = np.minimum(physical_y, total_y)
-        upper = np.maximum(physical_y, total_y)
+        if processed:
+            if local_minimum is None:
+                return
+            floor_x, floor_y = local_minimum
+            if len(floor_x) != len(physical_x) or not np.allclose(floor_x, physical_x, rtol=0.0, atol=1.0e-9):
+                floor_y = np.interp(physical_x, floor_x, floor_y)
+            lower, upper = _processed_amorphous_fill_values(
+                physical_y,
+                total_y,
+                floor_y,
+            )
+        else:
+            lower = np.minimum(physical_y, total_y)
+            upper = np.maximum(physical_y, total_y)
         lower_curve = pg.PlotDataItem(physical_x, lower, pen=pg.mkPen((0, 0, 0, 0)))
-        upper_curve = pg.PlotDataItem(total_x, upper, pen=pg.mkPen((0, 0, 0, 0)))
-        fill = pg.FillBetweenItem(lower_curve, upper_curve, brush=pg.mkBrush(26, 115, 232, 36))
+        upper_curve = pg.PlotDataItem(
+            total_x,
+            upper,
+            pen=pg.mkPen(26, 115, 232, 150, width=1.2) if processed else pg.mkPen((0, 0, 0, 0)),
+            name="Amorphous phase" if processed else None,
+        )
+        fill = pg.FillBetweenItem(lower_curve, upper_curve, brush=pg.mkBrush(26, 115, 232, 64))
+        layer_key = "amorphous" if processed else "background"
+        export_layer = CanvasLayer.AMORPHOUS_PHASE if processed else CanvasLayer.PHYSICAL_BACKGROUND
         for index, item in enumerate((lower_curve, upper_curve, fill)):
             tag_xrd_plot_item(
                 item,
-                layer=CanvasLayer.PHYSICAL_BACKGROUND,
+                layer=export_layer,
                 pattern_id=pattern_id,
                 object_id=f"amorphous-background-{index}",
             )
             self.match_plot.addItem(item)
-            self.plot_layers["background"].append(item)
+            self.plot_layers.setdefault(layer_key, []).append(item)
 
 
     def _observed_pattern_color(self, pattern_id: str) -> str:

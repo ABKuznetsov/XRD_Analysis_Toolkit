@@ -1,0 +1,15 @@
+{
+  "app_id": "xrd_finder",
+  "name": "XRD Phase Finder",
+  "version": "1.6.4",
+  "channel": "stable",
+  "published_at": "2026-10-03",
+  "assets": [],
+  "summary": [
+    "Align Match/Gain, peak processing and database workflow with the revised manuscript."
+  ],
+  "platform_versions": {
+    "linux": "1.6.4"
+  },
+  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.4"
+}

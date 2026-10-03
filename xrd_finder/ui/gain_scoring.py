@@ -1,17 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
-
 import numpy as np
 
-
-class GainStage(StrEnum):
-    """Residual evidence mode used while ranking an additional phase."""
-
-    DIRECT = "direct"
-    OVERLAP = "overlap"
-    HIDDEN = "hidden"
+from xrd_finder.finder.gain_policy import DEFAULT_GAIN_POLICY, GainPolicy, GainStage
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,72 +69,6 @@ def build_gain_indexed_evidence(
             )
         )
     return GainIndexedEvidence(stage=stage, indexed_matches=tuple(matches))
-
-
-@dataclass(frozen=True)
-class GainPolicy:
-    """All top-level Gain thresholds and score-combination rules."""
-
-    minimum_stage_records: int = 2
-    maximum_fit: float = 98.0
-    minimum_remaining_fit: float = 1.5
-    minimum_residual_share: float = 0.025
-    phase_count_for_exhaustion_gate: int = 5
-    minimum_profile_support: float = 0.35
-    hidden_presence_weight: float = 0.45
-
-    def select_stage(self, *, direct_count: int, overlap_count: int) -> GainStage:
-        if direct_count >= self.minimum_stage_records:
-            return GainStage.DIRECT
-        if overlap_count >= self.minimum_stage_records:
-            return GainStage.OVERLAP
-        return GainStage.HIDDEN
-
-    def residual_is_exhausted(
-        self,
-        *,
-        selected_phase_count: int,
-        before_fit: float,
-        residual_share: float,
-    ) -> bool:
-        remaining_fit = max(0.0, 100.0 - float(before_fit))
-        if float(before_fit) >= self.maximum_fit:
-            return True
-        return (
-            int(selected_phase_count) >= self.phase_count_for_exhaustion_gate
-            and (
-                remaining_fit < self.minimum_remaining_fit
-                or float(residual_share) < self.minimum_residual_share
-            )
-        )
-
-    def combine_line_and_profile(self, *, line_gain: float, profile_gain: float | None) -> float:
-        line_gain = max(float(line_gain), 0.0)
-        if line_gain <= 0.0:
-            return 0.0
-        if profile_gain is None:
-            return line_gain
-        support = float(
-            np.clip(
-                float(profile_gain) / max(line_gain, 1.0e-6),
-                self.minimum_profile_support,
-                1.0,
-            )
-        )
-        return line_gain * support
-
-    def hidden_gain(self, *, before_fit: float, presence: float) -> float:
-        remaining_fit = max(0.0, 100.0 - float(before_fit))
-        return float(
-            np.clip(
-                remaining_fit * max(float(presence), 0.0) * self.hidden_presence_weight,
-                0.0,
-                remaining_fit,
-            )
-        )
-
-
-DEFAULT_GAIN_POLICY = GainPolicy()
 
 
 def fit_residual_candidate_scale(

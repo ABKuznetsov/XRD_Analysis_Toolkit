@@ -336,6 +336,9 @@ class PhaseFinderSelectedPhasesActionsMixin:
             self._update_profile_view_context()
 
     def _schedule_candidate_gain_ranking(self) -> None:
+        if getattr(self, "_candidate_gain_ranking_running", False):
+            self._candidate_gain_refresh_requested = True
+            return
         if getattr(self, "_candidate_gain_ranking_pending", False):
             return
         self._candidate_gain_ranking_pending = True
@@ -343,7 +346,17 @@ class PhaseFinderSelectedPhasesActionsMixin:
 
     def _run_scheduled_candidate_gain_ranking(self) -> None:
         self._candidate_gain_ranking_pending = False
-        self._refresh_candidate_gain_ranking()
+        if getattr(self, "_candidate_gain_ranking_running", False):
+            self._candidate_gain_refresh_requested = True
+            return
+        self._candidate_gain_ranking_running = True
+        try:
+            self._refresh_candidate_gain_ranking()
+        finally:
+            self._candidate_gain_ranking_running = False
+            if getattr(self, "_candidate_gain_refresh_requested", False):
+                self._candidate_gain_refresh_requested = False
+                self._schedule_candidate_gain_ranking()
 
     def _refresh_candidate_gain_ranking(self) -> None:
         if not self.match_candidates:
@@ -354,20 +367,14 @@ class PhaseFinderSelectedPhasesActionsMixin:
         if hasattr(self, "_gain_sql_candidate_rows"):
             gain_context = self._candidate_gain_context()
             if gain_context is not None:
-                stage = self._gain_stage_for_context(gain_context)
-                rows.extend(self._gain_sql_candidate_rows(stage=stage, context=gain_context))
-                if stage == "direct":
-                    rows.extend(self._gain_sql_candidate_rows(stage="overlap", context=gain_context))
-                elif stage == "overlap":
-                    # Once Overlap is locked, uncovered peaks remain useful as
-                    # search hints so a phase with both shared and free lines
-                    # (for example albite) is not omitted from the candidate
-                    # pool. Ranking still uses Overlap evidence only.
-                    rows.extend(self._gain_sql_candidate_rows(stage="direct", context=gain_context))
+                rows.extend(self._gain_sql_candidate_rows(stage="combined", context=gain_context))
         # The indexed residual lookup is an accelerator, not a hard gate.
         # Keep already loaded candidates available when the narrow SQL query
         # misses a shifted or overlapping phase.
-        rows.extend(existing_rows)
+        # The residual fingerprint query searches the complete local index.
+        # Keep a bounded Match-ranked fallback for shifted or sparse patterns
+        # instead of rescoring the whole previous table with full Gain logic.
+        rows.extend(existing_rows[:120])
         rows = self.candidate_search_service.dedupe_candidate_rows(
             self._candidate_rows_without_gain(rows)
         )

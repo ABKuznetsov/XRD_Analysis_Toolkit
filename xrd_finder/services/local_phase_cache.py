@@ -10,19 +10,24 @@ from pathlib import Path
 import shutil
 import sqlite3
 import time
+from types import SimpleNamespace
 
 from xrd_finder.core.reference_structures import create_corundum_reference_structure
 from xrd_finder.core.structure import Structure
 from xrd_finder.io.cif_loader import create_phase_from_cif
+from xrd_finder.io.cif_powder_pattern import extract_cif_powder_peaks
 from xrd_finder.services.calculated_pattern_service import CU_KA1_WAVELENGTH, CalculatedPatternService
 from xrd_finder.services.cache_paths import default_phase_cache_root
 from xrd_finder.services.cod_online_service import CodEntry, CodOnlineService, formula_elements
+from xrd_finder.services.geometric_fingerprint import peak_geometric_hashes
 
 
 DEFAULT_CACHE_ROOT = default_phase_cache_root()
 DERIVED_CACHE_VERSION = 9
 INCOMPLETE_SEARCH_MAX_AGE_SECONDS = 30 * 60
 TRANSFERABLE_LIBRARY_SOURCES = frozenset({"USER", "COD", "MP"})
+GEOMETRIC_FINGERPRINT_VERSION = 1
+GEOMETRIC_FINGERPRINT_PEAK_LIMIT = 10
 
 
 def _embedded_source_dir_name(source: str) -> str:
@@ -63,6 +68,7 @@ class LocalPhaseCache:
         self.index_path = self.root / "index.sqlite"
         self.cif_dir.mkdir(parents=True, exist_ok=True)
         self._calculated_pattern_service = CalculatedPatternService()
+        self._cristma_powder_adapter = None
         self._corundum_reference_intensity: float | None = None
         self._ensure_schema()
 
@@ -451,6 +457,118 @@ class LocalPhaseCache:
                 break
         return results
 
+    def search_by_geometric_fingerprint(
+        self,
+        positions: list[float],
+        *,
+        elements: list[str] | None = None,
+        excluded_elements: list[str] | None = None,
+        sources: list[str] | None = None,
+        limit: int = 500,
+    ) -> list[CachedPhaseEntry]:
+        """Retrieve a bounded shortlist from the complete local peak index."""
+
+        query_peaks = [
+            SimpleNamespace(two_theta=float(position), intensity=float(len(positions) - index))
+            for index, position in enumerate(positions)
+            if isinstance(position, Real) and math.isfinite(float(position))
+        ]
+        query_hashes = peak_geometric_hashes(
+            query_peaks,
+            max_peaks=10,
+            expanded=False,
+        )
+        if not query_hashes:
+            return []
+        required = {element.strip() for element in elements or [] if element.strip()}
+        excluded = {element.strip() for element in excluded_elements or [] if element.strip()}
+        allowed_sources = {source.strip() for source in sources or [] if source.strip()}
+        where = ["p.derived_version = ?"]
+        params: list[object] = [DERIVED_CACHE_VERSION]
+        if allowed_sources:
+            placeholders = ", ".join("?" for _ in allowed_sources)
+            where.append(f"p.source in ({placeholders})")
+            params.extend(sorted(allowed_sources))
+        for element in sorted(required):
+            where.append(
+                "exists (select 1 from phase_elements pe "
+                "where pe.source=p.source and pe.entry_id=p.entry_id and pe.element=?)"
+            )
+            params.append(element)
+        for element in sorted(excluded):
+            where.append(
+                "not exists (select 1 from phase_elements pe "
+                "where pe.source=p.source and pe.entry_id=p.entry_id and pe.element=?)"
+            )
+            params.append(element)
+        self.ensure_geometric_fingerprint_index()
+        with self._connect() as connection:
+            connection.execute(
+                "create temp table if not exists query_geometric_hashes "
+                "(hash integer primary key) without rowid"
+            )
+            connection.execute("delete from query_geometric_hashes")
+            connection.executemany(
+                "insert or ignore into query_geometric_hashes(hash) values(?)",
+                [(int(value),) for value in query_hashes],
+            )
+            rows = connection.execute(
+                f"""
+                select p.source, p.entry_id, p.formula, p.name, p.spacegroup, p.source_text, p.cif_path, p.elements,
+                       p.a, p.b, p.c, p.alpha, p.beta, p.gamma, p.volume,
+                       p.atoms_json, p.iic, p.peaks_json, p.top_peaks_json, p.derived_version,
+                       count(distinct pf.hash) as fingerprint_votes
+                from query_geometric_hashes q
+                join phase_fingerprints pf on pf.hash=q.hash
+                join phases p on p.source=pf.source and p.entry_id=pf.entry_id
+                where {" and ".join(where)}
+                group by p.source,p.entry_id
+                order by fingerprint_votes desc,p.updated_at desc
+                limit ?
+                """,
+                (*params, max(1, int(limit))),
+            ).fetchall()
+        return [self._row_to_entry(row) for row in rows]
+
+    def ensure_geometric_fingerprint_index(self) -> int:
+        """Build missing fingerprints once for old peak-indexed entries."""
+
+        with self._connect() as connection:
+            missing = connection.execute(
+                """
+                select p.source,p.entry_id
+                from phases p
+                where p.derived_version=?
+                  and exists (
+                      select 1 from phase_peaks pp
+                      where pp.source=p.source and pp.entry_id=p.entry_id
+                  )
+                  and not exists (
+                      select 1 from phase_fingerprint_state fs
+                      where fs.source=p.source and fs.entry_id=p.entry_id and fs.version=?
+                  )
+                """,
+                (DERIVED_CACHE_VERSION, GEOMETRIC_FINGERPRINT_VERSION),
+            ).fetchall()
+            for row in missing:
+                peaks = connection.execute(
+                    """
+                    select two_theta,norm_intensity,intensity
+                    from phase_peaks
+                    where source=? and entry_id=? and top_rank is not null
+                    order by top_rank
+                    limit ?
+                    """,
+                    (row["source"], row["entry_id"], GEOMETRIC_FINGERPRINT_PEAK_LIMIT),
+                ).fetchall()
+                self._replace_phase_fingerprints(
+                    connection,
+                    row["source"],
+                    row["entry_id"],
+                    peaks,
+                )
+        return len(missing)
+
     @staticmethod
     def _d_from_two_theta(two_theta: float, wavelength: float) -> float | None:
         theta = math.radians(float(two_theta) / 2.0)
@@ -663,18 +781,41 @@ class LocalPhaseCache:
             ])
         return rows
 
-    def build_index(self) -> int:
-        count = 0
+    def build_index(self, progress=None) -> int:
+        indexed_keys: set[tuple[str, str]] = set()
+        with self._connect() as connection:
+            cached_rows = connection.execute(
+                "select source, entry_id, cif_path from phases where cif_path != '' order by source, entry_id"
+            ).fetchall()
+        existing_rows = [
+            row
+            for row in cached_rows
+            if Path(str(row["cif_path"] or "")).is_file()
+        ]
+        total = len(existing_rows)
+        for position, row in enumerate(existing_rows, start=1):
+            cif_path = Path(str(row["cif_path"] or ""))
+            source = str(row["source"] or "").upper()
+            entry_id = str(row["entry_id"] or "")
+            if progress is not None:
+                progress(f"Recalculating {source} {entry_id} with CrIStMa", position, total)
+            self.index_cif(cif_path, source=source, entry_id=entry_id)
+            indexed_keys.add((source, entry_id))
+
         for cif_path in self.cif_dir.glob("*.cif"):
-            entry_id = cif_path.stem
-            self.index_cif(cif_path, source="COD", entry_id=entry_id)
-            count += 1
+            key = ("COD", cif_path.stem)
+            if key in indexed_keys:
+                continue
+            self.index_cif(cif_path, source=key[0], entry_id=key[1])
+            indexed_keys.add(key)
         user_dir = self.root / "user_cif"
         for cif_path in user_dir.glob("*.cif") if user_dir.exists() else []:
-            entry_id = cif_path.stem
-            self.index_cif(cif_path, source="USER", entry_id=entry_id)
-            count += 1
-        return count
+            key = ("USER", cif_path.stem)
+            if key in indexed_keys:
+                continue
+            self.index_cif(cif_path, source=key[0], entry_id=key[1])
+            indexed_keys.add(key)
+        return len(indexed_keys)
 
     def clear_user_library(self) -> None:
         self._clear_sources(["USER"])
@@ -875,10 +1016,16 @@ class LocalPhaseCache:
             source_text = (fallback.source if fallback else "") or str(structure.metadata.get("publication", "") or "")
             cell = structure.cell
             atoms_json = self._atoms_to_json(structure)
-            peaks = self._calculate_cached_peaks(structure)
+            calculated_peaks = self._calculate_cached_peaks(structure, cif_path)
+            reference_peaks = extract_cif_powder_peaks(
+                cif_path,
+                wavelength=float(getattr(structure, "wavelength", None) or CU_KA1_WAVELENGTH),
+                intensity_min=0.5,
+            )
+            peaks = reference_peaks or calculated_peaks
             peaks_json = self._peaks_to_json(peaks)
             top_peaks_json = self._top_peaks_to_json(peaks)
-            iic = self._estimate_iic_from_peaks(peaks, structure)
+            iic = self._estimate_iic_from_peaks(calculated_peaks, structure)
             derived_version = DERIVED_CACHE_VERSION
         except Exception:
             formula = fallback.formula if fallback else ""
@@ -915,7 +1062,25 @@ class LocalPhaseCache:
         with self._connect() as connection:
             return self._upsert(connection, entry, keep_cif=False, insert_only=if_absent)
 
-    def _calculate_cached_peaks(self, structure) -> list:
+    def _calculate_cached_peaks(self, structure, cif_path: str | Path | None = None) -> list:
+        if cif_path is not None:
+            try:
+                from xrd_finder.instrument.models import InstrumentProfile
+                from xrd_finder.services.cristma_powder_adapter import CristmaPowderAdapter
+
+                if self._cristma_powder_adapter is None:
+                    self._cristma_powder_adapter = CristmaPowderAdapter()
+                return list(
+                    self._cristma_powder_adapter.reference_sticks_from_cif(
+                        cif_path,
+                        two_theta_min=5.0,
+                        two_theta_max=120.0,
+                        instrument_profile=InstrumentProfile.default_cu_kalpha(),
+                        use_lp=True,
+                    )
+                )
+            except Exception:
+                pass
         try:
             return self._calculated_pattern_service.calculate_sticks(
                 structure,
@@ -1101,6 +1266,26 @@ class LocalPhaseCache:
                 )
                 """
             )
+            connection.execute(
+                """
+                create table if not exists phase_fingerprints (
+                    source text not null,
+                    entry_id text not null,
+                    hash integer not null,
+                    primary key (source, entry_id, hash)
+                )
+                """
+            )
+            connection.execute(
+                """
+                create table if not exists phase_fingerprint_state (
+                    source text not null,
+                    entry_id text not null,
+                    version integer not null,
+                    primary key (source, entry_id)
+                )
+                """
+            )
             existing = {row[1] for row in connection.execute("pragma table_info(phases)").fetchall()}
             for column in ["a", "b", "c", "alpha", "beta", "gamma", "volume"]:
                 if column not in existing:
@@ -1146,6 +1331,7 @@ class LocalPhaseCache:
             connection.execute("create index if not exists idx_phase_peaks_d on phase_peaks(d, source, entry_id)")
             connection.execute("create index if not exists idx_phase_peaks_phase on phase_peaks(source, entry_id)")
             connection.execute("create index if not exists idx_phase_peaks_top_rank on phase_peaks(top_rank, two_theta, source, entry_id)")
+            connection.execute("create index if not exists idx_phase_fingerprints_hash on phase_fingerprints(hash, source, entry_id)")
             element_count = connection.execute("select count(*) from phase_elements").fetchone()[0]
             if not element_count:
                 for row in connection.execute("select source, entry_id, elements from phases").fetchall():
@@ -1174,6 +1360,8 @@ class LocalPhaseCache:
             connection.execute(f"delete from phases where source in ({placeholders})", sources)
             connection.execute(f"delete from phase_elements where source in ({placeholders})", sources)
             connection.execute(f"delete from phase_peaks where source in ({placeholders})", sources)
+            connection.execute(f"delete from phase_fingerprints where source in ({placeholders})", sources)
+            connection.execute(f"delete from phase_fingerprint_state where source in ({placeholders})", sources)
             connection.execute(f"delete from search_cache where source in ({placeholders})", sources)
         self._remove_cache_dirs([f"embedded_cif/{_embedded_source_dir_name(source)}" for source in sources])
 
@@ -1308,6 +1496,8 @@ class LocalPhaseCache:
         peaks_json: str,
     ) -> None:
         connection.execute("delete from phase_peaks where source = ? and entry_id = ?", (source, entry_id))
+        connection.execute("delete from phase_fingerprints where source = ? and entry_id = ?", (source, entry_id))
+        connection.execute("delete from phase_fingerprint_state where source = ? and entry_id = ?", (source, entry_id))
         if not peaks_json:
             return
         try:
@@ -1371,10 +1561,50 @@ class LocalPhaseCache:
                 """,
                 rows,
             )
+        self._replace_phase_fingerprints(connection, source, entry_id, rows)
+
+    def _replace_phase_fingerprints(
+        self,
+        connection: sqlite3.Connection,
+        source: str,
+        entry_id: str,
+        peak_rows,
+    ) -> None:
+        connection.execute("delete from phase_fingerprints where source=? and entry_id=?", (source, entry_id))
+        connection.execute("delete from phase_fingerprint_state where source=? and entry_id=?", (source, entry_id))
+        peaks = []
+        for row in peak_rows:
+            try:
+                if isinstance(row, sqlite3.Row):
+                    two_theta = float(row["two_theta"])
+                    normalized = float(row["norm_intensity"] or 0.0)
+                    intensity = 100.0 * normalized if normalized > 0.0 else float(row["intensity"] or 0.0)
+                else:
+                    two_theta = float(row[3])
+                    normalized = float(row[6] or 0.0)
+                    intensity = 100.0 * normalized if normalized > 0.0 else float(row[5] or 0.0)
+                peaks.append(SimpleNamespace(two_theta=two_theta, intensity=intensity))
+            except (IndexError, KeyError, TypeError, ValueError):
+                continue
+        hashes = peak_geometric_hashes(
+            peaks,
+            max_peaks=GEOMETRIC_FINGERPRINT_PEAK_LIMIT,
+        )
+        if hashes:
+            connection.executemany(
+                "insert or ignore into phase_fingerprints(source,entry_id,hash) values(?,?,?)",
+                [(source, entry_id, int(value)) for value in hashes],
+            )
+        connection.execute(
+            "insert or replace into phase_fingerprint_state(source,entry_id,version) values(?,?,?)",
+            (source, entry_id, GEOMETRIC_FINGERPRINT_VERSION),
+        )
 
     def rebuild_peak_index(self) -> int:
         with self._connect() as connection:
             connection.execute("delete from phase_peaks")
+            connection.execute("delete from phase_fingerprints")
+            connection.execute("delete from phase_fingerprint_state")
             rows = connection.execute("select source, entry_id, peaks_json from phases where peaks_json != ''").fetchall()
             for row in rows:
                 self._replace_phase_peaks(connection, row["source"], row["entry_id"], row["peaks_json"])

@@ -170,6 +170,31 @@ class GainEvaluationTests(unittest.TestCase):
         self.assertGreaterEqual(result.profile_seconds, 0.0)
         self.assertGreater(result.search_seconds, 0.0)
 
+    def test_joint_engine_records_four_channel_retrieval_diagnostics(self):
+        references, families, scenario = self._overlap_fixture()
+
+        result = evaluate_gain_scenario(
+            references,
+            families,
+            scenario,
+            shortlist_limit=24,
+            gain_engine="joint-beam",
+        )
+
+        diagnostics = result.retrieval_diagnostics
+        self.assertIsNotNone(diagnostics)
+        self.assertEqual(
+            {channel for channel, _rank in diagnostics.channel_target_ranks},
+            {"strong", "rare", "geometry", "overlap"},
+        )
+        self.assertEqual(
+            {channel for channel, _seconds in diagnostics.channel_seconds},
+            {"strong", "rare", "geometry", "overlap"},
+        )
+        self.assertLessEqual(result.shortlist_count, 24)
+        self.assertEqual(diagnostics.profile_pool_count, result.shortlist_count)
+        self.assertGreaterEqual(diagnostics.raw_union_count, diagnostics.collapsed_family_count)
+
     def test_joint_engine_records_best_combination_and_evaluated_count(self):
         references, families, scenario = self._overlap_fixture()
 
@@ -238,6 +263,12 @@ class GainEvaluationTests(unittest.TestCase):
 
         self.assertEqual(tuple(json.loads(row["best_combination"])), result.best_combination)
         self.assertEqual(tuple(json.loads(row["ranked_families"])), result.ranked_families)
+        self.assertIn("retrieval_channel_ranks", row)
+        self.assertIn("retrieval_channel_seconds", row)
+        self.assertIn("retrieval_raw_union_count", row)
+        self.assertEqual(
+            row["retrieval_profile_pool_count"], result.shortlist_count
+        )
 
     def test_joint_scales_recover_two_selected_profiles(self):
         first = [1.0, 0.0, 1.0, 0.0]

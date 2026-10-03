@@ -324,14 +324,24 @@ class PhaseFinderDatabaseActionsMixin:
         def success(result) -> None:
             count = int(result or 0)
             self._refresh_database_rows()
-            QMessageBox.information(self, "Rebuild peak index", f"Indexed peaks for {count} local phases.")
+            QMessageBox.information(
+                self,
+                "Recalculate CIF patterns",
+                f"Recalculated and indexed {count} saved CIF files.",
+            )
 
         self._run_background_task(
-            "Rebuild peak index",
-            "Rebuilding local SQL peak index...",
-            self.local_phase_cache.rebuild_peak_index,
+            "Recalculate CIF patterns",
+            "Recalculating saved CIF patterns with CrIStMa...",
+            self.local_phase_cache.build_index,
             success,
-            lambda message, _details: QMessageBox.warning(self, "Rebuild peak index failed", message),
+            lambda message, _details: QMessageBox.warning(
+                self,
+                "Recalculate CIF patterns failed",
+                message,
+            ),
+            with_progress=True,
+            show_progress_dialog=True,
         )
 
     def _confirm_clear_database(self, title: str, database_name: str) -> bool:

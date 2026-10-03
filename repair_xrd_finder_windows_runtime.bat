@@ -289,7 +289,7 @@ exit /b 0
 
 :write_requirements
 > "%REQ_FILE%" echo certifi
->> "%REQ_FILE%" echo cristma==0.1.0b9
+>> "%REQ_FILE%" echo cristma==0.1.0b12
 >> "%REQ_FILE%" echo
 >> "%REQ_FILE%" echo numpy
 >> "%REQ_FILE%" echo pybaselines
@@ -322,7 +322,7 @@ exit /b 0
 :describe
 echo XRD Phase Finder standalone runtime repair %SCRIPT_VERSION%
 echo SCI_ENV=%%LocalAppData%%\Sci\env
-echo MANDATORY=certifi cristma==0.1.0b9 numpy packaging pybaselines pyqtgraph==0.14.0 PySide6==6.7.3 rfc8785==0.1.4 scipy
+echo MANDATORY=certifi cristma==0.1.0b12 numpy packaging pybaselines pyqtgraph==0.14.0 PySide6==6.7.3 rfc8785==0.1.4 scipy
 echo MAX_REPAIR_ATTEMPTS=%MAX_REPAIR_ATTEMPTS%
 echo LOCK=%%LocalAppData%%\Sci\locks\xrd_runtime_repair.lock
 echo COMPLETE=%%LocalAppData%%\Sci\runtime_complete.flag
@@ -465,7 +465,7 @@ def validate(requirements_path: Path) -> list[str]:
 
 def self_test() -> int:
     sample = [
-        "cristma==0.1.0b9",
+        "cristma==0.1.0b12",
         "PySide6==6.7.3",
     ]
     names = []

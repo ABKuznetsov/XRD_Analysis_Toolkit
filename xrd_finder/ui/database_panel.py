@@ -182,9 +182,9 @@ class DatabasePanelWidget(QWidget):
         )
         layout.addWidget(
             self._management_row(
-                "Local peak SQL index",
+                "Local diffraction index",
                 [
-                    ("Rebuild peak index", self.rebuildLocalPeakIndexRequested),
+                    ("Recalculate CIF patterns", self.rebuildLocalPeakIndexRequested),
                 ],
             )
         )

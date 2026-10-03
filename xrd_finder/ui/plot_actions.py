@@ -55,10 +55,8 @@ class PhaseFinderPlotActionsMixin:
         preview_action = self._layer_action(
             "Candidate preview sticks",
             "preview_peak_positions",
-            checked=True,
-            enabled=False,
+            enabled=True,
         )
-        preview_action.setToolTip("Candidate preview is always visible.")
         menu.addAction(preview_action)
         menu.addAction(self._layer_action("Calculated total", "total_profile", enabled=True))
         menu.addAction(self._layer_action("Individual profiles", "phase_profiles", enabled=True))
@@ -174,11 +172,7 @@ class PhaseFinderPlotActionsMixin:
         "unknown_peaks": ("layer_unknown_peaks_visible", "layer_unknown_peaks_checkbox"),
     }
     _HKL_LAYER_FIELDS = ("hkl_labels_visible",)
-    _ALWAYS_VISIBLE_PREVIEW_LAYERS = {
-        "preview_profile",
-        "preview_peak_positions",
-        "preview_peak_links",
-    }
+    _ALWAYS_VISIBLE_PREVIEW_LAYERS = frozenset()
 
     def _active_layer_pattern_id(self) -> str | None:
         pattern = self._active_pattern() if hasattr(self, "_active_pattern") else None
@@ -370,6 +364,7 @@ class PhaseFinderPlotActionsMixin:
         "total_profile",
         "phase_profiles",
         "background",
+        "amorphous",
         "difference",
         "peak_positions",
         "phase_ticks",
@@ -592,6 +587,7 @@ class PhaseFinderPlotActionsMixin:
             "preview_profile",
             "preview_peak_positions",
             "background",
+            "amorphous",
             "total_profile",
             "calculated_profile",
             "difference",

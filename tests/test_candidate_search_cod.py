@@ -3,6 +3,10 @@ from __future__ import annotations
 import sys
 import types
 import unittest
+from types import SimpleNamespace
+from pathlib import Path
+from unittest.mock import patch
+from urllib.error import URLError
 
 cristma = types.ModuleType("cristma")
 cristma.__path__ = []
@@ -19,12 +23,29 @@ sys.modules.setdefault("cristma.symmetry", symmetry)
 sys.modules.setdefault("cristma.symmetry.affine", affine)
 
 from xrd_finder.services.candidate_search_service import CandidateSearchOptions, CandidateSearchService
-from xrd_finder.services.cod_online_service import CodEntry
+from xrd_finder.services.cod_online_service import CodEntry, CodOnlineService
+import xrd_finder.services.cod_online_service as cod_online_module
+
+
+class _Response:
+    def __init__(self, payload: bytes):
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return self._payload
 
 
 class FakeLocalPhaseCache:
     def __init__(self, *, fresh: bool = False):
         self.fresh = fresh
+        self.root = Path("cache")
+        self.cif_dir = self.root / "cif"
 
     def search_is_fresh(self, source, key):
         return self.fresh
@@ -143,6 +164,81 @@ class CandidateSearchCodTests(unittest.TestCase):
 
         self.assertEqual(rows[0][0], "COD")
         self.assertTrue(service.cod_online.element_calls)
+
+    def test_element_discovery_can_defer_cif_downloads_until_user_confirms(self):
+        service = self.make_service()
+        queued = []
+        service.queue_background_cod_downloads = (
+            lambda entries, session_token=None: queued.extend(entries) or len(entries)
+        )
+        base = self.options()
+        options = SimpleNamespace(
+            **{
+                name: getattr(base, name)
+                for name in base.__slots__
+                if name != "defer_candidate_preparation"
+            },
+            defer_candidate_preparation=True,
+        )
+
+        rows = service.search_elements(["O"], options)
+
+        self.assertTrue(rows)
+        self.assertEqual(queued, [])
+
+    def test_confirmed_rows_are_queued_once_for_candidate_preparation(self):
+        service = self.make_service()
+        submitted = []
+        service._queue_candidate_preparation = lambda **kwargs: submitted.append(kwargs) or True
+        rows = [
+            ["COD", "1000034", "Al2 Ca O8 Si2", "Anorthite", "P -1", "", "", ""],
+            ["COD", "1000034", "Al2 Ca O8 Si2", "Anorthite", "P -1", "", "", ""],
+        ]
+
+        queued = service.queue_candidate_rows(rows, session_token=12)
+
+        self.assertEqual(queued, 1)
+        self.assertEqual(submitted[0]["source"], "COD")
+        self.assertEqual(submitted[0]["entry_id"], "1000034")
+        self.assertEqual(submitted[0]["session_token"], 12)
+
+    def test_primary_cod_failover_is_status_only(self):
+        statuses = []
+        alerts = []
+        service = CodOnlineService(
+            status_callback=statuses.append,
+            alert_callback=alerts.append,
+        )
+
+        responses = [URLError("primary unavailable"), _Response(b"[]")]
+        with patch.object(cod_online_module, "ensure_online_allowed"), patch.object(
+            cod_online_module,
+            "urlopen",
+            side_effect=responses,
+        ):
+            self.assertEqual(service.search_text("quartz"), [])
+
+        self.assertEqual(alerts, [])
+        self.assertTrue(any("mirror" in message.casefold() for message in statuses))
+
+    def test_complete_cod_outage_is_status_only(self):
+        statuses = []
+        alerts = []
+        service = CodOnlineService(
+            status_callback=statuses.append,
+            alert_callback=alerts.append,
+        )
+
+        with patch.object(cod_online_module, "ensure_online_allowed"), patch.object(
+            cod_online_module,
+            "urlopen",
+            side_effect=URLError("offline"),
+        ):
+            with self.assertRaises(URLError):
+                service.search_text("quartz")
+
+        self.assertEqual(alerts, [])
+        self.assertTrue(any("local data" in message.casefold() for message in statuses))
 
 
 if __name__ == "__main__":

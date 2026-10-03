@@ -15,6 +15,7 @@ class CanvasLayer(StrEnum):
     CALCULATED_TOTAL = "calculated_total"
     PHASE_PROFILES = "phase_profiles"
     PHYSICAL_BACKGROUND = "physical_background"
+    AMORPHOUS_PHASE = "amorphous_phase"
     DIFFERENCE = "difference"
     CANDIDATE_PREVIEW = "candidate_preview"
     PHASE_TICKS = "phase_ticks"
@@ -33,6 +34,7 @@ CANVAS_LAYER_ORDER = (
     CanvasLayer.CALCULATED_TOTAL,
     CanvasLayer.PHASE_PROFILES,
     CanvasLayer.PHYSICAL_BACKGROUND,
+    CanvasLayer.AMORPHOUS_PHASE,
     CanvasLayer.DIFFERENCE,
     CanvasLayer.CANDIDATE_PREVIEW,
     CanvasLayer.PHASE_TICKS,

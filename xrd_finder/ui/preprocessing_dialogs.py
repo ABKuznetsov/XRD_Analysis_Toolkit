@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import QSignalBlocker, Qt, Signal
+from PySide6.QtCore import QSignalBlocker, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -50,6 +50,7 @@ class _OddWindowMixin:
 
 
 class _SliderRow(QWidget):
+    changed = Signal()
     released = Signal()
 
     def __init__(self, minimum: int, maximum: int, value: int, suffix: str = "", parent=None) -> None:
@@ -63,7 +64,7 @@ class _SliderRow(QWidget):
         self.value_label = QLabel()
         self.value_label.setMinimumWidth(52)
         self.value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.slider.valueChanged.connect(self._update_label)
+        self.slider.valueChanged.connect(self._value_changed)
         self.slider.sliderReleased.connect(self.released)
 
         layout = QHBoxLayout(self)
@@ -91,6 +92,10 @@ class _SliderRow(QWidget):
     def _update_label(self, value: int) -> None:
         self.value_label.setText(f"{int(value)}{self._suffix}")
 
+    def _value_changed(self, value: int) -> None:
+        self._update_label(value)
+        self.changed.emit()
+
     def _apply_enabled_style(self, enabled: bool) -> None:
         if enabled:
             self.slider.setStyleSheet("")
@@ -116,50 +121,37 @@ class SmoothPanel(QWidget, _OddWindowMixin):
         self.setObjectName("preprocessingPanel")
         self.setMinimumWidth(460)
 
-        self._method = QComboBox()
-        self._method.addItem("Savitzky-Golay", "savgol")
-        self._method.addItem("Moving average", "moving")
-        self._method.addItem("Gaussian", "gaussian")
-        self._window = _SliderRow(3, 41, self._default_window)
-        self._window.slider.setSingleStep(2)
-        self._window.slider.setPageStep(4)
-        self._polyorder = QComboBox()
-        self._polyorder.addItem("2", 2)
-        self._polyorder.addItem("3", 3)
-        self._strength = _SliderRow(1, 10, 2)
-        self._strength.setToolTip("Gaussian sigma x 10; only used by Gaussian smoothing.")
-        self._passes = QComboBox()
-        self._passes.addItem("1", 1)
-        self._passes.addItem("2", 2)
+        self._noise_reduction = _SliderRow(0, 100, 60, "%")
+        self._noise_reduction.setToolTip(
+            "Blends the original data with an automatically sized peak-preserving filter."
+        )
 
-        self._method.currentIndexChanged.connect(self._method_changed)
-        self._window.released.connect(self.previewRequested)
-        self._strength.released.connect(self.previewRequested)
-        self._passes.currentIndexChanged.connect(self.previewRequested)
-        self._polyorder.currentIndexChanged.connect(self.previewRequested)
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(90)
+        self._preview_timer.timeout.connect(self.previewRequested)
+
+        self._noise_reduction.changed.connect(self._schedule_preview)
+        self._noise_reduction.released.connect(self._flush_preview)
 
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
-        form.addRow("Function", self._method)
-        form.addRow("Window", self._window)
-        form.addRow("Polynomial order", self._polyorder)
-        form.addRow("Strength", self._strength)
-        form.addRow("Passes", self._passes)
+        form.addRow("Noise reduction", self._noise_reduction)
 
-        auto_button = QPushButton("Auto")
         cancel_button = QPushButton("Cancel")
-        ok_button = QPushButton("OK")
-        auto_button.clicked.connect(self.apply_auto)
-        cancel_button.clicked.connect(self.cancelRequested)
-        ok_button.clicked.connect(self.applyRequested)
+        apply_button = QPushButton("Apply")
+        cancel_button.clicked.connect(self._request_cancel)
+        apply_button.clicked.connect(self._request_apply)
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
-        button_row.addWidget(auto_button)
         button_row.addWidget(cancel_button)
-        button_row.addWidget(ok_button)
+        button_row.addWidget(apply_button)
 
-        hint = QLabel("Auto uses a conservative Savitzky-Golay window. Use small windows to preserve sharp XRD peaks.")
+        hint = QLabel(
+            "The filter window is selected automatically from the narrowest reliable peaks "
+            "to reduce noise while preserving peak position, width and integrated intensity."
+        )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #9aa4af;")
 
@@ -170,54 +162,28 @@ class SmoothPanel(QWidget, _OddWindowMixin):
         layout.addLayout(form)
         layout.addWidget(hint)
         layout.addLayout(button_row)
-        self._method_changed(emit_preview=False)
 
-    def _method_changed(self, *_args, emit_preview: bool = True) -> None:
-        method = self.method()
-        self._polyorder.setEnabled(method == "savgol")
-        self._strength.setEnabled(method == "gaussian")
-        if emit_preview:
-            self.previewRequested.emit()
+    def _schedule_preview(self, *_args) -> None:
+        self._preview_timer.start()
 
-    def apply_auto(self) -> None:
-        blockers = [
-            QSignalBlocker(self._method),
-            QSignalBlocker(self._window.slider),
-            QSignalBlocker(self._polyorder),
-            QSignalBlocker(self._strength.slider),
-            QSignalBlocker(self._passes),
-        ]
-        plan = self._auto_plan
-        method = str(getattr(plan, "method", "savgol"))
-        method_index = max(0, self._method.findData(method))
-        self._method.setCurrentIndex(method_index)
-        self._window.set_value(int(getattr(plan, "window", self._default_window)))
-        self._set_combo_data(self._polyorder, int(getattr(plan, "polyorder", 2)))
-        self._strength.set_value(int(round(float(getattr(plan, "gaussian_sigma", 0.2)) * 10.0)))
-        self._set_combo_data(self._passes, int(getattr(plan, "passes", 1)))
-        for blocker in blockers:
-            blocker.unblock()
-        self._method_changed(emit_preview=False)
+    def _flush_preview(self) -> None:
+        if self._preview_timer.isActive():
+            self._preview_timer.stop()
         self.previewRequested.emit()
 
-    def method(self) -> str:
-        return str(self._method.currentData())
+    def _request_apply(self) -> None:
+        self._preview_timer.stop()
+        self.applyRequested.emit()
+
+    def _request_cancel(self) -> None:
+        self._preview_timer.stop()
+        self.cancelRequested.emit()
 
     def window_size(self) -> int:
-        return self._odd(self._window.value())
+        return self._default_window
 
-    def polyorder(self) -> int:
-        return int(self._polyorder.currentData())
-
-    def gaussian_sigma(self) -> float:
-        return max(0.1, self._strength.value() / 10.0)
-
-    def passes(self) -> int:
-        return max(1, int(self._passes.currentData()))
-
-    def _set_combo_data(self, combo: QComboBox, value: int) -> None:
-        index = combo.findData(value)
-        combo.setCurrentIndex(index if index >= 0 else 0)
+    def noise_reduction(self) -> float:
+        return float(self._noise_reduction.value()) / 100.0
 
 
 class XrdCropPanel(QWidget):
@@ -451,6 +417,10 @@ class BackgroundRemovalPanel(QWidget):
             saved_target = str(initial_state.get("active_target", "physical"))
             if saved_target in self._target_settings:
                 self._active_target = saved_target
+        # The public panel deliberately exposes one automatic physical
+        # background workflow. Detailed model controls remain internal so old
+        # saved state can still be read without presenting it to the user.
+        self._active_target = "physical"
         self.setObjectName("preprocessingPanel")
         self.setMinimumWidth(500)
 
@@ -490,61 +460,80 @@ class BackgroundRemovalPanel(QWidget):
         self._low_angle_end = _SliderRow(12, 35, 20)
         self._low_angle_width = _SliderRow(1, 15, 4)
         self._low_angle_strength = _SliderRow(0, 100, 100, "%")
+        self._level = _SliderRow(
+            -100,
+            100,
+            int(initial_state.get("background_level", 0)) if isinstance(initial_state, dict) else 0,
+            "%",
+        )
+        self._level.setToolTip("Move left for a lower baseline or right to bring it closer to local minima.")
+        self._include_amorphous = QCheckBox("Include amorphous contribution")
+        self._include_amorphous.setChecked(
+            bool(initial_state.get("show_total", False)) if isinstance(initial_state, dict) else False
+        )
+        self._amorphous_strength = _SliderRow(
+            0,
+            100,
+            int(initial_state.get("amorphous_strength", 100)) if isinstance(initial_state, dict) else 100,
+            "%",
+        )
+        self._amorphous_strength.setToolTip("Fraction of the broad amorphous component to restore.")
+        self._amorphous_strength.setEnabled(self._include_amorphous.isChecked())
         if self._has_initial_state:
             self._low_angle_end.set_value(int(initial_state.get("low_angle_end", 20)))
             self._low_angle_width.set_value(int(initial_state.get("low_angle_width", 4)))
             self._low_angle_strength.set_value(int(initial_state.get("low_angle_strength", 100)))
 
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(90)
+        self._preview_timer.timeout.connect(self._emit_scheduled_preview)
+
         self._target.currentIndexChanged.connect(self._target_changed)
         self._method.currentIndexChanged.connect(self._method_changed)
-        self._degree.released.connect(self.previewRequested)
-        self._exponential_terms.released.connect(self.previewRequested)
-        self._snip_window.released.connect(self.previewRequested)
-        self._floor.released.connect(self.previewRequested)
+        for slider_row in (
+            self._degree,
+            self._exponential_terms,
+            self._snip_window,
+            self._floor,
+            self._low_angle_end,
+            self._low_angle_width,
+            self._low_angle_strength,
+        ):
+            slider_row.changed.connect(self._schedule_preview)
+            slider_row.released.connect(self._flush_preview)
+        self._level.changed.connect(self._schedule_preview)
+        self._level.released.connect(self._flush_preview)
+        self._include_amorphous.toggled.connect(self._amorphous_toggled)
+        self._amorphous_strength.changed.connect(self._schedule_preview)
+        self._amorphous_strength.released.connect(self._flush_preview)
         self._show_background.toggled.connect(self._display_changed)
         self._show_total.toggled.connect(self._display_changed)
         self._low_angle_cuvette.toggled.connect(self._method_changed)
-        self._low_angle_end.released.connect(self.previewRequested)
-        self._low_angle_width.released.connect(self.previewRequested)
-        self._low_angle_strength.released.connect(self.previewRequested)
 
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
-        form.addRow("Describe", self._target)
-        form.addRow("Model", self._method)
-        form.addRow("Polynomial degree", self._degree)
-        form.addRow("Exponential terms", self._exponential_terms)
-        form.addRow("SNIP half-window", self._snip_window)
-        form.addRow("Floor percentile", self._floor)
-        form.addRow("Display", self._show_background)
-        form.addRow("", self._show_total)
-        form.addRow("Options", self._low_angle_cuvette)
-        form.addRow("Low-angle end", self._low_angle_end)
-        form.addRow("Blend width", self._low_angle_width)
-        form.addRow("Suppression", self._low_angle_strength)
+        form.addRow("Background level", self._level)
+        form.addRow("", self._include_amorphous)
+        form.addRow("Amorphous contribution", self._amorphous_strength)
 
-        auto_button = QPushButton("Auto")
         apply_button = QPushButton("Apply")
-        subtract_button = QPushButton("Subtract")
         cancel_button = QPushButton("Cancel")
-        auto_button.clicked.connect(self.apply_auto)
         apply_button.clicked.connect(self.applyRequested)
-        subtract_button.clicked.connect(self.subtractRequested)
         cancel_button.clicked.connect(self.cancelRequested)
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
-        button_row.addWidget(auto_button)
         button_row.addWidget(apply_button)
-        button_row.addWidget(subtract_button)
         button_row.addWidget(cancel_button)
 
         score_text = ""
         if auto_model is not None and np.isfinite(float(getattr(auto_model, "score", float("inf")))):
             score_text = f" Auto metric: {float(auto_model.score):.4f}."
         hint = QLabel(
-            "Choose what the tuned curve describes, then choose which guide lines to show. "
-            "Use Exponential for a physical baseline; use SNIP when the broad/amorphous part should be included."
+            "The background is estimated automatically. Move the slider left for a lower, "
+            "more conservative curve or right to bring it closer to local minima. "
+            "Negative values are preserved."
             + score_text
         )
         hint.setWordWrap(True)
@@ -553,13 +542,28 @@ class BackgroundRemovalPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
-        layout.addWidget(QLabel("Estimate the physical background and broad/amorphous contribution."))
+        layout.addWidget(QLabel("Subtract the automatically estimated background."))
         layout.addLayout(form)
         layout.addWidget(hint)
         layout.addLayout(button_row)
         self._set_combo_data(self._target, self._active_target)
         self._load_target_settings(self._active_target, emit_preview=False)
         self._method_changed(emit_preview=False)
+
+    def _schedule_preview(self) -> None:
+        if self._loading_settings:
+            return
+        self._preview_timer.start()
+
+    def _emit_scheduled_preview(self) -> None:
+        if not self._loading_settings:
+            self.previewRequested.emit()
+
+    def _flush_preview(self) -> None:
+        if self._loading_settings:
+            return
+        self._preview_timer.stop()
+        self.previewRequested.emit()
 
     def _target_changed(self, *_args) -> None:
         if self._loading_settings:
@@ -759,7 +763,22 @@ class BackgroundRemovalPanel(QWidget):
             "low_angle_end": self.low_angle_end(),
             "low_angle_width": self.low_angle_width(),
             "low_angle_strength": self.low_angle_strength(),
+            "background_level": int(self._level.value()),
+            "amorphous_strength": int(self._amorphous_strength.value()),
         }
+
+    def background_level(self) -> float:
+        return float(np.clip(self._level.value() / 100.0, -1.0, 1.0))
+
+    def include_amorphous(self) -> bool:
+        return bool(self._include_amorphous.isChecked())
+
+    def amorphous_strength(self) -> float:
+        return float(np.clip(self._amorphous_strength.value() / 100.0, 0.0, 1.0))
+
+    def _amorphous_toggled(self, checked: bool) -> None:
+        self._amorphous_strength.setEnabled(bool(checked))
+        self._schedule_preview()
 
     def method(self) -> str:
         return str(self._method.currentData())
@@ -789,13 +808,13 @@ class BackgroundRemovalPanel(QWidget):
         return self._auto_smoothing
 
     def remove_halo(self) -> bool:
-        return self.target() != "physical"
+        return self.include_amorphous()
 
     def estimate_background(self) -> bool:
         return self.show_physical_background()
 
     def estimate_amorphous(self) -> bool:
-        return self.show_total_background()
+        return self.include_amorphous()
 
     def low_angle_cuvette(self) -> bool:
         return (
@@ -814,10 +833,10 @@ class BackgroundRemovalPanel(QWidget):
         return max(0.0, min(1.0, self._low_angle_strength.value() / 100.0))
 
     def show_physical_background(self) -> bool:
-        return bool(self._show_background.isChecked())
+        return True
 
     def show_total_background(self) -> bool:
-        return bool(self._show_total.isChecked())
+        return self.include_amorphous()
 
 class SmoothDialog(QDialog):
     def __init__(self, default_window: int, parent=None) -> None:
