@@ -18,6 +18,6 @@ Version 1.6.4 improves the main Finder interface and everyday analysis workflow.
 
 - Windows: `XRD_Phase_Finder_Setup_v1_6_4.exe`.
 - Linux 1.6.4 package will be added after the native Linux build is complete.
-- The current macOS package remains version 1.6.3.
+- macOS: `XRD_Phase_Finder_macOS_1.6.4.pkg`.
 
 The Windows installer contains the application and launch files. It does not contain user projects, downloaded databases or local caches.
