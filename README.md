@@ -6,6 +6,10 @@
 
 **XRD Phase Finder** is a desktop program for interpreting powder X-ray diffraction patterns. It combines the experimental pattern, phase candidates, calculated profiles, selected phases and residual signal in one interface.
 
+**[Open the interactive start guide →](https://abkuznetsov.github.io/XRD_Analysis_Toolkit/)**
+
+The guide reproduces the Finder workspace in HTML and walks through import, element selection, candidate loading, preprocessing, instrument profiles, Match/Gain, Auto search, residual inspection and `.xpff` saving. Its editable [SPICY source](docs/XRD_Phase_Finder.spicy) is included in this repository.
+
 ## Download
 
 - [Windows installer: XRD_Phase_Finder_Setup_v1_6_4.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.4/XRD_Phase_Finder_Setup_v1_6_4.exe)
