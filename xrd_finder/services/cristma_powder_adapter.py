@@ -255,6 +255,7 @@ class CristmaPowderAdapter:
         crystallite_size_nm: float | None = None,
         microstrain: float | None = None,
         d_spacing_scale: float = 1.0,
+        normalize: bool = True,
     ) -> CristmaPowderResult:
         requested_x = np.asarray(x_grid, dtype=float)
         grid = self._uniform_grid(requested_x)
@@ -285,7 +286,7 @@ class CristmaPowderAdapter:
 
         calculated_x = np.asarray(profile.two_theta_deg, dtype=float)
         calculated_y = np.asarray(profile.intensity, dtype=float)
-        if len(calculated_y) and float(np.max(calculated_y)) > 0.0:
+        if normalize and len(calculated_y) and float(np.max(calculated_y)) > 0.0:
             calculated_y = 100.0 * calculated_y / float(np.max(calculated_y))
         if len(calculated_x) != len(requested_x) or not np.allclose(
             calculated_x,

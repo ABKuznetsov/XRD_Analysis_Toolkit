@@ -41,6 +41,7 @@ class FinderCandidateInput:
     source: str = ""
     structure: object | None = None
     reference_lines: ReferenceLineSet | None = None
+    quantification_cif_path: str = ""
 
 
 def candidate_structure_override(
@@ -71,6 +72,7 @@ class FinderInput:
     subtract_background: bool = True
     smoothing_window: int = 0
     snap_peak_positions: bool = True
+    quantification_complete: bool = True
 
 
 @dataclass(slots=True)
@@ -81,7 +83,7 @@ class FinderCandidateResult:
     formula: str
     source: str
     scale: float = 0.0
-    quantity_percent: float = 0.0
+    quantity_percent: float | None = None
     score: float = 0.0
     matched_peaks: int = 0
     total_peaks: int = 0

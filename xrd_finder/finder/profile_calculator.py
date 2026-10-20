@@ -142,9 +142,12 @@ class CachedProfileCalculator:
         context: CalculationContext,
         *,
         instrument_profile: InstrumentProfile,
+        normalize: bool = True,
     ) -> np.ndarray:
         adapter = self.line_calculator.cristma_adapter
         if lines.cristma_lines is None or adapter is None:
+            if not normalize:
+                raise ValueError('Physical quantities require native structural intensities')
             return self.profile_from_peaks(
                 list(lines.peaks),
                 x_grid,
@@ -166,6 +169,7 @@ class CachedProfileCalculator:
         )
         cache_key = (
             "cristma-lines-v2-width-floor",
+            bool(normalize),
             lines.fingerprint,
             effective_instrument_profile.calculation_key(),
             context.profile_key,
@@ -182,6 +186,7 @@ class CachedProfileCalculator:
             instrument_profile=effective_instrument_profile,
             zero_shift_deg=context.global_zero_shift,
             d_spacing_scale=context.cell_scale,
+            normalize=normalize,
         )
         profile = np.asarray(result.profile_y, dtype=float)
         profile.setflags(write=False)

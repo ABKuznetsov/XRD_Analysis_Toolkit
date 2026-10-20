@@ -1,8 +1,8 @@
 {
-    "id":  "xrd_finder",
-    "name":  "XRD Phase Finder",
-    "version":  "1.6.4",
-    "entry_module":  "xrd_finder.apps.finder_gui",
-    "requirements":  "requirements.txt",
-    "minimum_launcher":  "1.0.0"
+  "id": "xrd_finder",
+  "name": "XRD Phase Finder",
+  "version": "1.6.5",
+  "entry_module": "xrd_finder.apps.finder_gui",
+  "requirements": "requirements.txt",
+  "minimum_launcher": "1.0.0"
 }

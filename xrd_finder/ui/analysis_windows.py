@@ -43,6 +43,7 @@ from xrd_finder.core.structure import CellParameters, Structure
 from xrd_finder.finder import FinderInput, FinderService
 from xrd_finder.finder.context import CalculationContext
 from xrd_finder.finder.models import candidate_structure_override
+from xrd_finder.finder.quantification import quantification_source_signature
 from xrd_finder.finder.fingerprint_matching import fingerprint_match_score
 from xrd_finder.finder.gain_evidence import phase_signal_to_noise
 from xrd_finder.finder.profile_backend import FinderPeakProfileBackend
@@ -1102,12 +1103,13 @@ class PhaseFinderWindow(
                 else resolution.line_set.fingerprint
             )
             cif_path = ""
-            if line_fingerprint is None:
-                try:
-                    local_path = self._candidate_local_cif_path(candidate)
+            local_path = None
+            try:
+                local_path = self._candidate_local_cif_path(candidate)
+                if line_fingerprint is None:
                     cif_path = "" if local_path is None else str(local_path)
-                except Exception:
-                    pass
+            except Exception:
+                pass
             candidate_signature.append((
                 self._candidate_source(candidate),
                 candidate.get("Entry", ""),
@@ -1116,6 +1118,9 @@ class PhaseFinderWindow(
                 line_fingerprint,
                 cif_path,
                 self._structure_cell_signature(structure_overrides.get(self._candidate_key(candidate))),
+                quantification_source_signature(
+                    local_path, structure_overrides.get(self._candidate_key(candidate))
+                ),
             ))
         instrument_profile = self._instrument_profile_for_pattern(pattern)
         wavelength, include_kalpha2 = self._legacy_radiation_for_pattern(pattern)
@@ -1146,6 +1151,7 @@ class PhaseFinderWindow(
             self._candidate_phase_name,
             self._candidate_source,
             line_resolver=self.candidate_line_provider.resolve,
+            quantification_cif_path=self._candidate_local_cif_path,
         )
         finder_candidates = candidate_build.ready
         candidate_by_key = candidate_build.candidate_by_key
@@ -1172,6 +1178,7 @@ class PhaseFinderWindow(
             FinderInput(
                 pattern_path=pattern.source_path,
                 candidates=finder_candidates,
+                quantification_complete=len(finder_candidates) == len(candidates),
                 wavelength=wavelength,
                 include_kalpha2=include_kalpha2,
                 instrument_profile=self._instrument_profile_for_pattern(pattern),
@@ -2790,6 +2797,9 @@ class PhaseFinderWindow(
         progress=None,
         gain_context=None,
     ) -> list[list[str]]:
+        if self.match_candidates and not getattr(self, "_candidate_gain_auto_enabled", False):
+            # Manual element/text results are an operator-controlled list.
+            return [list(row[:6]) + [""] + list(row[7:]) for row in rows]
         if not force and not self._rank_by_peak_probability_enabled():
             return rows
         probability_data = self._probability_observed_data()
@@ -5257,6 +5267,7 @@ class PhaseFinderWindow(
         self._update_element_fields()
 
     def _reset_candidate_search_table(self) -> None:
+        self._candidate_gain_auto_enabled = False
         self._candidate_gain_refresh_after_preparation = False
         self._candidate_gain_refresh_requested = False
         self._auto_search_token = int(getattr(self, "_auto_search_token", 0)) + 1
@@ -5495,6 +5506,10 @@ class PhaseFinderWindow(
         self._auto_search_scored_keys = set()
         self._candidate_rank_token += 1
         rows = [normalize_candidate_row(row) for row in rows]
+        if not getattr(self, "_candidate_gain_auto_enabled", False):
+            for row in rows:
+                row[6] = ""
+        search_token = getattr(self, "_candidate_search_request_token", 0)
         if not skip_rank and (force_rank or self._rank_by_peak_probability_enabled()) and rows:
             rows = self._rank_candidate_rows_by_peak_probability(
                 rows,
@@ -5502,6 +5517,8 @@ class PhaseFinderWindow(
                 progress=rank_progress,
                 gain_context=gain_context,
             )
+        if search_token != getattr(self, "_candidate_search_request_token", 0):
+            return
         self.candidate_table.set_rows(rows, lambda row: row)
         self._apply_candidate_element_filter()
         if hasattr(self, "_update_profile_view_context"):

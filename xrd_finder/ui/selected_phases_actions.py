@@ -326,7 +326,7 @@ class PhaseFinderSelectedPhasesActionsMixin:
                 self._phase_color(candidate, row),
                 self._phase_legend_label(candidate),
                 self.match_alignment_scores.get(key, ""),
-                f"{self.match_quantities.get(key, 0.0):.1f}",
+                (f"{self.match_quantities[key]:.1f}" if key in self.match_quantities else "—"),
                 iic_text,
             ])
         self.match_table.set_rows(rows)
@@ -336,6 +336,8 @@ class PhaseFinderSelectedPhasesActionsMixin:
             self._update_profile_view_context()
 
     def _schedule_candidate_gain_ranking(self) -> None:
+        if not getattr(self, "_candidate_gain_auto_enabled", False):
+            return
         if getattr(self, "_candidate_gain_ranking_running", False):
             self._candidate_gain_refresh_requested = True
             return
@@ -346,6 +348,8 @@ class PhaseFinderSelectedPhasesActionsMixin:
 
     def _run_scheduled_candidate_gain_ranking(self) -> None:
         self._candidate_gain_ranking_pending = False
+        if not getattr(self, "_candidate_gain_auto_enabled", False):
+            return
         if getattr(self, "_candidate_gain_ranking_running", False):
             self._candidate_gain_refresh_requested = True
             return
@@ -359,8 +363,9 @@ class PhaseFinderSelectedPhasesActionsMixin:
                 self._schedule_candidate_gain_ranking()
 
     def _refresh_candidate_gain_ranking(self) -> None:
-        if not self.match_candidates:
+        if not getattr(self, "_candidate_gain_auto_enabled", False) or not self.match_candidates:
             return
+        search_token = getattr(self, "_candidate_search_request_token", 0)
         existing_rows = self._candidate_state_rows(self.candidate_table.all_row_values())
         rows: list[list[str]] = []
         gain_context = None
@@ -395,12 +400,18 @@ class PhaseFinderSelectedPhasesActionsMixin:
             QApplication.processEvents()
 
         try:
+            if (not getattr(self, "_candidate_gain_auto_enabled", False)
+                    or search_token != getattr(self, "_candidate_search_request_token", 0)):
+                return
             self._set_candidate_rows(
                 rows,
                 force_rank=True,
                 rank_progress=rank_progress,
                 gain_context=gain_context,
             )
+            if (not getattr(self, "_candidate_gain_auto_enabled", False)
+                    or search_token != getattr(self, "_candidate_search_request_token", 0)):
+                return
             if self.candidate_table.rowCount() > 0:
                 self.candidate_table.selectRow(0)
                 self.candidate_table.scrollToTop()

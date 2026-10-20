@@ -138,6 +138,7 @@ def build_finder_candidate_inputs(
     candidate_source: Callable[[dict[str, str]], str],
     *,
     line_resolver: Callable[[dict[str, str]], object] | None = None,
+    quantification_cif_path: Callable[[dict[str, str]], Path | None] | None = None,
 ) -> FinderCandidateBuildResult:
     finder_candidates = []
     candidate_by_key = {}
@@ -149,6 +150,11 @@ def build_finder_candidate_inputs(
         resolution = line_resolver(candidate) if line_resolver is not None else None
         line_set = getattr(resolution, "line_set", None)
         if line_set is not None:
+            try:
+                local_cif = quantification_cif_path(candidate) if quantification_cif_path else None
+                local_cif = str(local_cif) if local_cif is not None and Path(local_cif).is_file() else ''
+            except Exception:
+                local_cif=''
             finder_candidates.append(
                 FinderCandidateInput(
                     entry_id=key,
@@ -156,6 +162,7 @@ def build_finder_candidate_inputs(
                     formula=candidate.get("Formula", ""),
                     source=source,
                     reference_lines=line_set,
+                    quantification_cif_path=local_cif,
                 )
             )
             continue
@@ -281,7 +288,8 @@ def draw_match_profile_result(
         phase_assignment_styles[str(candidate_result.candidate_key)] = (color, phase_label)
         profile = np.asarray(candidate_result.profile, dtype=float) * intensity_scale
         match_scales[key] = float(candidate_result.scale)
-        match_quantities[key] = float(candidate_result.quantity_percent)
+        if candidate_result.quantity_percent is not None:
+            match_quantities[key] = float(candidate_result.quantity_percent)
         match_iic[key] = _candidate_iic_value(candidate, estimate_candidate_iic)
         match_zero_shifts[key] = float(result.global_zero_shift)
         match_cell_scales[key] = float(candidate_result.cell_scale)

@@ -14,11 +14,11 @@ The nine horizontal slides introduce capabilities, data sources, libraries, inst
 
 ## Download
 
-- [Windows installer: XRD_Phase_Finder_Setup_v1_6_4.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.4/XRD_Phase_Finder_Setup_v1_6_4.exe)
-- [macOS package: XRD_Phase_Finder_macOS_1.6.4.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.4/XRD_Phase_Finder_macOS_1.6.4.pkg)
-- [Ubuntu / Debian package: XRD_Phase_Finder_1.6.4_amd64.deb](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.4/XRD_Phase_Finder_1.6.4_amd64.deb)
+- [Windows installer: XRD_Phase_Finder_Setup_v1_6_5.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.5/XRD_Phase_Finder_Setup_v1_6_5.exe)
+- [macOS package (1.6.4): XRD_Phase_Finder_macOS_1.6.4.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.4/XRD_Phase_Finder_macOS_1.6.4.pkg)
+- [Ubuntu / Debian package (1.6.4): XRD_Phase_Finder_1.6.4_amd64.deb](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.4/XRD_Phase_Finder_1.6.4_amd64.deb)
 
-All available files are listed on the [XRD Phase Finder 1.6.4 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.4).
+The latest Windows build is on the [XRD Phase Finder 1.6.5 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.5). macOS and Linux packages above remain at 1.6.4 until rebuilt.
 
 ## Main window
 
@@ -43,7 +43,7 @@ The project tree (A) contains imported patterns and structures. The toolbar (B) 
 
 ### Windows
 
-Download and run `XRD_Phase_Finder_Setup_v1_6_4.exe`. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
+Download and run `XRD_Phase_Finder_Setup_v1_6_5.exe`. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
 
 On first launch, the launcher checks the per-user scientific Python runtime and offers to install or repair missing packages. User projects, settings and database caches are stored in the user profile.
 

@@ -11,6 +11,7 @@ from scipy.signal import find_peaks
 from xrd_finder.finder.assignment_builder import AssignmentBuilder, nearest_index as nearest_peak_index, nearest_phase_peak
 from xrd_finder.finder.cell_parameter_estimator import CellParameterEstimate, FastCellParameterEstimator
 from xrd_finder.finder.context import CalculationContext
+from xrd_finder.finder.quantification import accepted_phase_quantities, mass_fractions
 from xrd_finder.finder.models import (
     FinderCandidateInput,
     FinderCandidateResult,
@@ -314,11 +315,10 @@ class FinderService:
                 in profiles
             ],
         )
-        cell_masses = np.asarray(
-            [self._unit_cell_molar_mass(structure) for _candidate, structure, *_rest in profiles],
-            dtype=float,
-        )
-        quantity_fractions = self._mass_fractions(scales, cell_masses)
+        quantity_fractions = accepted_phase_quantities(
+            profiles,x_grid,observed.target_y,context.with_alignment(global_zero,1.0),
+            finder_input.instrument_profile,self.profile_calculator,
+        ) if (finder_input.quantification_complete and len(profiles) == len(finder_input.candidates)) else np.full(len(profiles),np.nan)
         calculated_total = np.zeros_like(x_grid)
         results = []
         assignment_phase_sets = []
@@ -346,7 +346,7 @@ class FinderService:
                 formula=candidate.formula,
                 source=candidate.source,
                 scale=float(scale),
-                quantity_percent=float(quantity_fraction * 100.0),
+                quantity_percent=(float(quantity_fraction * 100.0) if np.isfinite(quantity_fraction) else None),
                 score=match_result.score,
                 matched_peaks=match_result.matched_peaks,
                 total_peaks=match_result.total_peaks,
@@ -424,15 +424,8 @@ class FinderService:
         return max(total, 1.0e-12)
 
     @staticmethod
-    def _mass_fractions(scales, cell_masses) -> np.ndarray:
-        contributions = (
-            np.clip(np.asarray(scales, dtype=float), 0.0, None)
-            * np.clip(np.asarray(cell_masses, dtype=float), 0.0, None)
-        )
-        total = float(np.sum(contributions)) if len(contributions) else 0.0
-        if total <= 0.0:
-            return np.zeros_like(contributions)
-        return contributions / total
+    def _mass_fractions(scales, cell_masses, cell_volumes) -> np.ndarray:
+        return mass_fractions(scales,cell_masses,cell_volumes)
 
     @staticmethod
     def _has_indexed_cell(structure, peaks: list[HKLPeak]) -> bool:

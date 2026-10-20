@@ -226,6 +226,8 @@ class PhaseFinderCandidateSearchActionsMixin:
         if self.match_candidates:
             self.candidate_table.upsert_rows(rows, normalize_candidate_row)
             self._apply_candidate_element_filter()
+            if not getattr(self, "_candidate_gain_auto_enabled", False):
+                return
             self._candidate_gain_refresh_after_preparation = True
             if not self._candidate_preparation_is_busy():
                 self._candidate_gain_refresh_after_preparation = False
@@ -296,6 +298,7 @@ class PhaseFinderCandidateSearchActionsMixin:
         options.oqmd_enabled = False
 
         search_token = self._prepare_candidate_database_search()
+        self._candidate_gain_auto_enabled = True
         auto_search_token = int(getattr(self, "_auto_search_token", 0)) + 1
         self._auto_search_token = auto_search_token
         self._set_auto_search_busy(True)
@@ -435,6 +438,9 @@ class PhaseFinderCandidateSearchActionsMixin:
         )
 
     def _prepare_candidate_database_search(self) -> int:
+        self._candidate_gain_auto_enabled = False
+        self._candidate_gain_refresh_after_preparation = False
+        self._candidate_gain_refresh_requested = False
         self._auto_search_ranked_rows = None
         self._auto_search_scored_keys = set()
         search_token = int(getattr(self, "_candidate_search_request_token", 0)) + 1
