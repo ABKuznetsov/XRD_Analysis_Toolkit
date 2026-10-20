@@ -1,14 +1,5 @@
 # Changelog
 
-## 1.6.5 - 2026-10-19
-
-### Fixed
-
-- Corrected structural Quant using Hill–Howard physical scale, occupied unit-cell mass and volume.
-- Kept physical quantification separate from normalized display curves; incomplete or unidentifiable models leave Quant unavailable.
-- Preserved the 1.6.4 Match/Gain search and peak detection. Experimental algorithms are not included.
-- Limited Gain reranking to Auto search; manual element/text lists remain available for operator browsing.
-
 ## 1.6.4 - 2026-10-03
 
 ### Added
