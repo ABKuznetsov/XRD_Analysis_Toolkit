@@ -67,7 +67,7 @@ call :install_step "PySide6-Addons==6.7.3"
 call :install_step "PySide6==6.7.3"
 call :install_step "scipy"
 call :install_step "certifi"
-call :install_step "cristma==0.1.0b12"
+call :install_step "cristma==0.1.0b13"
 call :install_step "rfc8785==0.1.4"
 
 echo.

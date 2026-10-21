@@ -5,7 +5,7 @@ description = "Cross-platform XRD phase finder for powder diffraction search-mat
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "certifi",
-    "cristma==0.1.0b12",
+    "cristma==0.1.0b13",
     "numpy",
     "packaging",
     "pyqtgraph==0.14.0",

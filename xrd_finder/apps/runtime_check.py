@@ -11,7 +11,7 @@ from packaging.specifiers import SpecifierSet
 
 REQUIRED_RUNTIME_PACKAGES = (
     ("certifi", "certifi", ""),
-    ("cristma", "cristma", "==0.1.0b12"),
+    ("cristma", "cristma", "==0.1.0b13"),
     ("numpy", "numpy", ""),
     ("packaging", "packaging", ""),
     ("pybaselines", "pybaselines", ""),
