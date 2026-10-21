@@ -8,14 +8,8 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.signal import find_peaks
 
-from xrd_finder.core.refinement import RefinementResult
 from xrd_finder.core.structure import CellParameters
 from xrd_finder.services.calculated_pattern_service import CalculatedPatternService
-
-
-LE_BAIL_STRATEGY = "le_bail"
-INDEXED_CELL_STRATEGY = "indexed_cell"
-CLASSICAL_RIETVELD_STRATEGY = "classical_rietveld"
 
 
 @dataclass(slots=True)
@@ -32,29 +26,8 @@ class CellFitResult:
 
 
 class RefinementService:
-    available_strategies = [
-        INDEXED_CELL_STRATEGY,
-        LE_BAIL_STRATEGY,
-        CLASSICAL_RIETVELD_STRATEGY,
-    ]
-
     def __init__(self, calculated_pattern_service: CalculatedPatternService | None = None) -> None:
         self.calculated_pattern_service = calculated_pattern_service or CalculatedPatternService()
-
-    def create_job(self, pattern_id: str, phase_ids: list[str], method: str) -> RefinementResult:
-        return self.create_strategy_job(pattern_id=pattern_id, phase_ids=phase_ids, strategy=method)
-
-    def create_strategy_job(self, pattern_id: str, phase_ids: list[str], strategy: str) -> RefinementResult:
-        name = f"{self.strategy_label(strategy)} refinement"
-        return RefinementResult.create(name=name, pattern_id=pattern_id, phase_ids=phase_ids, method=strategy)
-
-    def strategy_label(self, strategy: str) -> str:
-        labels = {
-            INDEXED_CELL_STRATEGY: "Indexed cell",
-            LE_BAIL_STRATEGY: "Le Bail",
-            CLASSICAL_RIETVELD_STRATEGY: "Classical Rietveld",
-        }
-        return labels.get(strategy, strategy.replace("_", " ").title())
 
     def fit_indexed_cells(
         self,

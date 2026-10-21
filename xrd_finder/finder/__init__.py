@@ -9,14 +9,6 @@ from xrd_finder.finder.models import (
     PeakStatus,
 )
 from xrd_finder.finder.reference_lines import ReferenceLine, ReferenceLineSet
-from xrd_finder.finder.joint_phase_search import (
-    JointPhaseCandidate,
-    JointPhaseCandidateGain,
-    JointPhaseCombination,
-    JointPhaseSearchConfig,
-    JointPhaseSearchResult,
-    search_phase_combinations,
-)
 
 
 def __getattr__(name: str):
@@ -37,12 +29,6 @@ __all__ = [
     "PeakStatus",
     "ReferenceLine",
     "ReferenceLineSet",
-    "JointPhaseCandidate",
-    "JointPhaseCandidateGain",
-    "JointPhaseCombination",
-    "JointPhaseSearchConfig",
-    "JointPhaseSearchResult",
-    "search_phase_combinations",
     "FinderHeuristics",
     "FinderService",
 ]
