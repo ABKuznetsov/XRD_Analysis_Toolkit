@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 import hashlib
 import json
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -190,6 +191,14 @@ class InstrumentProfile:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> InstrumentProfile:
+        identity = InstrumentIdentity(**dict(value.get("identity") or {}))
+        resolution_data = dict(value.get("resolution") or {})
+        if resolution_data.get("model") == "tch" and "coefficient_units" not in resolution_data:
+            # The Tongda calibration convention is a default, not an override
+            # of an explicit unit choice. No calibration values are packaged.
+            instrument_name = " ".join(str(part or "") for part in (identity.name, identity.manufacturer, identity.model))
+            if re.search(r"\btongda\b|\bтонгда\b|\btd[\s_-]*3700\b", instrument_name, re.IGNORECASE):
+                resolution_data["coefficient_units"] = "gsas_cw"
         radiation_data = dict(value.get("radiation") or {})
         components = tuple(
             RadiationComponentProfile(**component)
@@ -198,11 +207,11 @@ class InstrumentProfile:
         if components:
             radiation_data["components"] = components
         return cls(
-            identity=InstrumentIdentity(**dict(value.get("identity") or {})),
+            identity=identity,
             radiation=RadiationProfile(**radiation_data),
             geometry=GeometryProfile(**dict(value.get("geometry") or {})),
             detector=DetectorProfile(**dict(value.get("detector") or {})),
-            resolution=ResolutionProfile(**dict(value.get("resolution") or {})),
+            resolution=ResolutionProfile(**resolution_data),
             profile_id=str(value.get("profile_id") or f"instrument-{uuid4()}"),
             schema_version=int(value.get("schema_version") or SCHEMA_VERSION),
         )

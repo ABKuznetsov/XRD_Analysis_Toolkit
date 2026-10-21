@@ -1,21 +1,21 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.6.5",
+  "version": "1.6.6",
   "channel": "stable",
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
-  "published_at": "2026-10-20",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.5/XRD_Phase_Finder_Setup_v1_6_5.exe",
-  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.5",
+  "published_at": "2026-10-21",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.6/XRD_Phase_Finder_Setup_v1_6_6.exe",
+  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.6",
   "assets": [
     {
-      "name": "XRD_Phase_Finder_Setup_v1_6_5.exe",
+      "name": "XRD_Phase_Finder_Setup_v1_6_6.exe",
       "type": "installer",
       "platform": "windows",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.5/XRD_Phase_Finder_Setup_v1_6_5.exe",
-      "sha256": "556023daebb3c0f65bc9049cdf272a30a4a98db4c3c7757a8a3eb8a5a7eb2a6d",
-      "size_bytes": 5345162
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.6/XRD_Phase_Finder_Setup_v1_6_6.exe",
+      "sha256": "5cb46b57913c7dc0cdd63e93e5121e0970f5f96d9d6c6210e4ee10b1672d88c9",
+      "size_bytes": 5346332
     },
     {
       "name": "XRD_Phase_Finder_macOS_1.6.4.pkg",
@@ -27,17 +27,18 @@
     }
   ],
   "summary": [
-    "Correct structural phase quantities using Hill–Howard cell mass and volume factors."
+    "Consistent phase quantities, calculated profiles and peak markers.",
+    "Generic Cu K-alpha default; GSAS-II units for legacy Tongda TCH profiles."
   ],
-  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.5/XRD_Phase_Finder_Setup_v1_6_5.exe",
-  "installer_sha256": "556023daebb3c0f65bc9049cdf272a30a4a98db4c3c7757a8a3eb8a5a7eb2a6d",
-  "installer_filename": "XRD_Phase_Finder_Setup_v1_6_5.exe",
-  "installer_size_bytes": 5345162,
+  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.6/XRD_Phase_Finder_Setup_v1_6_6.exe",
+  "installer_sha256": "5cb46b57913c7dc0cdd63e93e5121e0970f5f96d9d6c6210e4ee10b1672d88c9",
+  "installer_filename": "XRD_Phase_Finder_Setup_v1_6_6.exe",
+  "installer_size_bytes": 5346332,
   "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.4/XRD_Phase_Finder_macOS_1.6.4.pkg",
   "macos_installer_sha256": "b7ae7a71e04c52c71ec9f4563db079de451249c181122706e8523aae34bed970",
   "platform_versions": {
-    "windows": "1.6.5",
+    "windows": "1.6.6",
     "macos": "1.6.4"
   },
-  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.5"
+  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.6"
 }

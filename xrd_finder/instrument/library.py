@@ -77,7 +77,15 @@ class InstrumentProfileLibrary:
             self._write(profiles)
             return profiles
 
-        if self._ensure_packaged(profiles):
+        migrated_units = any(
+            isinstance(raw.get("resolution"), dict)
+            and raw["resolution"].get("model") == "tch"
+            and "coefficient_units" not in raw.get("resolution", {})
+            and profile.resolution.coefficient_units == "gsas_cw"
+            for raw, profile in zip(payload["profiles"], profiles)
+        )
+        packaged_changed = self._ensure_packaged(profiles)
+        if migrated_units or packaged_changed:
             self._write(profiles)
         return profiles
 

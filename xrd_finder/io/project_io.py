@@ -263,7 +263,22 @@ def _load_portable_project(source: Path) -> Project:
 
 def _upgrade_legacy_instrument_profiles(project: Project) -> None:
     for pattern in project.patterns:
-        if pattern.instrument_profile or pattern.wavelength is None:
+        if pattern.instrument_profile:
+            snapshot = pattern.instrument_profile
+            if not isinstance(snapshot, dict):
+                continue
+            resolution = snapshot.get("resolution")
+            if isinstance(resolution, dict) and resolution.get("model") == "tch" and "coefficient_units" not in resolution:
+                try:
+                    units = InstrumentProfile.from_dict(snapshot).resolution.coefficient_units
+                except (TypeError, ValueError):
+                    continue
+                if units == "gsas_cw":
+                    # Persist the explicitly requested Tongda default on the
+                    # next save, including for portable project snapshots.
+                    resolution["coefficient_units"] = units
+            continue
+        if pattern.wavelength is None:
             continue
         wavelength = float(pattern.wavelength)
         if wavelength <= 0.0:
