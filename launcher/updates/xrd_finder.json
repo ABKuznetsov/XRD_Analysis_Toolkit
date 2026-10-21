@@ -14,8 +14,8 @@
       "type": "installer",
       "platform": "windows",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.6/XRD_Phase_Finder_Setup_v1_6_6.exe",
-      "sha256": "5cb46b57913c7dc0cdd63e93e5121e0970f5f96d9d6c6210e4ee10b1672d88c9",
-      "size_bytes": 5346332
+      "sha256": "0935322293a19c37204e317531d9766663d774debfee59aa1eacb8ddc33c3647",
+      "size_bytes": 5349256
     },
     {
       "name": "XRD_Phase_Finder_macOS_1.6.4.pkg",
@@ -27,13 +27,15 @@
     }
   ],
   "summary": [
-    "Consistent phase quantities, calculated profiles and peak markers.",
-    "Generic Cu K-alpha default; GSAS-II units for legacy Tongda TCH profiles."
+    "Portable instrument profile import and export.",
+    "Candidate table sorting and project-wide accepted-card colors.",
+    "No duplicate HKL labels when previewing an accepted card.",
+    "Consistent phase quantities, calculated profiles and peak markers."
   ],
   "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.6/XRD_Phase_Finder_Setup_v1_6_6.exe",
-  "installer_sha256": "5cb46b57913c7dc0cdd63e93e5121e0970f5f96d9d6c6210e4ee10b1672d88c9",
+  "installer_sha256": "0935322293a19c37204e317531d9766663d774debfee59aa1eacb8ddc33c3647",
   "installer_filename": "XRD_Phase_Finder_Setup_v1_6_6.exe",
-  "installer_size_bytes": 5346332,
+  "installer_size_bytes": 5349256,
   "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.4/XRD_Phase_Finder_macOS_1.6.4.pkg",
   "macos_installer_sha256": "b7ae7a71e04c52c71ec9f4563db079de451249c181122706e8523aae34bed970",
   "platform_versions": {
