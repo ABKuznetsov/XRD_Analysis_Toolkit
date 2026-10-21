@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
@@ -9,6 +10,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -34,6 +36,7 @@ from xrd_finder.instrument.radiation_catalog import (
     radiation_profile_from_tube,
 )
 from xrd_finder.instrument.resolution import cristma_tch_profile
+from xrd_finder.instrument.profile_io import export_instrument_profile, load_instrument_profile
 
 
 SECTION_INDEX = {
@@ -409,6 +412,7 @@ class InstrumentProfileEditor(QWidget):
 
 
 class InstrumentProfileDialog(QDialog):
+    importRequested = Signal(object)
     saveAsRequested = Signal(object)
     updateRequested = Signal(object)
     deleteRequested = Signal(str)
@@ -438,6 +442,10 @@ class InstrumentProfileDialog(QDialog):
         self.new_profile_button = QPushButton("New")
         self.save_profile_button = QPushButton("Save")
         self.delete_button = QPushButton("Delete")
+        self.import_profile_button = QPushButton("Import...")
+        self.export_profile_button = QPushButton("Export...")
+        self.import_profile_button.clicked.connect(self._import_profile_file)
+        self.export_profile_button.clicked.connect(self._export_profile_file)
         self.editor = InstrumentProfileEditor(profile)
         self.editor.set_section(section)
         note = QLabel(
@@ -466,6 +474,8 @@ class InstrumentProfileDialog(QDialog):
         selector_row.addWidget(self.save_profile_button)
         selector_row.addWidget(self.delete_button)
         actions = QHBoxLayout()
+        actions.addWidget(self.import_profile_button)
+        actions.addWidget(self.export_profile_button)
         actions.addStretch(1)
         actions.addWidget(apply_active)
         actions.addWidget(apply_selected)
@@ -480,6 +490,28 @@ class InstrumentProfileDialog(QDialog):
         layout.addWidget(note)
         layout.addLayout(actions)
         self.set_profiles(profiles, current_profile=profile)
+
+    def _export_profile_file(self) -> None:
+        try:
+            profile = self.editor.instrument_profile()
+            path, _filter = QFileDialog.getSaveFileName(self, "Export instrument profile", "instrument_profile.json", "Instrument profile (*.json)")
+            if path:
+                if not Path(path).suffix:
+                    path += ".json"
+                export_instrument_profile(profile, path)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Export instrument profile", str(exc))
+
+    def _import_profile_file(self) -> None:
+        path, _filter = QFileDialog.getOpenFileName(self, "Import instrument profile", "", "Instrument profile (*.json)")
+        if not path:
+            return
+        try:
+            profile = load_instrument_profile(path)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Import instrument profile", str(exc))
+            return
+        self.importRequested.emit(profile)
 
     def set_profiles(
         self,

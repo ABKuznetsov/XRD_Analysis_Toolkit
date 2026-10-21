@@ -330,10 +330,23 @@ class PhaseFinderSelectedPhasesActionsMixin:
                 iic_text,
             ])
         self.match_table.set_rows(rows)
+        self._update_candidate_project_colors()
         if hasattr(self, "_update_compound_card_sample"):
             self._update_compound_card_sample()
         if hasattr(self, "_update_profile_view_context"):
             self._update_profile_view_context()
+
+    def _update_candidate_project_colors(self) -> None:
+        """Mark accepted cards across the project, including inactive patterns."""
+        if not hasattr(self.candidate_table, "set_selected_phase_colors"):
+            return
+        colors = {}
+        for pattern in self.project.patterns:
+            for index, candidate in enumerate(self._profile_candidates_for_pattern(pattern)):
+                colors[(candidate.get("Source", "").strip().upper(), candidate.get("Entry", "").strip())] = self._phase_color(candidate, index)
+        for index, candidate in enumerate(self.match_candidates):
+            colors[(candidate.get("Source", "").strip().upper(), candidate.get("Entry", "").strip())] = self._phase_color(candidate, index)
+        self.candidate_table.set_selected_phase_colors(colors)
 
     def _schedule_candidate_gain_ranking(self) -> None:
         if not getattr(self, "_candidate_gain_auto_enabled", False):
@@ -366,7 +379,7 @@ class PhaseFinderSelectedPhasesActionsMixin:
         if not getattr(self, "_candidate_gain_auto_enabled", False) or not self.match_candidates:
             return
         search_token = getattr(self, "_candidate_search_request_token", 0)
-        existing_rows = self._candidate_state_rows(self.candidate_table.all_row_values())
+        existing_rows = self._candidate_state_rows(self.candidate_table.ranking_row_values())
         rows: list[list[str]] = []
         gain_context = None
         if hasattr(self, "_gain_sql_candidate_rows"):
@@ -412,9 +425,7 @@ class PhaseFinderSelectedPhasesActionsMixin:
             if (not getattr(self, "_candidate_gain_auto_enabled", False)
                     or search_token != getattr(self, "_candidate_search_request_token", 0)):
                 return
-            if self.candidate_table.rowCount() > 0:
-                self.candidate_table.selectRow(0)
-                self.candidate_table.scrollToTop()
+            self.candidate_table.ensure_visible_selection()
         finally:
             dialog.close()
 

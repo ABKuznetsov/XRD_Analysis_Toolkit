@@ -151,6 +151,7 @@ class PhaseFinderInstrumentProfileActionsMixin:
         dialog.saveAsRequested.connect(self._save_instrument_profile_as_new)
         dialog.updateRequested.connect(self._update_instrument_profile)
         dialog.deleteRequested.connect(self._delete_instrument_profile)
+        dialog.importRequested.connect(self._import_instrument_profile)
         dialog.applyActiveRequested.connect(lambda value: self._apply_instrument_profile(value, selected=False))
         dialog.applySelectedRequested.connect(lambda value: self._apply_instrument_profile(value, selected=True))
         dialog.finished.connect(lambda _result: self._clear_instrument_profile_dialog(dialog))
@@ -162,6 +163,18 @@ class PhaseFinderInstrumentProfileActionsMixin:
     def _clear_instrument_profile_dialog(self, dialog: InstrumentProfileDialog) -> None:
         if self._instrument_profile_dialog is dialog:
             self._instrument_profile_dialog = None
+
+    def _import_instrument_profile(self, profile: InstrumentProfile) -> None:
+        try:
+            imported = self.instrument_profile_library.add_imported_profile(profile)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Import instrument profile", str(exc))
+            return
+        if self._instrument_profile_dialog is not None:
+            self._instrument_profile_dialog.set_profiles(self.instrument_profile_library.list_profiles(), current_profile=imported)
+        # Loading a shared calibration does not change the active measurement;
+        # the operator applies it with the existing Apply buttons.
+        self._refresh_instrument_profile_selector()
 
     def _save_instrument_profile_as_new(self, profile: InstrumentProfile) -> None:
         existing = self._matching_saved_instrument_profile(profile)

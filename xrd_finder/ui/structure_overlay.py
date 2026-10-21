@@ -179,6 +179,11 @@ def draw_structure_overlay(
         plot_layers["calculated_profile"].append(background_item)
 
     if preview:
+        accepted_labels_present = candidate_id is not None and any(
+            str(getattr(item, "_xrd_phase_id", "")) == str(candidate_id)
+            and getattr(item, "_xrd_pattern_id", None) == pattern_id
+            for item in plot_layers.get("hkl", ())
+        )
         preview_baseline = np.full_like(overlay.x_grid, marker_bottom, dtype=float)
         preview_height = y_span
         stick_item = plot_peak_intensity_sticks(
@@ -199,7 +204,7 @@ def draw_structure_overlay(
             object_id="candidate-preview-sticks",
         )
         plot_layers["preview_peak_positions"].append(stick_item)
-        if show_hkl_labels:
+        if show_hkl_labels and not accepted_labels_present:
             hkl_items = add_hkl_labels(
                 match_plot,
                 overlay.peaks,

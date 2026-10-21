@@ -225,7 +225,7 @@ class PhaseFinderCandidateStructureActionsMixin:
         prepared = prepared_rows[0]
         rows = []
         replaced = False
-        for values in table.all_row_values():
+        for values in table.ranking_row_values():
             row = [
                 values.get("Source", ""),
                 values.get("Entry", ""),

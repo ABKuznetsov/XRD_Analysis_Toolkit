@@ -114,7 +114,7 @@ class PhaseFinderCandidateSearchActionsMixin:
             return
         candidates = [
             candidate
-            for candidate in table.all_row_values()
+            for candidate in table.ranking_row_values()
             if candidate.get("Source", "").strip()
             and candidate.get("Entry", "").strip()
         ]
@@ -379,11 +379,7 @@ class PhaseFinderCandidateSearchActionsMixin:
                         f"FP: match {ranking_result.matched_count}/{ranking_total}, gain 0/{ranking_total}"
                     )
                 self._apply_candidate_element_filter()
-                for row_index in range(self.candidate_table.rowCount()):
-                    if not self.candidate_table.isRowHidden(row_index):
-                        self.candidate_table.selectRow(row_index)
-                        self.candidate_table.scrollToTop()
-                        break
+                self.candidate_table.ensure_visible_selection()
                 self._set_auto_search_busy(False)
 
             def ranking_failure(message: str, details: str) -> None:

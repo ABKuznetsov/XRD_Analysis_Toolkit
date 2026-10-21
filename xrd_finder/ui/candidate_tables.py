@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import math
 
-from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QPoint, Qt, QTimer, Signal
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QHeaderView,
     QSizePolicy,
@@ -32,6 +33,14 @@ class CandidateTableWidget(QTableWidget):
     def __init__(self, rows: list[list[str]], parent=None) -> None:
         super().__init__(0, len(self.HEADERS), parent)
         self._gain_active = False
+        self._user_sort_column = None
+        self._user_sort_order = Qt.SortOrder.AscendingOrder
+        self._selected_phase_colors: dict[tuple[str, str], str] = {}
+        self._ranking_keys: list[tuple[str, str] | None] = []
+        self._user_sort_timer = QTimer(self)
+        self._user_sort_timer.setSingleShot(True)
+        self._user_sort_timer.timeout.connect(self.refresh_user_sort)
+        self.itemChanged.connect(self._schedule_user_sort)
         self.setToolTip(
             "Candidate list\n"
             "Single click: preview this candidate and show its card.\n"
@@ -57,8 +66,116 @@ class CandidateTableWidget(QTableWidget):
         self.cellDoubleClicked.connect(lambda _row, _column: self.addRequested.emit())
         self.set_rows(rows, lambda row: row)
         self.horizontalHeader().setToolTip(
-            "Single click a row to preview. Double click a row to add it to selected phases."
+            "Click a column heading to sort; click again to reverse the order."
         )
+        self.horizontalHeader().setSectionsClickable(True)
+        self.horizontalHeader().sectionClicked.connect(self._sort_from_header)
+
+    def _sort_from_header(self, column: int) -> None:
+        if self._user_sort_column == column:
+            self._user_sort_order = (Qt.SortOrder.AscendingOrder
+                if self._user_sort_order == Qt.SortOrder.DescendingOrder else Qt.SortOrder.DescendingOrder)
+        else:
+            self._user_sort_order = (Qt.SortOrder.DescendingOrder if column in (5, 6, 7)
+                else Qt.SortOrder.AscendingOrder)
+        self._user_sort_column = column
+        self.refresh_user_sort()
+
+    def refresh_user_sort(self) -> None:
+        self._user_sort_timer.stop()
+        context = self.capture_context()
+        blocked = self.blockSignals(True)
+        try:
+            self._apply_user_sort()
+            self.restore_context(context)
+        finally:
+            self.blockSignals(blocked)
+
+    def _schedule_user_sort(self, _item=None) -> None:
+        if self._user_sort_column is not None:
+            self._user_sort_timer.start(0)
+
+    def _apply_user_sort(self) -> None:
+        column = self._user_sort_column
+        if column is None:
+            return
+        # Move complete rows only. Qt's automatic sorting during setItem can
+        # otherwise split a row between two candidates while batches arrive.
+        def sort_value(row):
+            item = self.item(row, column)
+            text = item.text().strip() if item is not None else ''
+            if column in (1, 5, 6, 7):
+                try:
+                    value = float(text.replace('%', '').replace(',', '.').removeprefix('←').removeprefix('→').strip())
+                    return value if math.isfinite(value) else None
+                except ValueError:
+                    # Entry identifiers may also be alphanumeric.
+                    return text.casefold() if column == 1 and text else None
+            return text.casefold() if text else None
+        populated, missing = [], []
+        for row in range(self.rowCount()):
+            value = sort_value(row)
+            if value is None:
+                missing.append(row)
+            else:
+                populated.append((row, value))
+        populated.sort(key=lambda pair: (isinstance(pair[1], str), pair[1]),
+            reverse=self._user_sort_order == Qt.SortOrder.DescendingOrder)
+        order = [row for row, _ in populated] + missing
+        self._move_rows(order)
+        header = self.horizontalHeader()
+        header.setSortIndicator(column, self._user_sort_order)
+        header.setSortIndicatorShown(True)
+
+    def _move_rows(self, order: list[int]) -> None:
+        if order != list(range(self.rowCount())):
+            hidden = [self.isRowHidden(row) for row in range(self.rowCount())]
+            items = [[self.takeItem(row, col) for col in range(self.columnCount())]
+                for row in range(self.rowCount())]
+            for target, source in enumerate(order):
+                for col, item in enumerate(items[source]):
+                    if item is not None:
+                        self.setItem(target, col, item)
+                self.setRowHidden(target, hidden[source])
+
+    def _ranking_row_indices(self) -> list[int]:
+        ranks = {key: index for index, key in enumerate(self._ranking_keys)}
+        return sorted(range(self.rowCount()), key=lambda row:
+            ranks.get(self._candidate_key_from_values(self._row_texts(row)), len(ranks)))
+
+    def _capture_ranking_order(self) -> None:
+        self._ranking_keys = [self._candidate_key_from_values(self._row_texts(row))
+            for row in range(self.rowCount())]
+
+    def ranking_row_values(self) -> list[dict[str, str]]:
+        """Backend order, independent of the user's display-only column sort."""
+        return [self.row_values(row) for row in self._ranking_row_indices()]
+
+    def ranking_current_row(self) -> int:
+        indices = self._ranking_row_indices()
+        return indices.index(self.currentRow()) if self.currentRow() in indices else -1
+
+    def select_ranking_row(self, row: int) -> None:
+        indices = self._ranking_row_indices()
+        if 0 <= row < len(indices):
+            self.setCurrentCell(indices[row], 0)
+            self.selectRow(indices[row])
+
+    def set_selected_phase_colors(self, colors: dict[tuple[str, str], str]) -> None:
+        self._selected_phase_colors = dict(colors)
+        self._apply_selected_phase_colors()
+
+    def _apply_selected_phase_colors(self) -> None:
+        for row in range(self.rowCount()):
+            item = self.item(row, 1)
+            if item is None:
+                continue
+            key = self._candidate_key_from_values(self._row_texts(row))
+            color = QColor(self._selected_phase_colors.get(key, ''))
+            item.setBackground(QBrush(color) if color.isValid() else QBrush())
+            item.setForeground(QBrush(QColor('#ffffff' if color.lightness() < 150 else '#111111'))
+                if color.isValid() else QBrush())
+            item.setToolTip('Selected in this project; color matches the phase markers.' if color.isValid() else '')
 
     def set_rows(
         self,
@@ -81,6 +198,9 @@ class CandidateTableWidget(QTableWidget):
                 for col_index, value in enumerate(normalized_row[:column_count]):
                     self.setItem(row_index, col_index, QTableWidgetItem(value))
             self._apply_score_arrows()
+            self._apply_selected_phase_colors()
+            self._capture_ranking_order()
+            self._apply_user_sort()
             self._resize_columns()
             if context is not None:
                 self.restore_context(
@@ -118,6 +238,7 @@ class CandidateTableWidget(QTableWidget):
         added = 0
         updated = 0
         try:
+            self._move_rows(self._ranking_row_indices())
             # Informational placeholder rows do not belong beside real candidates.
             for row_index in range(self.rowCount() - 1, -1, -1):
                 values = self.row_values(row_index)
@@ -142,6 +263,9 @@ class CandidateTableWidget(QTableWidget):
                 self._update_row_values(row_index, normalized)
                 added += 1
             self._apply_score_arrows()
+            self._apply_selected_phase_colors()
+            self._capture_ranking_order()
+            self._apply_user_sort()
             self.restore_context(context, select_first_if_missing=False)
         finally:
             self.blockSignals(previous_block_state)
@@ -265,6 +389,17 @@ class CandidateTableWidget(QTableWidget):
             return None
         return self.row_values(row)
 
+    def ensure_visible_selection(self) -> None:
+        current = self.currentRow()
+        if current >= 0 and not self.isRowHidden(current):
+            return
+        for row in range(self.rowCount()):
+            if not self.isRowHidden(row):
+                self.setCurrentCell(row, 0)
+                self.selectRow(row)
+                self.scrollToTop()
+                return
+
     def all_row_values(self) -> list[dict[str, str]]:
         return [self.row_values(row) for row in range(self.rowCount())]
 
@@ -274,6 +409,7 @@ class CandidateTableWidget(QTableWidget):
         item = self.item(row, self.columnCount() - 1)
         if item is not None:
             item.setText(value)
+            self._schedule_user_sort()
 
     def set_probability(self, row: int, value: str) -> None:
         if not value or row < 0 or row >= self.rowCount():
@@ -284,6 +420,7 @@ class CandidateTableWidget(QTableWidget):
         item = self.item(row, column)
         if item is not None:
             item.setText(self._score_display_text(column, value))
+            self._schedule_user_sort()
 
     def set_scoring_stage(self, gain_active: bool) -> None:
         """Point the user to the score that controls the current ranking."""

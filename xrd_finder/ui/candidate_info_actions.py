@@ -27,7 +27,8 @@ class PhaseFinderCandidateInfoActionsMixin:
         self._candidate_activation_timer.start()
 
     def _activate_pending_candidate_row(self) -> None:
-        row = self._pending_candidate_row
+        # Loading or manual sorting may have moved the selected card since the click.
+        row = self.candidate_table.currentRow()
         self._pending_candidate_row = -1
         self._on_candidate_row_activated(row)
 
@@ -450,6 +451,7 @@ class PhaseFinderCandidateInfoActionsMixin:
                     break
             if column >= 0 and (value or header == "Match (%)"):
                 self.candidate_table.setItem(row, column, QTableWidgetItem(value))
+        self.candidate_table._schedule_user_sort()
 
     def _show_candidate_context_menu(self, global_point) -> None:
         candidate = self._selected_candidate_row()

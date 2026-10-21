@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from dataclasses import replace
 import json
+import re
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from xrd_finder.instrument.models import InstrumentProfile
 from xrd_finder.instrument.presets import packaged_instrument_profiles
@@ -27,6 +30,33 @@ class InstrumentProfileLibrary:
 
     def get(self, profile_id: str) -> InstrumentProfile | None:
         return next((profile for profile in self._profiles if profile.profile_id == profile_id), None)
+
+    def add_imported_profile(self, profile: InstrumentProfile) -> InstrumentProfile:
+        """Add an editable copy; never replace a local or packaged calibration."""
+        from xrd_finder.instrument.profile_io import _validate_profile
+        _validate_profile(profile)
+        base_name = profile.identity.name.strip()
+        source = profile.to_dict()
+        source.pop("profile_id", None)
+        for saved in self._profiles:
+            if saved.profile_id in PACKAGED_PROFILE_IDS:
+                continue
+            if not re.fullmatch(re.escape(base_name) + r"(?: \(\d+\))?", saved.identity.name, re.IGNORECASE):
+                continue
+            existing = saved.to_dict()
+            existing.pop("profile_id", None)
+            existing["identity"]["name"] = source["identity"]["name"]
+            if existing == source:
+                return saved
+        names = {p.identity.name.strip().casefold() for p in self._profiles}
+        name = base_name
+        number = 2
+        while name.casefold() in names:
+            name = f"{base_name} ({number})"
+            number += 1
+        imported = replace(profile, profile_id=f"instrument-{uuid4()}", identity=replace(profile.identity, name=name))
+        self.save_profile(imported)
+        return imported
 
     def save_profile(self, profile: InstrumentProfile, *, overwrite: bool = False) -> None:
         current_index = next(

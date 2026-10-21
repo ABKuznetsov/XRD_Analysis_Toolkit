@@ -82,8 +82,8 @@ class PhaseFinderProjectStateActionsMixin:
             grid_visible=bool(self.grid_visible),
             show_hkl_labels=bool(self.show_hkl_labels),
             right_tab=right_tab,
-            candidate_rows=self.candidate_table.all_row_values(),
-            candidate_current_row=int(self.candidate_table.currentRow()),
+            candidate_rows=self.candidate_table.ranking_row_values(),
+            candidate_current_row=self.candidate_table.ranking_current_row(),
             match_candidates=[dict(candidate) for candidate in self.match_candidates],
             match_current_row=int(self.match_table.currentRow()),
             match_quantities={str(key): float(value) for key, value in self.match_quantities.items()},
@@ -177,7 +177,7 @@ class PhaseFinderProjectStateActionsMixin:
             if 0 <= state.candidate_current_row < self.candidate_table.rowCount():
                 previous_block_state = self.candidate_table.blockSignals(True)
                 try:
-                    self.candidate_table.selectRow(state.candidate_current_row)
+                    self.candidate_table.select_ranking_row(state.candidate_current_row)
                 finally:
                     self.candidate_table.blockSignals(previous_block_state)
         self._restore_match_state(state)
