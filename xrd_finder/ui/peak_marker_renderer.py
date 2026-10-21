@@ -278,7 +278,7 @@ def add_peak_coverage_markers(
     style: PlotStyle | None = None,
 ) -> tuple[int, int]:
     style = style or PlotStyle()
-    if observed_peak_assignments:
+    if observed_peak_assignments is not None:
         return add_assignment_markers(
             plot=plot,
             plot_layers=plot_layers,
@@ -389,11 +389,8 @@ def add_assignment_markers(
         if np.isfinite(float(getattr(observed_peak, "intensity", 0.0)))
     ]
     unknown_cutoff = float(np.nanpercentile(peak_strengths, 74)) if peak_strengths else float(np.nanpercentile(observed_y, 74))
-    inferred_marker_cutoff = float(np.nanpercentile(peak_strengths, 82)) if peak_strengths else float(np.nanpercentile(observed_y, 82))
     unknown_count = 0
     coverage_marker_limit = len(observed_peaks)
-    inferred_marker_limit = 4
-    inferred_marker_count = 0
     explained = 0
     coverage_marker_positions: list[float] = []
     unknown_marker_positions: list[float] = []
@@ -468,43 +465,9 @@ def add_assignment_markers(
                     plot.addItem(text)
                     plot_layers["peak_labels"].append(text)
         else:
-            # Assignment records are authoritative. A merely nearby phase
-            # stick is not a formal assignment. It can suppress a false
-            # "unknown" marker, and for the strongest such peaks we draw a
-            # limited visual hint without letting the plot become all markers.
-            nearby_colors = _nearby_phase_peak_colors(
-                obs_x=obs_x,
-                x=x,
-                phase_peak_sets=phase_peak_sets,
-                fwhm=float(getattr(observed_peak, "fwhm", 0.0) or 0.0),
-            )
-            if nearby_colors:
-                explained += 1
-                peak_fwhm = float(getattr(observed_peak, "fwhm", 0.0) or 0.0)
-                if (
-                    inferred_marker_count < inferred_marker_limit
-                    and len(coverage_marker_positions) < coverage_marker_limit
-                    and _peak_height >= inferred_marker_cutoff
-                    and _is_significant_peak(x, corrected_strength, y_index, noise_sigma)
-                    and _marker_position_available(
-                        coverage_marker_positions,
-                        obs_x,
-                        x=x,
-                        fwhm=peak_fwhm,
-                    )
-                ):
-                    _add_colored_phase_marker(
-                        plot=plot,
-                        plot_layers=plot_layers,
-                        x=obs_x,
-                        y=marker_y + phase_marker_offset,
-                        colors=nearby_colors,
-                        size=phase_marker_size,
-                        symbol=style.marker.symbol,
-                    )
-                    coverage_marker_positions.append(obs_x)
-                    inferred_marker_count += 1
-                continue
+            # A nearby reference stick is only a positional hypothesis. It must
+            # not override the fitted model or turn an unexplained peak into a
+            # colored, allegedly explained contribution.
             if unknown_count >= 10 or _peak_height < unknown_cutoff:
                 continue
             if not _marker_position_available(

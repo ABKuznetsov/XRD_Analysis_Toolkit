@@ -363,10 +363,7 @@ def draw_match_profile_result(
             )
         y_span = max(observed_ymax - observed_ymin, observed_ymax, float(active_plot_context.get("height", 0.0)), 1.0)
         preview_height = max(y_span * float(getattr(style, "preview_stick_fraction", 0.16)), y_span * 0.015)
-        if show_all_selected_patterns:
-            preview_baseline = background_plot + index * y_span * 0.025
-        else:
-            preview_baseline = background_plot
+        preview_baseline = background_plot
         # Compact independent lanes also fit below each stacked pattern.
         lane_scale = 0.4 if show_all_selected_patterns else 1.0
         shift_lane_height = max(y_span * float(getattr(style, "phase_tick_fraction", 0.045)), y_span * 0.01) * lane_scale
@@ -399,7 +396,10 @@ def draw_match_profile_result(
             preview_height,
             f"preview peaks {phase_label}",
             width=style.stick.width,
-            ceiling=marker_observed_y_plot,
+            # Accepted-phase sticks show that phase's fitted contribution;
+            # stretching every phase to the observed height implies evidence
+            # even for a zero coefficient. Lower lanes retain reference lines.
+            ceiling=background_plot + profile * phase_profile_scale,
             reach_ceiling=True,
         )
         _tag_plot_item(

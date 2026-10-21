@@ -1,7 +1,7 @@
-"""Structural phase quantities, separate from normalized display/search fits."""
+"""Joint structural phase model for quantities and accepted-phase curves."""
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import lru_cache
 import math
 from pathlib import Path
@@ -14,6 +14,7 @@ from cristma.symmetry.orbit import expand_structure
 from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.services.element_masses import atomic_weight
 from xrd_finder.services.cristma_powder_adapter import CristmaPowderAdapter
+from xrd_finder.services.calculated_pattern_service import HKLPeak
 
 
 def quantification_source_signature(path, structure) -> tuple:
@@ -101,22 +102,31 @@ def _cif_metadata(path: str, modified_ns: int, size: int) -> tuple[float,float]:
     return unit_cell_mass(native),unit_cell_volume(native.cell)
 
 
-def accepted_phase_quantities(items, x, target, context, instrument, calculator) -> np.ndarray:
-    """Fit only accepted structural phases in physical units; return NaN if unavailable.
+@dataclass(frozen=True)
+class AcceptedPhaseFit:
+    fractions: np.ndarray
+    # Columns are unnormalised integrated-intensity structural profiles.
+    profiles: np.ndarray
+    scales: np.ndarray
+    peaks: tuple[tuple[HKLPeak, ...], ...]
 
-    The caller's normalized display fit, peak positions and search coefficients
-    are untouched. Cached reference cards require their local CIF for Quant.
+
+def fit_accepted_phases(items, x, target, context, instrument, calculator) -> AcceptedPhaseFit | None:
+    """Fit accepted structural phases once in physical units.
+
+    Keep the fitted columns and coefficients alongside Hill--Howard fractions
+    so plotted phase contributions cannot describe a different mixture.
+    Cached reference cards require their local CIF for this physical model.
     """
-    unavailable=np.full(len(items),np.nan)
     if not items or instrument is None:
-        return unavailable
-    profiles=[];masses=[];volumes=[]
+        return None
+    profiles=[];masses=[];volumes=[];peak_sets=[]
     try:
         for item in items:
             candidate,_structure,_reference,_adjusted,_display,cell_scale,width,eta,estimate=item
             cif_path=candidate.cif_path or candidate.quantification_cif_path
             if not cif_path:
-                return unavailable
+                return None
             path=Path(cif_path).resolve()
             stat=path.stat()
             mass,volume=_cif_metadata(str(path),stat.st_mtime_ns,stat.st_size)
@@ -128,7 +138,7 @@ def accepted_phase_quantities(items, x, target, context, instrument, calculator)
                 active=candidate.structure
                 if any(getattr(active,name)!=getattr(source,name) for name in
                        ('atoms','symops','space_group','space_group_number')):
-                    return unavailable
+                    return None
                 if override is None:
                     override=active.cell
             phase_context=context.with_alignment(context.global_zero_shift,cell_scale)
@@ -138,21 +148,32 @@ def accepted_phase_quantities(items, x, target, context, instrument, calculator)
             profile=calculator.profile_from_lines(lines,x,phase_context,
                 instrument_profile=instrument,normalize=False)
             profiles.append(np.asarray(profile,dtype=float))
+            peak_sets.append(tuple(lines.peaks))
             masses.append(mass)
             volumes.append(unit_cell_volume(override) if override is not None else volume*float(cell_scale)**3)
         matrix=np.column_stack(profiles)
         target=np.asarray(target,dtype=float)
         if not np.all(np.isfinite(matrix)) or not np.all(np.isfinite(target)):
-            return unavailable
+            return None
         weights=1./np.sqrt(np.maximum(np.abs(target),1.))
         weighted=matrix*weights[:,None]
         norms=np.linalg.norm(weighted,axis=0)
         if not np.all(norms>0):
-            return unavailable
+            return None
         normalized=weighted/norms
         if np.linalg.matrix_rank(normalized)<len(items):
-            return unavailable
+            return None
         scales,_=nnls(normalized,target*weights)
-        return mass_fractions(scales/norms,masses,volumes)
+        scales=scales/norms
+        fractions=mass_fractions(scales,masses,volumes)
+        if not np.all(np.isfinite(fractions)):
+            return None
+        return AcceptedPhaseFit(fractions,matrix,scales,tuple(peak_sets))
     except (OSError,ValueError,TypeError,AttributeError,RuntimeError,np.linalg.LinAlgError):
-        return unavailable
+        return None
+
+
+def accepted_phase_quantities(items, x, target, context, instrument, calculator) -> np.ndarray:
+    """Compatibility accessor for callers needing only mass fractions."""
+    fit=fit_accepted_phases(items,x,target,context,instrument,calculator)
+    return fit.fractions if fit is not None else np.full(len(items),np.nan)

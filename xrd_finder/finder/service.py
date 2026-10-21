@@ -11,7 +11,7 @@ from scipy.signal import find_peaks
 from xrd_finder.finder.assignment_builder import AssignmentBuilder, nearest_index as nearest_peak_index, nearest_phase_peak
 from xrd_finder.finder.cell_parameter_estimator import CellParameterEstimate, FastCellParameterEstimator
 from xrd_finder.finder.context import CalculationContext
-from xrd_finder.finder.quantification import accepted_phase_quantities, mass_fractions
+from xrd_finder.finder.quantification import fit_accepted_phases, mass_fractions
 from xrd_finder.finder.models import (
     FinderCandidateInput,
     FinderCandidateResult,
@@ -307,18 +307,29 @@ class FinderService:
                 )
             )
 
-        scales = self._fit_incremental_scales(
-            observed.target_y,
-            [
-                profile
-                for _candidate, _structure, _reference_peaks, _peaks, profile, _cell_scale, _phase_fwhm, _phase_eta, _cell_estimate
-                in profiles
-            ],
-        )
-        quantity_fractions = accepted_phase_quantities(
+        physical_fit = fit_accepted_phases(
             profiles,x_grid,observed.target_y,context.with_alignment(global_zero,1.0),
             finder_input.instrument_profile,self.profile_calculator,
-        ) if (finder_input.quantification_complete and len(profiles) == len(finder_input.candidates)) else np.full(len(profiles),np.nan)
+        ) if (finder_input.quantification_complete and len(profiles) == len(finder_input.candidates)) else None
+        if physical_fit is not None:
+            quantity_fractions = physical_fit.fractions
+            # Preserve the public peak-normalized scale convention, while using
+            # exactly the physical columns and coefficients that produced Quant.
+            maxima = np.max(physical_fit.profiles, axis=0)
+            scales = physical_fit.scales * maxima / 100.0
+            physical_profiles = []
+            for index, item in enumerate(profiles):
+                # Cached cards can outlive a changed CIF. Peak geometry and hkl
+                # must come from the same native lines as the physical column.
+                peaks = self._apply_peak_model(
+                    list(physical_fit.peaks[index]), context.with_alignment(global_zero, item[5])
+                )
+                profile = physical_fit.profiles[:, index] * (100.0 / maxima[index])
+                physical_profiles.append((*item[:2], peaks, peaks, profile, *item[5:]))
+            profiles = physical_profiles
+        else:
+            quantity_fractions = np.full(len(profiles), np.nan)
+            scales = self._fit_incremental_scales(observed.target_y, [item[4] for item in profiles])
         calculated_total = np.zeros_like(x_grid)
         results = []
         assignment_phase_sets = []
