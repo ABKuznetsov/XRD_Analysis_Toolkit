@@ -23,10 +23,6 @@ MACOS_UPDATE_MANIFEST_URL = (
     "main/launcher/updates/xrd_finder_macos.json"
 )
 MIN_VISIBLE_STEP_SECONDS = 1.0
-RUNTIME_PROBE = (
-    "from PySide6 import QtCore; "
-    "import certifi, numpy, pybaselines, pyqtgraph, rfc8785, scipy"
-)
 
 
 def env_flag(name: str, default: bool = False) -> bool:
@@ -150,7 +146,8 @@ def runtime_is_usable(python: Path) -> tuple[bool, str]:
         return False, "Python executable is missing"
     try:
         process = subprocess.run(
-            [str(python), "-c", RUNTIME_PROBE],
+            [str(python), "-m", "xrd_finder.apps.runtime_check", "--mode", "gui"],
+            cwd=str(app_root()),
             capture_output=True,
             text=True,
             check=False,

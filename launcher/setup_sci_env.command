@@ -110,5 +110,9 @@ while IFS= read -r requirement || [ -n "$requirement" ]; do
     install_requirement "$requirement"
 done < "$REQ_FILE"
 
+echo "Validating XRD Phase Finder runtime..."
+cd "$APP_ROOT"
+/usr/bin/arch "-$SCI_ARCH" "$SCI_ENV/bin/python" -m xrd_finder.apps.runtime_check --mode gui >> "$LOG_FILE" 2>&1
+
 echo "[$(date)] Sci setup complete." >> "$LOG_FILE"
 echo "Sci environment is ready."
