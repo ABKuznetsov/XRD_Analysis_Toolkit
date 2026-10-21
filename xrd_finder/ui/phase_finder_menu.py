@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QMenuBar, QMessageBox, QWidget
 
 
@@ -43,8 +44,10 @@ def build_phase_finder_menu_bar(owner: QWidget) -> QMenuBar:
     file_menu = menu_bar.addMenu("File")
     _add_owner_action(file_menu, "New project", owner, "_new_project")
     _add_owner_action(file_menu, "Open project...", owner, "_load_project")
-    _add_owner_action(file_menu, "Save project", owner, "_save_project")
-    _add_owner_action(file_menu, "Save project as...", owner, "_save_project_as")
+    owner.save_project_action = _add_owner_action(file_menu, "Save project", owner, "_save_project")
+    owner.save_project_action.setShortcut(QKeySequence.StandardKey.Save)
+    owner.save_project_as_action = _add_owner_action(file_menu, "Save project as...", owner, "_save_project_as")
+    owner.save_project_as_action.setShortcut(QKeySequence.StandardKey.SaveAs)
     file_menu.addSeparator()
     _add_owner_action(file_menu, "Import XRD / CIF...", owner, "_import_scientific_files")
     file_menu.addSeparator()

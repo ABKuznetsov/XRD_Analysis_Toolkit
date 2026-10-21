@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import asdict
 import json
 import math
 
@@ -179,6 +180,7 @@ class AnalysisWindow(QDialog):
         self.project = project
         self._base_title = title
         self._project_read_only_example = False
+        self._saved_project_snapshot: str | None = None
         self.setWindowTitle(f"{title} - {project.name}")
         self._layout_state = SplitterLayoutState(app_settings())
         self.setStyleSheet(window_style(self._is_dark_theme()))
@@ -477,28 +479,15 @@ class AnalysisWindow(QDialog):
         )
 
     def _new_project(self) -> None:
-        if self.project.patterns or self.project.phases or self.project.structures:
-            response = QMessageBox.warning(
-                self,
-                "New project",
-                "Clear all imported XRD patterns, CIF structures, candidates, and calculated overlays?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if response != QMessageBox.StandardButton.Yes:
-                return
-        self.project.patterns.clear()
-        self.project.phases.clear()
-        self.project.structures.clear()
-        self.project.refinements.clear()
-        self.project.analyses.clear()
-        self.project.series.clear()
-        self.project.root_path = ""
+        if not self._confirm_project_replacement():
+            return
+        self.project = Project(name="XRD Phase Finder Project")
         self._project_read_only_example = False
-        self.project.touch()
+        self.setWindowTitle(f"{self._base_title} - {self.project.name}")
         self.tree.set_project(self.project)
         self._after_new_project()
         self.project_changed.emit()
+        self._remember_saved_project_state()
 
     def _load_project(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -512,6 +501,8 @@ class AnalysisWindow(QDialog):
         self._open_project_path(path)
 
     def _open_project_path(self, path: str | Path) -> bool:
+        if not self._confirm_project_replacement():
+            return False
         try:
             project = load_project_manifest(path)
         except Exception as exc:
@@ -530,20 +521,90 @@ class AnalysisWindow(QDialog):
         details = "\n".join(f"• {warning}" for warning in warnings)
         QMessageBox.warning(self, "Project loaded with warnings", details)
 
-    def _save_project(self) -> bool:
+    def _project_has_save_path(self) -> bool:
+        return bool(
+            self.project.root_path
+            and Path(self.project.root_path).suffix.lower() == PORTABLE_PROJECT_SUFFIX
+            and not self._project_read_only_example
+            and not self._is_bundled_example_path(self.project.root_path)
+        )
+
+    def _update_project_save_actions(self) -> None:
+        enabled = self._project_has_save_path()
+        action = getattr(self, "save_project_action", None)
+        if action is not None:
+            action.setEnabled(enabled)
+        toolbar = getattr(self, "finder_top_toolbar", None)
+        if toolbar is not None:
+            toolbar.save_button.setEnabled(enabled)
+
+    def _project_save_snapshot(self) -> str:
+        self._sync_finder_state_to_project()
+        state = asdict(self.project)
+        for key in ("root_path", "updated_at", "analysis_summary"):
+            state.pop(key, None)
+        # Browsing a saved project is not an edit, even though its view is portable.
+        for key in (
+            "current_object_type", "current_object_id", "tree_expansion_state",
+            "right_tab", "candidate_current_row", "match_current_row", "plot_view_range",
+        ):
+            state["finder_state"].pop(key, None)
+        return json.dumps(state, sort_keys=True)
+
+    def _remember_saved_project_state(self) -> None:
+        try:
+            self._saved_project_snapshot = self._project_save_snapshot()
+        except (OSError, ValueError, TypeError):
+            self._saved_project_snapshot = None
+        self._update_project_save_actions()
+
+    def _has_unsaved_changes(self) -> bool:
         if self._project_read_only_example:
-            self._show_example_read_only_message()
             return False
-        if not self.project.root_path or Path(self.project.root_path).suffix.lower() != PORTABLE_PROJECT_SUFFIX:
-            return self._save_project_as()
+        if not self._project_has_save_path() and (
+            self.project.patterns or self.project.phases or self.project.structures
+            or self.project.series or self.project.analyses or self.project.refinements
+            or self.project.notes
+        ):
+            return True
+        try:
+            return self._project_save_snapshot() != self._saved_project_snapshot
+        except (OSError, ValueError, TypeError):
+            # An unreadable asset must never make unsaved work look unchanged.
+            return True
+
+    def _confirm_project_replacement(self) -> bool:
+        if not self._has_unsaved_changes():
+            return True
+        response = QMessageBox.question(
+            self,
+            "Unsaved project changes",
+            "Save changes to the current project before continuing?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if response == QMessageBox.StandardButton.Discard:
+            return True
+        if response == QMessageBox.StandardButton.Save:
+            return self._save_project() if self._project_has_save_path() else self._save_project_as()
+        return False
+
+    def _is_bundled_example_path(self, path: str | Path) -> bool:
+        example = Path(__file__).resolve().parents[1] / "examples" / "XRD_Phase_Finder_example.xpff"
+        return Path(path).resolve() == example
+
+    def _save_project(self) -> bool:
+        if not self._project_has_save_path():
+            return False
         return self._write_project(self.project.root_path)
 
     def _save_project_as(self) -> bool:
-        if self._project_read_only_example:
-            self._show_example_read_only_message()
-            return False
         current_path = Path(self.project.root_path) if self.project.root_path else None
-        if current_path is not None and current_path.suffix.lower() == PORTABLE_PROJECT_SUFFIX:
+        if self._project_read_only_example:
+            default_path = str(Path.home() / "Documents" / f"{self.project.name}_copy{PORTABLE_PROJECT_SUFFIX}")
+        elif current_path is not None and current_path.suffix.lower() == PORTABLE_PROJECT_SUFFIX:
             default_path = str(current_path)
         else:
             default_path = str(Path(self._last_directory()) / f"{self.project.name}{PORTABLE_PROJECT_SUFFIX}")
@@ -556,13 +617,24 @@ class AnalysisWindow(QDialog):
         if not path:
             return False
         selected = Path(path)
-        if selected.suffix == "":
-            path = str(selected.with_suffix(PORTABLE_PROJECT_SUFFIX))
+        if selected.suffix.lower() != PORTABLE_PROJECT_SUFFIX:
+            path = str(selected.with_name(selected.name + PORTABLE_PROJECT_SUFFIX))
+            if Path(path).exists() and QMessageBox.question(
+                self,
+                "Replace existing project",
+                f"The file already exists:\n{path}\n\nReplace it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            ) != QMessageBox.StandardButton.Yes:
+                return False
         return self._write_project(path)
 
     @traced_operation("project.save")
     def _write_project(self, path: str | Path) -> bool:
         path = str(path)
+        if self._is_bundled_example_path(path):
+            self._show_example_read_only_message()
+            return False
         try:
             self._sync_finder_state_to_project()
             self.project.touch()
@@ -571,7 +643,10 @@ class AnalysisWindow(QDialog):
         except Exception as exc:
             QMessageBox.warning(self, "Save project failed", str(exc))
             return False
-        QMessageBox.information(self, "Project saved", f"Project saved to:\n{path}")
+        self._project_read_only_example = False
+        self.setWindowTitle(f"{self._base_title} - {self.project.name}")
+        self._remember_saved_project_state()
+        self.background_status_changed.emit(f"Project saved: {path}")
         self._remember_directory(path)
         return True
 
@@ -819,7 +894,8 @@ class PhaseFinderWindow(
     def __init__(self, project: Project, *, defer_initial_plot: bool = False) -> None:
         self._defer_initial_plot = bool(defer_initial_plot)
         super().__init__(project, "Phase Finder")
-        self.layout().setMenuBar(build_phase_finder_menu_bar(self))
+        self.menu_bar = build_phase_finder_menu_bar(self)
+        self.layout().setMenuBar(self.menu_bar)
         self.resize(1500, 850)
         self.right_tabs.setMinimumWidth(360)
         self._init_filter_state()
@@ -838,6 +914,11 @@ class PhaseFinderWindow(
             self,
         )
         self._create_right_tabs()
+        if project.root_path:
+            # Saved Finder state is restored by _after_project_loaded().
+            self._update_project_save_actions()
+        else:
+            self._remember_saved_project_state()
         self.post_match_pipeline = PostMatchPipeline(
             refresh_selected_profile=self._recalculate_match_profile,
             refine_indexed_cells=self._fit_active_sample_indexed_cells,
@@ -1458,6 +1539,7 @@ class PhaseFinderWindow(
             self._refresh_observed_pattern_plot()
         else:
             self._restore_finder_state_from_project()
+        self._remember_saved_project_state()
 
     def _reset_phase_finder_state(
         self,
@@ -1526,23 +1608,9 @@ class PhaseFinderWindow(
         self.close()
 
     def closeEvent(self, event) -> None:
-        has_data = bool(self.project.patterns or self.project.phases or self.project.structures)
-        if has_data and not self._project_read_only_example:
-            response = QMessageBox.question(
-                self,
-                "Close XRD Phase Finder",
-                "Save the current project before closing?",
-                QMessageBox.StandardButton.Save
-                | QMessageBox.StandardButton.Discard
-                | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Save,
-            )
-            if response == QMessageBox.StandardButton.Cancel:
-                event.ignore()
-                return
-            if response == QMessageBox.StandardButton.Save and not self._save_project():
-                event.ignore()
-                return
+        if not self._confirm_project_replacement():
+            event.ignore()
+            return
         self._stop_candidate_batch_updates()
         queue = getattr(self, "visible_profile_calculation_queue", None)
         if queue is not None:
@@ -1877,7 +1945,7 @@ class PhaseFinderWindow(
         QMessageBox.information(
             self,
             "Example project",
-            "This bundled example is for viewing only. Create a new project or open your own .xpff file to save changes.",
+            "The bundled example cannot be overwritten. Use Save project as... to create an editable copy.",
         )
 
     def _open_example_project(self) -> None:
@@ -1892,11 +1960,12 @@ class PhaseFinderWindow(
         if self._open_project_path(example_path):
             self.project.root_path = ""
             self._project_read_only_example = True
+            self._update_project_save_actions()
             self.setWindowTitle(f"{self._base_title} - {self.project.name} (example)")
             QMessageBox.information(
                 self,
                 "Example project",
-                "The example project is opened in view-only mode. Saving is disabled for bundled examples.",
+                "The bundled example is protected. Use Save project as... to create your own editable copy.",
             )
 
     def _show_about_dialog(self) -> None:
