@@ -34,6 +34,7 @@ class PhaseFinderPlotActionsMixin:
         "layer_background_visible": False,
         "layer_difference_visible": False,
         "layer_phase_ticks_visible": True,
+        "layer_phase_peak_sticks_visible": True,
         "layer_coverage_markers_visible": True,
         "layer_peak_labels_visible": False,
         "layer_unknown_peaks_visible": False,
@@ -62,7 +63,8 @@ class PhaseFinderPlotActionsMixin:
         menu.addAction(self._layer_action("Individual profiles", "phase_profiles", enabled=True))
         menu.addAction(self._layer_action("Background", "background", enabled=True))
         menu.addAction(self._layer_action("Difference curve", "difference", enabled=True))
-        menu.addAction(self._layer_action("Phase tick marks", "phase_ticks", enabled=True))
+        menu.addAction(self._layer_action("Phase ticks below pattern", "phase_ticks", enabled=True))
+        menu.addAction(self._layer_action("Phase sticks on pattern", "phase_peak_sticks", enabled=True))
         menu.addAction(self._layer_action("Assignment markers", "coverage_markers", enabled=True))
         hkl_action = menu.addAction("HKL labels")
         hkl_action.setCheckable(True)
@@ -165,6 +167,7 @@ class PhaseFinderPlotActionsMixin:
         "background": ("layer_background_visible", "layer_background_checkbox"),
         "difference": ("layer_difference_visible", "layer_difference_checkbox"),
         "phase_ticks": ("layer_phase_ticks_visible", "layer_phase_ticks_checkbox"),
+        "phase_peak_sticks": ("layer_phase_peak_sticks_visible", "layer_phase_peak_sticks_checkbox"),
         "coverage_markers": ("layer_coverage_markers_visible", "layer_coverage_markers_checkbox"),
         "peak_labels": ("layer_peak_labels_visible", "layer_peak_labels_checkbox"),
         "hkl": ("hkl_labels_visible", "hkl_labels_checkbox"),
@@ -192,6 +195,8 @@ class PhaseFinderPlotActionsMixin:
         if not isinstance(layer_state, dict):
             state["layer_visibility"] = {}
             layer_state = state["layer_visibility"]
+        if "layer_phase_peak_sticks_visible" not in layer_state and "layer_phase_ticks_visible" in layer_state:
+            layer_state["layer_phase_peak_sticks_visible"] = bool(layer_state["layer_phase_ticks_visible"])
         for field, visible in self._MULTI_PATTERN_LAYER_DEFAULTS.items():
             layer_state.setdefault(field, visible)
         return layer_state
@@ -290,6 +295,7 @@ class PhaseFinderPlotActionsMixin:
             "layer_background_visible",
             "layer_difference_visible",
             "layer_phase_ticks_visible",
+            "layer_phase_peak_sticks_visible",
             "layer_coverage_markers_visible",
             "layer_peak_labels_visible",
             "layer_unknown_peaks_visible",
@@ -333,6 +339,7 @@ class PhaseFinderPlotActionsMixin:
             "background",
             "difference",
             "phase_ticks",
+            "phase_peak_sticks",
             "coverage_markers",
             "peak_labels",
             "unknown_peaks",
@@ -349,6 +356,7 @@ class PhaseFinderPlotActionsMixin:
         self._set_layer_visible("difference", visible)
         self._set_layer_visible("peak_positions", visible)
         self._set_layer_visible("phase_ticks", visible)
+        self._set_layer_visible("phase_peak_sticks", visible)
         self._set_layer_visible("peak_links", visible)
         self._set_layer_visible("coverage_markers", visible)
         self._set_layer_visible("peak_labels", visible)
@@ -368,6 +376,7 @@ class PhaseFinderPlotActionsMixin:
         "difference",
         "peak_positions",
         "phase_ticks",
+        "phase_peak_sticks",
         "peak_links",
         "coverage_markers",
         "peak_labels",
@@ -523,6 +532,7 @@ class PhaseFinderPlotActionsMixin:
             "preview_peak_links",
             "peak_links",
             "phase_ticks",
+            "phase_peak_sticks",
             "coverage_markers",
             "peak_labels",
             "hkl",

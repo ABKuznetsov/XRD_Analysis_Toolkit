@@ -19,6 +19,7 @@ class CanvasLayer(StrEnum):
     DIFFERENCE = "difference"
     CANDIDATE_PREVIEW = "candidate_preview"
     PHASE_TICKS = "phase_ticks"
+    PHASE_PEAK_STICKS = "phase_peak_sticks"
     ASSIGNMENT_MARKERS = "assignment_markers"
     UNKNOWN_PEAKS = "unknown_peaks"
     LABELS = "labels"
@@ -38,6 +39,7 @@ CANVAS_LAYER_ORDER = (
     CanvasLayer.DIFFERENCE,
     CanvasLayer.CANDIDATE_PREVIEW,
     CanvasLayer.PHASE_TICKS,
+    CanvasLayer.PHASE_PEAK_STICKS,
     CanvasLayer.ASSIGNMENT_MARKERS,
     CanvasLayer.UNKNOWN_PEAKS,
     CanvasLayer.LABELS,

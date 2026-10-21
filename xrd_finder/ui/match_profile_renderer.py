@@ -365,30 +365,31 @@ def draw_match_profile_result(
         preview_height = max(y_span * float(getattr(style, "preview_stick_fraction", 0.16)), y_span * 0.015)
         if show_all_selected_patterns:
             preview_baseline = background_plot + index * y_span * 0.025
-            label_y = preview_baseline
         else:
             preview_baseline = background_plot
-            shift_lane_height = max(y_span * float(getattr(style, "phase_tick_fraction", 0.045)), y_span * 0.01)
-            shift_lane_gap = shift_lane_height * 0.85
-            shift_lane_top = min(observed_ymin_plot, float(np.nanpercentile(background_plot, 5))) - y_span * 0.12
-            shift_lane_baseline = shift_lane_top - index * (shift_lane_height + shift_lane_gap)
-            shift_items = plot_phase_marker_lane(
-                match_plot,
-                tick_peaks,
-                color,
-                shift_lane_baseline,
-                shift_lane_height,
-                None,
-                float(np.nanmin(x) + (np.nanmax(x) - np.nanmin(x)) * 0.005),
-            )
-            _tag_plot_items(
-                shift_items,
-                pattern_id,
-                phase_id=key,
-                object_id="phase-shift-lane",
-            )
-            plot_layers["phase_ticks"].extend(shift_items)
-            label_y = preview_baseline
+        # Compact independent lanes also fit below each stacked pattern.
+        lane_scale = 0.4 if show_all_selected_patterns else 1.0
+        shift_lane_height = max(y_span * float(getattr(style, "phase_tick_fraction", 0.045)), y_span * 0.01) * lane_scale
+        shift_lane_gap = shift_lane_height * (0.5 if show_all_selected_patterns else 0.85)
+        shift_lane_top = min(observed_ymin_plot, float(np.nanpercentile(background_plot, 5))) - y_span * (0.035 if show_all_selected_patterns else 0.12)
+        shift_lane_baseline = shift_lane_top - index * (shift_lane_height + shift_lane_gap)
+        shift_items = plot_phase_marker_lane(
+            match_plot,
+            tick_peaks,
+            color,
+            shift_lane_baseline,
+            shift_lane_height,
+            None,
+            float(np.nanmin(x) + (np.nanmax(x) - np.nanmin(x)) * 0.005),
+        )
+        _tag_plot_items(
+            shift_items,
+            pattern_id,
+            phase_id=key,
+            object_id="phase-shift-lane",
+        )
+        plot_layers["phase_ticks"].extend(shift_items)
+        label_y = preview_baseline
         stick_item = plot_peak_intensity_sticks(
             match_plot,
             tick_peaks,
@@ -410,7 +411,7 @@ def draw_match_profile_result(
         # These sticks belong to an accepted phase. Keep them separate from
         # the temporary candidate preview, which must remain visible in multi
         # mode even when saved phase overlays are hidden.
-        plot_layers["phase_ticks"].append(stick_item)
+        plot_layers["phase_peak_sticks"].append(stick_item)
         if show_hkl_labels:
             hkl_items = add_hkl_labels(
                 match_plot,

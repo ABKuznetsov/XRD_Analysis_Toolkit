@@ -108,6 +108,7 @@ class PlotViewSettings:
     layer_background_visible: bool = True
     layer_difference_visible: bool = True
     layer_phase_ticks_visible: bool = True
+    layer_phase_peak_sticks_visible: bool = True
     layer_coverage_markers_visible: bool = True
     layer_peak_labels_visible: bool = False
     layer_unknown_peaks_visible: bool = True
@@ -782,6 +783,9 @@ class PlotViewSettingsWidget(QScrollArea):
         self.layer_phase_ticks_checkbox = QCheckBox()
         self.layer_phase_ticks_checkbox.setChecked(True)
         self.layer_phase_ticks_checkbox.toggled.connect(self._emit_settings)
+        self.layer_phase_peak_sticks_checkbox = QCheckBox()
+        self.layer_phase_peak_sticks_checkbox.setChecked(True)
+        self.layer_phase_peak_sticks_checkbox.toggled.connect(self._emit_settings)
         self.layer_coverage_markers_checkbox = QCheckBox()
         self.layer_coverage_markers_checkbox.setChecked(True)
         self.layer_coverage_markers_checkbox.toggled.connect(self._emit_settings)
@@ -797,7 +801,8 @@ class PlotViewSettingsWidget(QScrollArea):
         form.addRow("Individual phase profiles", self.layer_phase_profiles_checkbox)
         form.addRow("Background", self.layer_background_checkbox)
         form.addRow("Difference curve", self.layer_difference_checkbox)
-        form.addRow("Phase tick marks", self.layer_phase_ticks_checkbox)
+        form.addRow("Phase ticks below pattern", self.layer_phase_ticks_checkbox)
+        form.addRow("Phase sticks on pattern", self.layer_phase_peak_sticks_checkbox)
         form.addRow("Assignment markers", self.layer_coverage_markers_checkbox)
         form.addRow("Peak labels", self.layer_peak_labels_checkbox)
         form.addRow("Unknown peaks", self.layer_unknown_peaks_checkbox)
@@ -1066,6 +1071,7 @@ class PlotViewSettingsWidget(QScrollArea):
             layer_background_visible=bool(self.layer_background_checkbox.isChecked()),
             layer_difference_visible=bool(self.layer_difference_checkbox.isChecked()),
             layer_phase_ticks_visible=bool(self.layer_phase_ticks_checkbox.isChecked()),
+            layer_phase_peak_sticks_visible=bool(self.layer_phase_peak_sticks_checkbox.isChecked()),
             layer_coverage_markers_visible=bool(self.layer_coverage_markers_checkbox.isChecked()),
             layer_peak_labels_visible=bool(self.layer_peak_labels_checkbox.isChecked()),
             layer_unknown_peaks_visible=bool(self.layer_unknown_peaks_checkbox.isChecked()),
@@ -1128,6 +1134,8 @@ class PlotViewSettingsWidget(QScrollArea):
             return None
         try:
             stored = json.loads(raw)
+            if "layer_phase_peak_sticks_visible" not in stored and "layer_phase_ticks_visible" in stored:
+                stored["layer_phase_peak_sticks_visible"] = stored["layer_phase_ticks_visible"]
             defaults = asdict(PlotViewSettings())
             valid_names = {field.name for field in fields(PlotViewSettings)}
             values = {name: stored.get(name, defaults[name]) for name in valid_names}
@@ -1208,6 +1216,7 @@ class PlotViewSettingsWidget(QScrollArea):
         self.layer_background_checkbox.setChecked(settings.layer_background_visible)
         self.layer_difference_checkbox.setChecked(settings.layer_difference_visible)
         self.layer_phase_ticks_checkbox.setChecked(settings.layer_phase_ticks_visible)
+        self.layer_phase_peak_sticks_checkbox.setChecked(settings.layer_phase_peak_sticks_visible)
         self.layer_coverage_markers_checkbox.setChecked(settings.layer_coverage_markers_visible)
         self.layer_peak_labels_checkbox.setChecked(settings.layer_peak_labels_visible)
         self.layer_unknown_peaks_checkbox.setChecked(settings.layer_unknown_peaks_visible)

@@ -33,6 +33,7 @@ from xrd_finder.instrument.radiation_catalog import (
     available_tube_targets,
     radiation_profile_from_tube,
 )
+from xrd_finder.instrument.resolution import cristma_tch_profile
 
 
 SECTION_INDEX = {
@@ -174,13 +175,27 @@ class InstrumentProfileEditor(QWidget):
         self.tch_w = _number(1.44)
         self.tch_x = _number()
         self.tch_y = _number()
+        self.tch_units = QComboBox()
+        self.tch_units.addItem("Finder (degrees)", "caglioti_fwhm_deg")
+        self.tch_units.addItem("GSAS-II (centidegrees)", "gsas_cw")
+        self.tch_units.setToolTip(
+            "Finder: U/V/W define Gaussian FWHM squared in deg²; X/Y are in deg.\n"
+            "GSAS-II: U/V/W define Gaussian variance in centideg²; X/Y are in centideg.\n"
+            "Choose the convention used for your calibration. Values are not changed automatically."
+        )
         form.addRow("Profile model", self.resolution_model)
         form.addRow("Constant FWHM [deg]", self.constant_fwhm)
+        form.addRow("TCH coefficient units", self.tch_units)
         form.addRow("U", self.tch_u)
         form.addRow("V", self.tch_v)
         form.addRow("W", self.tch_w)
         form.addRow("X", self.tch_x)
         form.addRow("Y", self.tch_y)
+        self.resolution_preview = QLabel()
+        form.addRow("Instrument FWHM at 30°", self.resolution_preview)
+        for control in (self.tch_u,self.tch_v,self.tch_w,self.tch_x,self.tch_y,self.constant_fwhm):
+            control.valueChanged.connect(self._update_resolution_preview)
+        self.tch_units.currentIndexChanged.connect(self._update_resolution_preview)
         self.resolution_model.currentIndexChanged.connect(self._sync_resolution_fields)
 
     def set_section(self, section: str) -> None:
@@ -247,6 +262,8 @@ class InstrumentProfileEditor(QWidget):
         self.tch_w.setValue(resolution.w)
         self.tch_x.setValue(resolution.x)
         self.tch_y.setValue(resolution.y)
+        self.tch_units.setCurrentIndex(self.tch_units.findData(resolution.coefficient_units))
+        self._update_resolution_preview()
         self._sync_radiation_fields()
         self._sync_resolution_fields()
 
@@ -310,6 +327,7 @@ class InstrumentProfileEditor(QWidget):
                 w=self.tch_w.value(),
                 x=self.tch_x.value(),
                 y=self.tch_y.value(),
+                coefficient_units=str(self.tch_units.currentData()),
             ),
         )
 
@@ -371,6 +389,23 @@ class InstrumentProfileEditor(QWidget):
         self.constant_fwhm.setEnabled(constant)
         for control in (self.tch_u, self.tch_v, self.tch_w, self.tch_x, self.tch_y):
             control.setEnabled(not constant)
+        self.tch_units.setEnabled(not constant)
+        self._update_resolution_preview()
+
+    def _update_resolution_preview(self, *_args) -> None:
+        if self.resolution_model.currentData() == "constant_fwhm":
+            width = self.constant_fwhm.value()
+        else:
+            try:
+                resolution = ResolutionProfile.tch(
+                    u=self.tch_u.value(),v=self.tch_v.value(),w=self.tch_w.value(),
+                    x=self.tch_x.value(),y=self.tch_y.value(),
+                    coefficient_units=str(self.tch_units.currentData()))
+                width = cristma_tch_profile(resolution).fwhm_deg_at(30.)
+            except ValueError:
+                self.resolution_preview.setText("Invalid coefficients at this angle")
+                return
+        self.resolution_preview.setText(f"{width:.4f}°")
 
 
 class InstrumentProfileDialog(QDialog):

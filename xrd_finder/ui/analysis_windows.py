@@ -917,6 +917,7 @@ class PhaseFinderWindow(
             "difference": [],
             "peak_positions": [],
             "phase_ticks": [],
+            "phase_peak_sticks": [],
             "peak_links": [],
             "coverage_markers": [],
             "peak_labels": [],

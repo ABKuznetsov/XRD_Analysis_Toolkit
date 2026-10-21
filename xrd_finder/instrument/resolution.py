@@ -11,16 +11,20 @@ _GAUSSIAN_FWHM_FACTOR = 2.0 * math.sqrt(2.0 * math.log(2.0))
 
 
 def cristma_tch_profile(resolution: ResolutionProfile) -> TchProfile:
-    """Convert Finder Caglioti coefficients to CRiStMa GSAS CW units.
+    """Return CRiStMa widths using the explicitly selected coefficient convention.
 
     Finder stores ``U``, ``V`` and ``W`` in squared degrees so that the
     Gaussian FWHM is ``sqrt(U tan²θ + V tanθ + W)``.  Its ``X`` and ``Y``
     terms are in degrees.  CRiStMa 0.1.0b12 accepts the equivalent GSAS
     continuous-wave coefficients in centidegrees (variance for U/V/W).
-    Keeping the conversion here prevents instrument profiles saved by Finder
-    from becoming about 40–100 times narrower after the CRiStMa upgrade.
+    GSAS CW coefficients can also be stored directly with ``gsas_cw`` units;
+    those must not be converted a second time. Existing profiles without an
+    explicit convention retain Finder's original degrees-based interpretation.
     """
 
+    if getattr(resolution, "coefficient_units", "caglioti_fwhm_deg") == "gsas_cw":
+        return TchProfile(u=float(resolution.u), v=float(resolution.v), w=float(resolution.w),
+                          x=float(resolution.x), y=float(resolution.y))
     gaussian_scale = (100.0 / _GAUSSIAN_FWHM_FACTOR) ** 2
     lorentzian_scale = 100.0
     return TchProfile(

@@ -248,7 +248,8 @@ def _marker_merge_tolerance(x: np.ndarray, fwhm: float = 0.0) -> float:
         grid_tolerance = float(np.nanmedian(steps)) * 3.0 if steps.size else 0.0
     else:
         grid_tolerance = 0.0
-    return max(1.0, grid_tolerance, max(float(fwhm or 0.0), 0.0) * 4.0)
+    # Collapse duplicate detections only, not independently resolved maxima.
+    return max(0.01, grid_tolerance, min(max(float(fwhm or 0.0), 0.0) * 0.15, 0.04))
 
 
 def _marker_position_available(
@@ -390,7 +391,7 @@ def add_assignment_markers(
     unknown_cutoff = float(np.nanpercentile(peak_strengths, 74)) if peak_strengths else float(np.nanpercentile(observed_y, 74))
     inferred_marker_cutoff = float(np.nanpercentile(peak_strengths, 82)) if peak_strengths else float(np.nanpercentile(observed_y, 82))
     unknown_count = 0
-    coverage_marker_limit = 8
+    coverage_marker_limit = len(observed_peaks)
     inferred_marker_limit = 4
     inferred_marker_count = 0
     explained = 0
@@ -407,7 +408,7 @@ def add_assignment_markers(
         if peak_height <= 0.0:
             peak_height = max(float(observed_y[y_index]) - float(np.nanpercentile(observed_y, 10)), 0.0)
         peak_records.append((peak_height, observed_peak, y_index))
-    peak_records = sorted(peak_records, key=lambda item: item[0], reverse=True)[:80]
+    peak_records = sorted(peak_records, key=lambda item: item[0], reverse=True)
     for _peak_height, observed_peak, y_index in peak_records:
         obs_x = float(observed_peak.two_theta)
         marker_y = _local_observed_peak_y(

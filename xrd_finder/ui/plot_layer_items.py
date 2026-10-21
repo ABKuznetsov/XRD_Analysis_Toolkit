@@ -17,6 +17,7 @@ PLOT_LAYER_EXPORT_MAP: dict[str, CanvasLayer] = {
     "peak_positions": CanvasLayer.CANDIDATE_PREVIEW,
     "peak_links": CanvasLayer.CANDIDATE_PREVIEW,
     "phase_ticks": CanvasLayer.PHASE_TICKS,
+    "phase_peak_sticks": CanvasLayer.PHASE_PEAK_STICKS,
     "coverage_markers": CanvasLayer.ASSIGNMENT_MARKERS,
     "candidate_markers": CanvasLayer.ASSIGNMENT_MARKERS,
     "unknown_peaks": CanvasLayer.UNKNOWN_PEAKS,

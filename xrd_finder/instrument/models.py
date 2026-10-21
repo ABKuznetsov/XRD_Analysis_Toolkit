@@ -134,16 +134,20 @@ class ResolutionProfile:
     w: float = 1.44
     x: float = 0.0
     y: float = 0.0
+    coefficient_units: str = "caglioti_fwhm_deg"
 
     def __post_init__(self) -> None:
         if self.model not in {"constant_fwhm", "tch"}:
             raise ValueError(f"Unsupported resolution model: {self.model}")
         if self.constant_fwhm_deg <= 0.0:
             raise ValueError("Constant FWHM must be positive")
+        if self.coefficient_units not in {"caglioti_fwhm_deg", "gsas_cw"}:
+            raise ValueError(f"Unsupported TCH coefficient units: {self.coefficient_units}")
 
     @classmethod
-    def tch(cls, *, u: float, v: float, w: float, x: float, y: float) -> ResolutionProfile:
-        return cls(model="tch", u=u, v=v, w=w, x=x, y=y)
+    def tch(cls, *, u: float, v: float, w: float, x: float, y: float,
+            coefficient_units: str = "caglioti_fwhm_deg") -> ResolutionProfile:
+        return cls(model="tch", u=u, v=v, w=w, x=x, y=y, coefficient_units=coefficient_units)
 
     def calculation_payload(self) -> dict[str, Any]:
         if self.model == "constant_fwhm":
@@ -153,6 +157,7 @@ class ResolutionProfile:
             }
         return {
             "model": self.model,
+            "coefficient_units": self.coefficient_units,
             "u": self.u,
             "v": self.v,
             "w": self.w,

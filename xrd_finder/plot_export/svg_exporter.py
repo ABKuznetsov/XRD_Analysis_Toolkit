@@ -32,6 +32,7 @@ _LAYER_LABELS = {
     CanvasLayer.DIFFERENCE: "Difference",
     CanvasLayer.CANDIDATE_PREVIEW: "Candidate preview",
     CanvasLayer.PHASE_TICKS: "Phase ticks",
+    CanvasLayer.PHASE_PEAK_STICKS: "Phase sticks on pattern",
     CanvasLayer.ASSIGNMENT_MARKERS: "Assignment markers",
     CanvasLayer.UNKNOWN_PEAKS: "Unknown peaks",
     CanvasLayer.LABELS: "Labels",
