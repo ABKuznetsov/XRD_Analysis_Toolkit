@@ -10,6 +10,24 @@ from xrd_finder.ui.workspace_preferences import (
 )
 
 
+def _legacy_splitter_proportions(state, splitter):
+    """Read native pixel weights before current-screen minimum sizes distort them."""
+    probe = QSplitter(splitter.orientation())
+    try:
+        for _ in range(splitter.count()):
+            probe.addWidget(QWidget())
+        # Hidden, unconstrained widgets need no backing image. A generous
+        # logical extent preserves the original ratios to rounding accuracy.
+        probe.resize(1000000, 1000000)
+        try:
+            restored = probe.restoreState(state)
+        except (TypeError, ValueError):
+            return None
+        return normalized_proportions(probe.sizes(), probe.count()) if restored else None
+    finally:
+        probe.deleteLater()
+
+
 class SplitterLayoutState:
     def __init__(
         self,
@@ -151,8 +169,8 @@ class SplitterLayoutState:
             values = normalized_proportions(panels.get(name), splitter.count())
             if values is None:
                 state = self._settings.value(f'layout/{name}', None)
-                if state is not None and splitter.restoreState(state):
-                    values = normalized_proportions(splitter.sizes(), splitter.count())
+                if state is not None:
+                    values = _legacy_splitter_proportions(state, splitter)
             if values is None:
                 values = normalized_proportions(DEFAULT_SPLITTER_PROPORTIONS.get(name), splitter.count())
             if values is None:

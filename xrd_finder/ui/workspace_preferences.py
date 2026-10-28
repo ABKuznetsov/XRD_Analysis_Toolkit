@@ -4,9 +4,18 @@ import math
 
 WORKSPACE_KEY = 'ui/workspace_view_v1'
 DEFAULT_SPLITTER_PROPORTIONS = {
-    'main_splitter': (204/2506, 1765/2506, 537/2506),
-    'center_splitter': (650/830, 180/830),
-    'composition_splitter': (377/1161, 784/1161),
+    'main_splitter': (.12429378531073448, .5954802259887007, .280225988700565),
+    'center_splitter': (.7208053691275169, .27919463087248314),
+    'composition_splitter': (.3714585519412382, .6285414480587619),
+}
+# Reference proportions chosen in Finder, independent of the screen on which
+# that layout was arranged. No user-specific paths or profile state are stored.
+DEFAULT_TABLE_PROPORTIONS = {
+    'candidates': (.07854406130268199, .10440613026819924, .24042145593869732,
+        .1331417624521073, .11398467432950192, .13026819923371646,
+        .10057471264367816, .09865900383141762),
+    'accepted': (.05672268907563026, .38445378151260506, .27310924369747897,
+        .15126050420168066, .13445378151260504),
 }
 
 

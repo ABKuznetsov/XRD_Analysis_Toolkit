@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Preserve one relative workspace layout for panels and columns, with initial proportions taken from the reviewed layout. Migrate native Qt pixel records before screen constraints change their ratios and remove competing pixel-state writers.
+- Keep panel and table proportions across HD/QHD screens and 100–200% display scaling; remove the sidebar width cap and fixed table-height/column-width floors that distorted the saved layout.
+
 ## 1.6.7 - 2026-10-28
 
 - Start fresh installations with Edit layout enabled.

@@ -231,7 +231,6 @@ class AnalysisWindow(QDialog):
         self.sidebar.setObjectName('projectSidebar')
         self.sidebar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.sidebar.setMinimumWidth(170)
-        self.sidebar.setMaximumWidth(360)
         self._register_drop_target(self.sidebar)
         sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)

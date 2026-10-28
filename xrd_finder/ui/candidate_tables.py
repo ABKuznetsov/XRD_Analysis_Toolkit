@@ -8,7 +8,7 @@ from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor
 from xrd_finder.ui.theme import is_dark_theme, theme_colors
 from xrd_finder.ui.formula_display import FormulaDisplayDelegate, canonical_display_formula
-from xrd_finder.ui.workspace_preferences import normalized_proportions
+from xrd_finder.ui.workspace_preferences import DEFAULT_TABLE_PROPORTIONS, normalized_proportions
 from PySide6.QtWidgets import (
     QHeaderView,
     QApplication,
@@ -115,15 +115,25 @@ class _ColumnLayoutTableWidget(QTableWidget):
     def set_column_layout_editable(self, editable: bool) -> None:
         self._column_layout_managed = True
         self._column_layout_editable = editable
-        if editable:
-            self._manual_column_layout = True
+        # Standalone tables keep their comfortable initial height. Within a
+        # splitter the saved panel fraction controls height; rows can scroll.
+        self.setMinimumHeight(0)
+        policy = self.sizePolicy()
+        policy.setVerticalPolicy(QSizePolicy.Policy.Ignored)
+        self.setSizePolicy(policy)
+        # Every registered table has a relative layout, even before the first
+        # user drag. Never freeze temporary construction-time pixel widths.
+        self._manual_column_layout = True
         self._apply_column_layout_lock()
 
     def _apply_column_layout_lock(self) -> None:
         if not getattr(self, '_column_layout_managed', False):
             return
-        if not self._column_layout_weights or not getattr(self, '_manual_column_layout', False):
-            self._capture_column_proportions()
+        if not self._column_layout_weights:
+            self._column_layout_weights = normalized_proportions(
+                getattr(self, 'DEFAULT_COLUMN_PROPORTIONS', None), self.columnCount()) or []
+            if not self._column_layout_weights:
+                self._capture_column_proportions()
         editable = self._column_layout_editable
         header = self.horizontalHeader()
         self._fitting_columns = True
@@ -148,7 +158,7 @@ class _ColumnLayoutTableWidget(QTableWidget):
             return
         # Reserve only the smallest usable widths, then distribute the rest
         # proportionally, including rounding pixels so there is no empty edge.
-        minimum = min(20, total//len(weights))
+        minimum = self._minimum_column_width(total)
         widths = [0]*len(weights)
         active = list(range(len(weights)))
         remaining = total
@@ -182,6 +192,10 @@ class _ColumnLayoutTableWidget(QTableWidget):
         finally:
             self._fitting_columns = False
 
+    def _minimum_column_width(self, total):
+        density = getattr(self.window(), '_ui_density_factor', 1.)
+        return max(1, min(round(20*density), total//max(1,self.columnCount())))
+
     def _column_section_resized(self, column, _old_size, new_size):
         if (self._fitting_columns or not getattr(self, '_column_layout_managed', False)
                 or not self._column_layout_editable):
@@ -190,7 +204,7 @@ class _ColumnLayoutTableWidget(QTableWidget):
         total = self.viewport().width()
         if count < 2 or total < count:
             return
-        minimum = min(20, total//count)
+        minimum = self._minimum_column_width(total)
         widths = [self.columnWidth(i) for i in range(count)]
         widths[column] = max(minimum, min(new_size, total-minimum*(count-1)))
         header = self.horizontalHeader()
@@ -263,6 +277,7 @@ class _ColumnLayoutTableWidget(QTableWidget):
 
 
 class CandidateTableWidget(_ColumnLayoutTableWidget):
+    DEFAULT_COLUMN_PROPORTIONS = DEFAULT_TABLE_PROPORTIONS['candidates']
     rowActivated = Signal(int)
     addRequested = Signal()
     contextRequested = Signal(QPoint)
@@ -881,6 +896,7 @@ class CandidateTableWidget(_ColumnLayoutTableWidget):
 
 
 class SelectedCandidatesTableWidget(_ColumnLayoutTableWidget):
+    DEFAULT_COLUMN_PROPORTIONS = DEFAULT_TABLE_PROPORTIONS['accepted']
     rowClicked = Signal(int)
     contextRequested = Signal(QPoint)
     phaseNameEdited = Signal(int, str)
