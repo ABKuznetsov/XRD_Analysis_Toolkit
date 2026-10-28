@@ -10,13 +10,17 @@ from __future__ import annotations
 import importlib
 import re
 from dataclasses import dataclass
+from functools import partial
+from types import FunctionType
 from xml.dom import Node
 
 import pyqtgraph
 from PySide6.QtCore import QRectF
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QTransform
+from PySide6.QtWidgets import QGraphicsItem
 
 from .snapshot import CanvasItemSnapshot
+from .text_outlines import painter_path_svg_data
 
 
 SUPPORTED_PYQTGRAPH_VERSION = "0.14.0"
@@ -57,13 +61,90 @@ def _svg_module():
     return module
 
 
-def _reset_export_mode(item) -> None:
+def _export_mode_states(item):
     pending = [item]
+    states = []
     while pending:
         current = pending.pop()
         pending.extend(current.childItems())
         if hasattr(current, "setExportMode"):
-            current.setExportMode(False)
+            states.append((current, getattr(current, '_exportOpts', False)))
+    return states
+
+
+def _correct_closed_paths(original, node, definitions, item, options):
+    """Let the guarded upstream mapper handle closed Qt paths without losing Z.
+
+    pyqtgraph 0.14 assumes every path token contains x,y. Qt also emits a
+    standalone Z for filled/custom scatter symbols. Substitute its equivalent
+    closing line while coordinates are mapped, then restore the close command
+    so line joins, holes and symbol topology remain unchanged.
+    """
+    closures = []
+    for path in node.getElementsByTagName('path'):
+        data = path.getAttribute('d')
+        if not re.search('[zZ]', data):
+            continue
+        tokens = re.sub('([zZ])', r' \1 ', data).split()
+        start = None
+        indices = []
+        for index, token in enumerate(tokens):
+            if token.startswith('M'):
+                start = token[1:]
+            elif token in ('Z', 'z'):
+                if start is None:
+                    raise ValueError('Closed Qt SVG path has no starting point')
+                tokens[index] = 'L' + start
+                indices.append(index)
+        path.setAttribute('d', ' '.join(tokens))
+        closures.append((path, indices))
+    original(node, definitions, item, options)
+    for path, indices in closures:
+        tokens = path.getAttribute('d').split()
+        for index in indices:
+            tokens[index] = 'Z'
+        path.setAttribute('d', ' '.join(tokens))
+
+
+def _item_generator(module):
+    # Rebind the pinned adapter's recursive function to private globals rather
+    # than monkey-patching pyqtgraph (other exporters may run in this process).
+    namespace = vars(module).copy()
+    namespace['correctCoordinates'] = partial(_correct_closed_paths, module.correctCoordinates)
+    upstream = module._generateItemSvg
+    generate = FunctionType(upstream.__code__, namespace, upstream.__name__,
+                            upstream.__defaults__, upstream.__closure__)
+    namespace['_generateItemSvg'] = generate
+    return generate
+
+
+def _clip_to_ancestors(fragment, item, root_item, canvas_size):
+    """Retain ViewBox clipping when exporting tagged descendants separately."""
+    parent = item.parentItem()
+    bounds = root_item.boundingRect()
+    position = root_item.scenePos()
+    mapping = QTransform(canvas_size[0]/bounds.width(), 0., 0.,
+                         canvas_size[1]/bounds.height(), -position.x(), -position.y())
+    index = 0
+    while parent is not None:
+        if parent.flags() & QGraphicsItem.GraphicsItemFlag.ItemClipsChildrenToShape:
+            document = fragment.element.ownerDocument
+            identity = f'ancestor-clip-{index}'
+            clip = document.createElement('clipPath')
+            clip.setAttribute('id', identity)
+            clip.setAttribute('clipPathUnits', 'userSpaceOnUse')
+            path = document.createElement('path')
+            shape = mapping.map(parent.mapToScene(parent.shape()))
+            path.setAttribute('d', painter_path_svg_data(shape))
+            clip.appendChild(path)
+            fragment.definitions.append(clip)
+            wrapper = document.createElement('g')
+            wrapper.setAttribute('clip-path', f'url(#{identity})')
+            wrapper.appendChild(fragment.element)
+            fragment.element = wrapper
+            index += 1
+        parent = parent.parentItem()
+    return fragment
 
 
 def render_item_svg(
@@ -73,6 +154,7 @@ def render_item_svg(
     canvas_size: tuple[int, int],
 ) -> SvgItemFragment:
     module = _svg_module()
+    states = _export_mode_states(item_snapshot.item)
     options = {
         "width": float(canvas_size[0]),
         "height": float(canvas_size[1]),
@@ -81,7 +163,7 @@ def render_item_svg(
     }
     try:
         try:
-            element, definitions = module._generateItemSvg(
+            element, definitions = _item_generator(module)(
                 item_snapshot.item,
                 root=root_item,
                 options=options,
@@ -95,12 +177,14 @@ def render_item_svg(
                 f"Could not export layer {item_snapshot.tag.layer.value}: {item_type}"
             ) from exc
     finally:
-        _reset_export_mode(item_snapshot.item)
-    return SvgItemFragment(
+        for item, value in reversed(states):
+            item.setExportMode(value is not False, value if value is not False else None)
+    fragment = SvgItemFragment(
         element=element,
         definitions=list(definitions),
         source_bounds=QRectF(item_snapshot.item.sceneBoundingRect()),
     )
+    return _clip_to_ancestors(fragment, item_snapshot.item, root_item, canvas_size)
 
 
 def _has_descendant(element, tag_name: str) -> bool:

@@ -1,35 +1,36 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.6.6",
+  "version": "1.6.7",
   "channel": "stable",
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
-  "published_at": "2026-10-21",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.6/XRD_Phase_Finder_Setup_v1_6_6.exe",
-  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.6",
+  "published_at": "2026-10-28",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_Setup_v1_6_7.exe",
+  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7",
   "assets": [
     {
-      "name": "XRD_Phase_Finder_Setup_v1_6_6.exe",
+      "name": "XRD_Phase_Finder_Setup_v1_6_7.exe",
       "type": "installer",
       "platform": "windows",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.6/XRD_Phase_Finder_Setup_v1_6_6.exe",
-      "sha256": "0935322293a19c37204e317531d9766663d774debfee59aa1eacb8ddc33c3647",
-      "size_bytes": 5349256
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_Setup_v1_6_7.exe",
+      "sha256": "3f31a4478bfb646494e7e6e60b22c741a3d3b2791e0f9fea14cbc1713782b2b3",
+      "size_bytes": 5458643
     }
   ],
   "summary": [
-    "Portable instrument profile import and export.",
-    "Candidate table sorting and project-wide accepted-card colors.",
-    "No duplicate HKL labels when previewing an accepted card.",
-    "Consistent phase quantities, calculated profiles and peak markers."
+    "Responsive HD/2K interface and saved table-column proportions.",
+    "Common or individual phase legends and properly formatted chemical formulas.",
+    "Manual peak lists, peak information and background-aware peak detection.",
+    "Reversible manual angle calibration and consistent numeric-setting arrows.",
+    "Search and calculated-reference display limited to the measured scan range."
   ],
-  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.6/XRD_Phase_Finder_Setup_v1_6_6.exe",
-  "installer_sha256": "0935322293a19c37204e317531d9766663d774debfee59aa1eacb8ddc33c3647",
-  "installer_filename": "XRD_Phase_Finder_Setup_v1_6_6.exe",
-  "installer_size_bytes": 5349256,
+  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_Setup_v1_6_7.exe",
+  "installer_sha256": "3f31a4478bfb646494e7e6e60b22c741a3d3b2791e0f9fea14cbc1713782b2b3",
+  "installer_filename": "XRD_Phase_Finder_Setup_v1_6_7.exe",
+  "installer_size_bytes": 5458643,
   "platform_versions": {
-    "windows": "1.6.6"
+    "windows": "1.6.7"
   },
-  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.6"
+  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7"
 }

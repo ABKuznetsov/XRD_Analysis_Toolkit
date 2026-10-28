@@ -493,7 +493,11 @@ def _xrd_hybrid_background(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     stack = np.vstack([np.asarray(candidate, dtype=float) for candidate in candidates])
     # Use a lower percentile rather than a median so broad crystalline clusters
     # do not pull the baseline into the peaks.
-    combined = np.nanpercentile(stack, 35.0, axis=0)
+    combined = (
+        np.percentile(stack, 35.0, axis=0)
+        if np.all(np.isfinite(stack))
+        else np.nanpercentile(stack, 35.0, axis=0)
+    )
     combined = _smooth_background_curve(x, combined, width_deg=2.2)
     combined = np.minimum(combined, envelope + max(noise * 1.5, 1.0))
     return _cap_background_to_local_signal(x, y, combined, noise)
@@ -715,6 +719,17 @@ def _smooth_nodes(values: np.ndarray, window: int = 7) -> np.ndarray:
         return values
     half = window // 2
     smoothed = np.copy(values)
+    width = half * 2 + 1
+    if window > 0 and width <= len(values) and np.all(np.isfinite(values)):
+        windows = np.lib.stride_tricks.sliding_window_view(values, width)
+        smoothed[half:len(values) - half] = np.median(windows, axis=-1)
+        # Keep fixed endpoints and truncated edge windows, rather than padding.
+        for index in range(1, half):
+            smoothed[index] = np.median(values[:index + half + 1])
+        for index in range(max(len(values) - half, 1), len(values) - 1):
+            smoothed[index] = np.median(values[index - half:])
+        smoothed[0], smoothed[-1] = values[0], values[-1]
+        return smoothed
     for index in range(1, len(values) - 1):
         left = max(0, index - half)
         right = min(len(values), index + half + 1)

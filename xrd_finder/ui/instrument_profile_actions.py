@@ -5,7 +5,9 @@ from dataclasses import replace
 from typing import Iterable
 from uuid import uuid4
 
+import numpy as np
 from PySide6.QtWidgets import QMessageBox
+from scipy.signal import peak_widths
 
 from xrd_finder.instrument.library import (
     BUILTIN_PROFILE_ID,
@@ -13,7 +15,10 @@ from xrd_finder.instrument.library import (
     InstrumentProfileLibrary,
 )
 from xrd_finder.instrument.models import InstrumentProfile
+from xrd_finder.instrument.resolution import cristma_tch_profile
 from xrd_finder.ui.instrument_profile_dialog import InstrumentProfileDialog
+from xrd_finder.ui.observed_patterns import observed_pattern_data
+from xrd_finder.ui.peak_matching import observed_peak_records
 
 
 def primary_wavelength(profile: InstrumentProfile) -> float:
@@ -39,6 +44,59 @@ def apply_profile_snapshot(patterns: Iterable[object], profile: InstrumentProfil
     for pattern in patterns:
         pattern.instrument_profile = deepcopy(snapshot)
         pattern.wavelength = wavelength
+
+
+def instrument_width_warning_rows(
+    profile: InstrumentProfile, observed: np.ndarray | None,
+) -> list[tuple[float, float, float]]:
+    """Compare instrument widths with three strong, independently found peaks.
+
+    This is a warning-only plausibility check, not a calibration acceptance
+    criterion. Neither the candidate instrument nor fitted phase widths are
+    used to detect or measure the observed peaks.
+    """
+    if observed is None:
+        return []
+    data = np.asarray(observed, dtype=float)
+    if data.ndim != 2 or data.shape[1] < 2 or len(data) < 5:
+        return []
+    if not np.all(np.isfinite(data[:, :2])):
+        return []
+    x, y = data[:, 0], data[:, 1]
+    steps = np.diff(x)
+    if np.any(steps <= 0.0):
+        return []
+    span = float(np.max(y) - np.min(y))
+    if span <= 0.0:
+        return []
+    detection_y = (y - np.min(y)) * (100.0 / span)
+    records = observed_peak_records(x, detection_y, limit=3, instrument_profile=None)
+    if len(records) < 3:
+        return []
+    indices = np.array([int(np.argmin(np.abs(x - record.two_theta))) for record in records])
+    # Re-measure without the search record's 0.05--0.90 degree width limits.
+    _, _, left, right = peak_widths(detection_y, indices, rel_height=0.5)
+    sample_indices = np.arange(len(x))
+    observed_widths = np.interp(right, sample_indices, x) - np.interp(left, sample_indices, x)
+    resolution = profile.resolution
+    native = None if resolution.model == "constant_fwhm" else cristma_tch_profile(resolution)
+    rows = []
+    for index, measured, start, end in zip(indices, observed_widths, left, right):
+        lower = max(0, int(np.floor(start)))
+        upper = min(len(steps), int(np.ceil(end)) + 1)
+        # Two local sampling intervals allow for the measured crossing positions.
+        margin = 2.0 * float(np.max(steps[lower:upper]))
+        if measured <= margin:
+            return []
+        position = float(x[index])
+        predicted = (
+            float(resolution.constant_fwhm_deg)
+            if native is None else float(native.fwhm_deg_at(position))
+        )
+        if predicted <= measured + margin:
+            return []
+        rows.append((position, predicted, float(measured)))
+    return rows
 
 
 class PhaseFinderInstrumentProfileActionsMixin:
@@ -135,8 +193,11 @@ class PhaseFinderInstrumentProfileActionsMixin:
         profile = self.instrument_profile_library.get(profile_id)
         if profile is None:
             return
-        self._selected_instrument_profile_id = profile_id
-        self.settings.setValue("instrument/active_profile_id", profile_id)
+        if not self._patterns_for_instrument_profile(selected=False):
+            self._selected_instrument_profile_id = profile_id
+            self.settings.setValue("instrument/active_profile_id", profile_id)
+            self._refresh_instrument_profile_selector()
+            return
         self._apply_instrument_profile(profile, selected=False)
 
     def _open_instrument_profile_editor(self, section: str = "identity") -> None:
@@ -244,9 +305,56 @@ class PhaseFinderInstrumentProfileActionsMixin:
         active = self._active_pattern()
         return [active] if active is not None else []
 
+    def _confirm_instrument_profile_widths(self, profile: InstrumentProfile, patterns: list[object]) -> bool:
+        findings = []
+        for pattern in patterns:
+            try:
+                rows = instrument_width_warning_rows(profile, observed_pattern_data(pattern))
+            except ValueError as exc:
+                findings.append(f"{pattern.name}: instrument widths cannot be evaluated: {exc}")
+                continue
+            if rows:
+                values = "\n".join(
+                    f"2theta {position:.3f} deg: instrument FWHM {predicted:.4f} deg; "
+                    f"observed FWHM about {measured:.4f} deg"
+                    for position, predicted, measured in rows
+                )
+                findings.append(f"{pattern.name}\n{values}")
+        if not findings:
+            return True
+        resolution = profile.resolution
+        units = (
+            "Constant FWHM [deg]" if resolution.model == "constant_fwhm" else
+            "GSAS-II: U/V/W variance [centideg^2]; X/Y [centideg]"
+            if resolution.coefficient_units == "gsas_cw" else
+            "Finder: U/V/W FWHM^2 [deg^2]; X/Y [deg]"
+        )
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Check instrument profile")
+        dialog.setText("The instrument profile may not match the experimental peak widths.")
+        summary = f"Profile: {profile.identity.name}\nUnits: {units}\n\n{findings[0]}"
+        if len(findings) > 1:
+            summary += f"\n\nSimilar issues in {len(findings) - 1} other pattern(s)."
+        dialog.setInformativeText(
+            summary + "\n\nCheck the coefficient units and calibration. Observed widths are approximate; "
+            "this warning does not establish that the calibration is wrong. "
+            "Coefficients will not be changed automatically."
+        )
+        dialog.setDetailedText("\n\n".join(findings))
+        back = dialog.addButton("Back", QMessageBox.ButtonRole.RejectRole)
+        apply = dialog.addButton("Apply anyway", QMessageBox.ButtonRole.AcceptRole)
+        dialog.setDefaultButton(back)
+        dialog.setEscapeButton(back)
+        dialog.exec()
+        return dialog.clickedButton() is apply
+
     def _apply_instrument_profile(self, profile: InstrumentProfile, *, selected: bool) -> None:
         patterns = self._patterns_for_instrument_profile(selected=selected)
         if not patterns:
+            return
+        if not self._confirm_instrument_profile_widths(profile, patterns):
+            self._refresh_instrument_profile_selector()
             return
         queue = getattr(self, "visible_profile_calculation_queue", None)
         if queue is not None:

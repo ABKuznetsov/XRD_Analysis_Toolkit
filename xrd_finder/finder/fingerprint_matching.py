@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from bisect import bisect_left, bisect_right
 import math
 
 import numpy as np
@@ -67,7 +68,7 @@ def apply_match_weights(
         score = min(score, 48.0)
     elif features.reference_matched < 3:
         score = min(score, 52.0)
-    return float(np.clip(score, 0.0, 100.0))
+    return float(min(max(score, 0.0), 100.0))
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,7 +182,7 @@ def fingerprint_match_score(
         tolerance_two_theta=line_tolerance_two_theta,
     )
     return FingerprintMatchResult(
-        score=float(np.clip(score, 0.0, 100.0)),
+        score=float(min(max(score, 0.0), 100.0)),
         pair_score=seed_bonus,
         line_coverage=coverage,
         observed_coverage=observed_coverage,
@@ -273,7 +274,7 @@ def _adaptive_tolerance(obs_lines: list[_Line], *, fallback: float) -> float:
     if len(widths) < 3:
         return float(fallback)
     median = float(np.median(widths))
-    return float(np.clip(median * 1.7, 0.18, 0.85))
+    return float(min(max(median * 1.7, 0.18), 0.85))
 
 
 def _line_pairs(lines: list[_Line], bin_width: float) -> list[_LinePair]:
@@ -468,7 +469,7 @@ def _matched_profile_fwhm(
     for width, weight in widths:
         accumulated += weight
         if accumulated >= threshold:
-            return float(np.clip(width, 0.05, 1.2))
+            return float(min(max(width, 0.05), 1.2))
     return 0.18
 
 
@@ -479,12 +480,19 @@ def _alignment_precision(
     zero_shift: float,
     tolerance_two_theta: float,
 ) -> float:
-    observed_positions = np.asarray(sorted(line.two_theta for line in obs_lines), dtype=float)
+    observed_positions = sorted(line.two_theta for line in obs_lines)
     weighted = 0.0
     total = 0.0
     for ref in sorted(ref_lines, key=lambda line: line.weight, reverse=True)[:16]:
         transformed = _transform_two_theta(ref.two_theta, position_scale, zero_shift)
-        delta = float(np.min(np.abs(observed_positions - transformed)))
+        index = bisect_left(observed_positions, transformed)
+        if index == 0:
+            delta = abs(observed_positions[0]-transformed)
+        elif index == len(observed_positions):
+            delta = abs(observed_positions[-1]-transformed)
+        else:
+            delta = min(abs(observed_positions[index-1]-transformed),
+                        abs(observed_positions[index]-transformed))
         if delta > tolerance_two_theta:
             continue
         weight = max(ref.weight, 0.01) ** 0.6
@@ -504,6 +512,7 @@ def _scaled_line_coverage(
 ) -> tuple[float, int]:
     if not ref_lines or not obs_lines:
         return 0.0, 0
+    candidate_positions = _line_position_index(obs_lines)
     total_weight = sum(line.weight for line in ref_lines)
     matched_weight = 0.0
     matched = 0
@@ -514,12 +523,13 @@ def _scaled_line_coverage(
             ref.weight,
             obs_lines,
             tolerance_two_theta=tolerance_two_theta,
+            candidate_positions=candidate_positions,
         )
         if quality <= 0.0:
             continue
         matched += 1
         matched_weight += ref.weight * quality
-    return float(np.clip(matched_weight / max(total_weight, 1.0e-12), 0.0, 1.0)), matched
+    return float(min(max(matched_weight / max(total_weight, 1.0e-12), 0.0), 1.0)), matched
 
 
 def _q_scaled_line_coverage(
@@ -531,6 +541,7 @@ def _q_scaled_line_coverage(
 ) -> tuple[float, int]:
     if not ref_lines or not obs_lines:
         return 0.0, 0
+    candidate_positions = _line_position_index(obs_lines)
     total_weight = sum(line.weight for line in ref_lines)
     matched_weight = 0.0
     matched = 0
@@ -543,12 +554,13 @@ def _q_scaled_line_coverage(
             ref.weight,
             obs_lines,
             tolerance_two_theta=tolerance_two_theta,
+            candidate_positions=candidate_positions,
         )
         if quality <= 0.0:
             continue
         matched += 1
         matched_weight += ref.weight * quality
-    return float(np.clip(matched_weight / max(total_weight, 1.0e-12), 0.0, 1.0)), matched
+    return float(min(max(matched_weight / max(total_weight, 1.0e-12), 0.0), 1.0)), matched
 
 
 def _observed_anchor_coverage(
@@ -576,6 +588,7 @@ def _observed_anchor_coverage(
         for two_theta, weight in zip(scaled_reference, reference_weights, strict=False)
     ]
     anchors = sorted(obs_lines, key=lambda line: line.weight, reverse=True)[: max(int(limit), 1)]
+    candidate_positions = _line_position_index(reference_lines)
     total_weight = sum(line.weight for line in anchors)
     matched_weight = 0.0
     matched = 0
@@ -586,6 +599,7 @@ def _observed_anchor_coverage(
             obs.weight,
             reference_lines,
             tolerance_two_theta=tolerance_two_theta,
+            candidate_positions=candidate_positions,
         )
         if quality <= 0.0:
             continue
@@ -595,7 +609,7 @@ def _observed_anchor_coverage(
                 quality *= 0.35
         matched += 1
         matched_weight += obs.weight * quality
-    return float(np.clip(matched_weight / max(total_weight, 1.0e-12), 0.0, 1.0)), matched
+    return float(min(max(matched_weight / max(total_weight, 1.0e-12), 0.0), 1.0)), matched
 
 
 def _q_observed_anchor_coverage(
@@ -614,6 +628,7 @@ def _q_observed_anchor_coverage(
     if not transformed:
         return 0.0, 0
     anchors = sorted(obs_lines, key=lambda line: line.weight, reverse=True)[: max(int(limit), 1)]
+    candidate_positions = _line_position_index(transformed)
     total_weight = sum(line.weight for line in anchors)
     matched_weight = 0.0
     matched = 0
@@ -623,12 +638,13 @@ def _q_observed_anchor_coverage(
             obs.weight,
             transformed,
             tolerance_two_theta=tolerance_two_theta,
+            candidate_positions=candidate_positions,
         )
         if quality <= 0.0:
             continue
         matched += 1
         matched_weight += obs.weight * quality
-    return float(np.clip(matched_weight / max(total_weight, 1.0e-12), 0.0, 1.0)), matched
+    return float(min(max(matched_weight / max(total_weight, 1.0e-12), 0.0), 1.0)), matched
 
 
 def _relative_intensity_quality(reference_weight: float, observed_weight: float) -> float:
@@ -639,7 +655,12 @@ def _relative_intensity_quality(reference_weight: float, observed_weight: float)
         return 0.10
     if observed >= 0.30 and reference < 0.04:
         return 0.14
-    return float(np.clip(0.18 + 0.82 * (ratio ** 0.42), 0.0, 1.0))
+    return float(min(max(0.18 + 0.82 * (ratio ** 0.42), 0.0), 1.0))
+
+
+def _line_position_index(lines):
+    positions = tuple(line.two_theta for line in lines)
+    return positions if all(a <= b for a, b in zip(positions, positions[1:])) else None
 
 
 def _best_line_match_quality(
@@ -648,16 +669,27 @@ def _best_line_match_quality(
     candidate_lines: list[_Line],
     *,
     tolerance_two_theta: float,
+    candidate_positions=None,
 ) -> float:
     best_quality = 0.0
-    for line in candidate_lines:
+    if candidate_positions is None:
+        nearby = candidate_lines
+    else:
+        # Keep the original subtraction/comparison as the final decision.
+        # Expand one ULP to avoid dropping a floating-point boundary match.
+        left = math.nextafter(target_two_theta-tolerance_two_theta, -math.inf)
+        right = math.nextafter(target_two_theta+tolerance_two_theta, math.inf)
+        first = bisect_left(candidate_positions, left)
+        last = bisect_right(candidate_positions, right)
+        nearby = candidate_lines[first:last]
+    for line in nearby:
         delta = abs(float(line.two_theta) - float(target_two_theta))
         if delta > tolerance_two_theta:
             continue
         position_quality = _flat_window_quality(delta, tolerance_two_theta)
         intensity_quality = _relative_intensity_quality(line.weight, target_weight)
         best_quality = max(best_quality, (0.35 + 0.65 * position_quality) * intensity_quality)
-    return float(np.clip(best_quality, 0.0, 1.0))
+    return float(min(max(best_quality, 0.0), 1.0))
 
 
 def _flat_window_quality(delta_two_theta: float, tolerance_two_theta: float) -> float:
@@ -666,7 +698,7 @@ def _flat_window_quality(delta_two_theta: float, tolerance_two_theta: float) -> 
     delta = abs(float(delta_two_theta))
     if delta <= plateau:
         return 1.0
-    return float(np.clip(1.0 - (delta - plateau) / max(tolerance - plateau, 1.0e-6), 0.0, 1.0))
+    return float(min(max(1.0 - (delta - plateau) / max(tolerance - plateau, 1.0e-6), 0.0), 1.0))
 
 
 def _q_from_two_theta(two_theta: float) -> float:

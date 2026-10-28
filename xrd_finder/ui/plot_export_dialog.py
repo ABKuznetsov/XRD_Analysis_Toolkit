@@ -58,7 +58,7 @@ class PlotExportDialog(QDialog):
 
         self.format_combo = QComboBox()
         for format, label in (
-            (PlotExportFormat.SVG, "SVG — layered vector (CorelDRAW)"),
+            (PlotExportFormat.SVG, "SVG — layers for CorelDRAW / Inkscape"),
             (PlotExportFormat.PDF, "PDF — vector"),
             (PlotExportFormat.PNG, "PNG — lossless raster"),
             (PlotExportFormat.TIFF, "TIFF — publication raster"),
@@ -189,8 +189,9 @@ class PlotExportDialog(QDialog):
         self.svg_text_controls.setVisible(format is PlotExportFormat.SVG)
         if format is PlotExportFormat.SVG:
             self.format_hint.setText(
-                "Recommended for CorelDRAW: the current canvas is preserved and "
-                "scientific objects are stored in named layers."
+                "Named layers include CorelDRAW and Inkscape metadata. "
+                "Curves, axes, markers and legends stay separate and editable; "
+                "layer handling depends on the importing editor."
             )
         elif format is PlotExportFormat.PDF:
             self.format_hint.setText(

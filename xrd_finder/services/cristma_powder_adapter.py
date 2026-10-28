@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from collections import OrderedDict
 from inspect import signature
 from pathlib import Path
 import math
@@ -9,6 +10,7 @@ import re
 import numpy as np
 
 import cristma
+from xrd_finder.io.native_cif_session import read_native_cif
 from cristma.crystallography import (
     SpaceGroupCatalog,
     resolve_space_group_setting,
@@ -32,6 +34,7 @@ from xrd_finder.instrument.models import InstrumentProfile
 from xrd_finder.instrument.resolution import cristma_tch_profile
 from xrd_finder.instrument.radiation_catalog import cristma_spectrum_from_profile
 from xrd_finder.services.calculated_pattern_service import HKLPeak
+from xrd_finder.services.profile_support import PROFILE_KERNEL_WINDOW_FWHM
 
 
 class CristmaPowderError(RuntimeError):
@@ -54,6 +57,10 @@ class CristmaLineResult:
     radiation: RadiationSpectrum
     peaks: tuple[HKLPeak, ...]
     setting_id: int
+    source_path: str | None = None
+    source_use_lp: bool = True
+    source_cell: tuple[float, ...] | None = None
+    reflection_limit_deg: float = 0.
 
     @property
     def profile_lines(self):
@@ -86,6 +93,7 @@ class CristmaPowderAdapter:
     def __init__(self, calculator: PowderPatternCalculator | None = None) -> None:
         self._calculator = calculator or PowderPatternCalculator()
         self._reference_line_calculator = ReferencePowderLineCalculator()
+        self._profile_support_cache = OrderedDict()
         self._profile_calculator_supports_d_scale = (
             "d_spacing_scale"
             in signature(self._calculator.profile_calculator.calculate).parameters
@@ -137,8 +145,10 @@ class CristmaPowderAdapter:
     def _structure_and_setting(
         cif_path: str | Path,
         cell_override: CellParameters | None = None,
+        *, read_result=None,
     ):
-        read_result = cristma.read(cif_path)
+        if read_result is None:
+            read_result = read_native_cif(cif_path)
         if not read_result.structures:
             raise CristmaPowderError(f"CrIStMa did not read a structure from {cif_path}")
         structure = read_result.structures[0]
@@ -243,6 +253,7 @@ class CristmaPowderAdapter:
             crystallite_size_nm=crystallite_size_nm,
             microstrain=microstrain,
             d_spacing_scale=d_spacing_scale,
+            include_boundary_wings=True,
         )
 
     def profile_from_lines(
@@ -256,7 +267,13 @@ class CristmaPowderAdapter:
         microstrain: float | None = None,
         d_spacing_scale: float = 1.0,
         normalize: bool = True,
+        include_boundary_wings: bool = False,
     ) -> CristmaPowderResult:
+        """Evaluate the supplied lines; optionally extend their native CIF support.
+
+        High-level CIF/profile workflows request boundary wings. Explicit line
+        callers retain control over which reflections are present by default.
+        """
         requested_x = np.asarray(x_grid, dtype=float)
         grid = self._uniform_grid(requested_x)
         sample_broadening = None
@@ -268,6 +285,9 @@ class CristmaPowderAdapter:
         scale = float(d_spacing_scale)
         if not math.isfinite(scale) or scale <= 0.0:
             raise CristmaPowderError("The d-spacing scale must be positive and finite")
+        if include_boundary_wings:
+            lines = self._lines_with_profile_support(lines, requested_x, instrument_profile,
+                zero_shift_deg, scale, sample_broadening)
         profile_lines = lines.profile_lines
         profile_kwargs = {
             "sample_broadening": sample_broadening,
@@ -315,6 +335,81 @@ class CristmaPowderAdapter:
             peaks=raw_peaks,
             setting_id=lines.setting_id,
         )
+
+    def _profile_upper_support(self, x, instrument, zero=0., cell_scale=1., sample=None):
+        """Original Bragg-angle bound for all kernels reaching this scan."""
+        broadening = self.resolution_from_profile(instrument)
+        physical_upper = min(179.999, max(.001, float(x[-1])-zero))
+        lower = max(.001, float(x[0])-zero)
+        wavelengths = [component.wavelength_angstrom for component in instrument.radiation.components]
+        width = 0.
+        for _ in range(16):
+            angles = list(np.linspace(min(lower,physical_upper),physical_upper,17))
+            if isinstance(broadening, TchProfile):
+                if broadening.u < 0.:
+                    tangent = -broadening.v/(2.*broadening.u)
+                    if tangent >= 0.:
+                        angles.append(math.degrees(2.*math.atan(tangent)))
+                if broadening.x != 0. and 0. <= -broadening.y/broadening.x <= 1.:
+                    angles.append(math.degrees(2.*math.asin(-broadening.y/broadening.x)))
+            gaussian_widths, lorentzian_widths = [], []
+            sample_gaussian, sample_lorentzian = [0.], [0.]
+            for angle in angles:
+                if not min(lower,physical_upper) <= angle <= physical_upper:
+                    continue
+                if isinstance(broadening, ConstantWidthProfile):
+                    gaussian, lorentzian = broadening.fwhm_deg, 0.
+                else:
+                    gaussian, lorentzian = broadening._component_widths_at(float(angle))
+                gaussian_widths.append(gaussian)
+                lorentzian_widths.append(lorentzian)
+                if sample is not None:
+                    for wavelength in wavelengths:
+                        sg, sl = sample.component_fwhm_deg_at(float(angle), wavelength)
+                        sample_gaussian.append(sg)
+                        sample_lorentzian.append(sl)
+            # G+L bounds the TCH combined FWHM; retain the existing finite
+            # kernel window rather than inventing an angle-independent pad.
+            width = max(width, math.hypot(max(gaussian_widths),max(sample_gaussian))
+                        +max(lorentzian_widths)+max(sample_lorentzian))
+            next_upper = min(179.999, max(.001,float(x[-1])-zero)+PROFILE_KERNEL_WINDOW_FWHM*width)
+            if next_upper <= physical_upper+1.e-7:
+                break
+            physical_upper = next_upper
+        else:
+            # A model diverging towards backscattering needs full physical
+            # coverage; silently stopping the expansion would drop tails.
+            physical_upper = 179.999
+        argument = min(1., cell_scale*math.sin(math.radians(physical_upper/2.)))
+        required = min(179.999, math.degrees(2.*math.asin(argument)))
+        return required
+
+    def _lines_with_profile_support(self, lines, x, instrument, zero, cell_scale, sample):
+        """Extend reciprocal coverage only for a continuous profile, not sticks."""
+        if not getattr(lines, 'source_path', None):
+            return lines
+        required = self._profile_upper_support(x,instrument,zero,cell_scale,sample)
+        if required <= lines.reflection_limit_deg+1.e-8:
+            return lines
+        path = Path(lines.source_path)
+        stat = path.stat()
+        basis = (str(path), stat.st_mtime_ns, stat.st_size,
+                 repr(instrument.radiation.calculation_payload()),
+                 repr(instrument.geometry.calculation_payload()),
+                 lines.source_use_lp, lines.source_cell)
+        for key, cached in reversed(self._profile_support_cache.items()):
+            if key[:-1]==basis and cached.reflection_limit_deg>=required:
+                self._profile_support_cache.move_to_end(key)
+                return cached
+        limit = min(179.999, math.ceil(required*2.)/2.)
+        override = (None if lines.source_cell is None else CellParameters(**dict(zip(
+            ('a','b','c','alpha','beta','gamma'),lines.source_cell))))
+        extended = self.lines_from_cif(path,two_theta_min=.001,two_theta_max=limit,
+            instrument_profile=instrument,use_lp=lines.source_use_lp,cell_override=override)
+        self._profile_support_cache[(*basis,limit)] = extended
+        while len(self._profile_support_cache)>16:
+            self._profile_support_cache.popitem(last=False)
+        return extended
 
     @classmethod
     def _scaled_profile_lines(cls, line_set, d_spacing_scale: float):
@@ -427,6 +522,8 @@ class CristmaPowderAdapter:
                     intensity=raw_intensity,
                     multiplicity=int(family.multiplicity_crystallographic),
                     f2=float(family.family_strength),
+                    intrinsic_intensity=float(family.family_strength),
+                    intensity_origin="cristma-structure",
                     lp=float(lp),
                     raw_intensity=raw_intensity,
                 )
@@ -507,6 +604,8 @@ class CristmaPowderAdapter:
                     intensity=raw_intensity,
                     multiplicity=int(line.multiplicity_crystallographic),
                     f2=float(line.family_strength),
+                    intrinsic_intensity=float(line.family_strength),
+                    intensity_origin="cristma-structure",
                     lp=lp,
                     raw_intensity=raw_intensity,
                 )
@@ -579,6 +678,11 @@ class CristmaPowderAdapter:
             radiation=radiation,
             peaks=peaks,
             setting_id=int(setting.setting_id),
+            source_path=str(Path(cif_path).resolve()),
+            source_use_lp=bool(use_lp),
+            source_cell=(None if cell_override is None else tuple(float(getattr(cell_override,name))
+                for name in ('a','b','c','alpha','beta','gamma'))),
+            reflection_limit_deg=float(two_theta_max),
         )
 
 

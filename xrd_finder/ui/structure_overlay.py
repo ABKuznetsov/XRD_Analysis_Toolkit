@@ -5,10 +5,14 @@ from typing import Callable
 
 import numpy as np
 
-from xrd_finder.services.calculated_pattern_service import CU_KA1_WAVELENGTH, calculated_profile_from_peaks
+from xrd_finder.finder.profile_calculator import array_fingerprint
+from xrd_finder.services.overlay_observation import prepare_overlay_observation
+from xrd_finder.services.profile_support import profile_reflection_range
+from xrd_finder.services.calculated_pattern_service import (
+    CU_KA1_WAVELENGTH, calculated_profile_from_peaks, radiation_lines_from_wavelength,
+)
 from xrd_finder.ui.pattern_plot_helpers import (
     add_hkl_labels,
-    calculate_profile_for_structure,
     plot_peak_intensity_sticks,
     plot_phase_marker_lane,
     plot_profile,
@@ -24,7 +28,7 @@ from xrd_finder.ui.plot_style import PlotStyle
 class StructureOverlayData:
     x_grid: np.ndarray
     x: np.ndarray
-    y: np.ndarray
+    y: np.ndarray | None
     peaks: list
     background: np.ndarray
     observed_ymax: float | None
@@ -33,6 +37,27 @@ class StructureOverlayData:
     profile_fwhm: float
     alignment: PhaseAlignmentEstimate
     has_observed: bool
+
+
+@dataclass(slots=True)
+class OverlayObservationCache:
+    """One owned observation, independent of the candidate phase."""
+
+    _key: tuple | None = None
+    _data: tuple | None = None
+
+    def remember(self, key, x, minimum, maximum, background, positions, width):
+        def owned(values):
+            array = np.asarray(values, dtype=float)
+            return np.frombuffer(array.tobytes(), dtype=float).reshape(array.shape)
+        self._data = (owned(x), minimum, maximum, owned(background), owned(positions), width)
+        self._key = key
+        return self._data
+
+
+def overlay_observation_key(observed, estimate_background, observed_peak_positions, estimate_profile_fwhm):
+    return (array_fingerprint(observed[:, 0]), array_fingerprint(observed[:, 1]),
+            estimate_background, observed_peak_positions, estimate_profile_fwhm)
 
 
 def shifted_peaks(peaks, zero_shift: float):
@@ -52,6 +77,8 @@ def prepare_structure_overlay(
     include_kalpha2: bool = True,
     profile_fwhm_override: float | None = None,
     peaks_override=None,
+    include_profile: bool = True,
+    observation_cache: OverlayObservationCache | None = None,
 ) -> StructureOverlayData:
     x_grid = None
     observed_ymax = None
@@ -62,13 +89,17 @@ def prepare_structure_overlay(
 
     if observed is not None:
         try:
-            x_grid = observed[:, 0]
-            observed_ymin = float(np.nanmin(observed[:, 1]))
-            observed_ymax = float(np.nanmax(observed[:, 1]))
-            background = estimate_background(observed[:, 0], observed[:, 1])
-            corrected = np.clip(observed[:, 1] - background, 0.0, None)
-            peak_positions = observed_peak_positions(observed[:, 0], corrected)
-            profile_fwhm = estimate_profile_fwhm(observed[:, 0], corrected)
+            key = overlay_observation_key(observed, estimate_background, observed_peak_positions,
+                                          estimate_profile_fwhm) if observation_cache is not None else None
+            if observation_cache is not None and observation_cache._data is not None and observation_cache._key == key:
+                x_grid, observed_ymin, observed_ymax, background, peak_positions, profile_fwhm = observation_cache._data
+            else:
+                prepared = prepare_overlay_observation(
+                    observed, background_estimator=estimate_background,
+                    peak_detector=observed_peak_positions, width_estimator=estimate_profile_fwhm)
+                if observation_cache is not None:
+                    prepared = observation_cache.remember(key, *prepared)
+                x_grid, observed_ymin, observed_ymax, background, peak_positions, profile_fwhm = prepared
         except Exception:
             x_grid = None
 
@@ -79,45 +110,47 @@ def prepare_structure_overlay(
     if profile_fwhm_override is not None:
         profile_fwhm = float(profile_fwhm_override)
 
+    effective_wavelength = wavelength or getattr(structure, "wavelength", None) or CU_KA1_WAVELENGTH
+    low, high = float(np.nanmin(x_grid)), float(np.nanmax(x_grid))
     if peaks_override is None:
-        x, y, peaks = calculate_profile_for_structure(
-            calculated_pattern_service,
+        radiation = radiation_lines_from_wavelength(
+            effective_wavelength, include_kalpha2=include_kalpha2,
+        )
+        primary_wavelength = radiation[0][0]
+        support_low, support_high = (profile_reflection_range(low,high,profile_fwhm,
+            wavelengths=[line[0] for line in radiation]) if include_profile or observed is None else (low,high))
+        peaks = calculated_pattern_service.calculate_sticks(
             structure,
-            x_grid,
-            fwhm=profile_fwhm,
-            wavelength=wavelength,
-            include_kalpha2=include_kalpha2,
+            two_theta_min=support_low,
+            two_theta_max=support_high,
+            wavelength=primary_wavelength,
+            use_lp=True,
         )
     else:
         peaks = list(peaks_override)
-        effective_wavelength = wavelength or getattr(structure, "wavelength", None) or CU_KA1_WAVELENGTH
+    alignment = estimate_phase_alignment([peak for peak in peaks if low <= float(peak.two_theta) <= high], peak_positions, structure)
+    profile_peaks = shifted_peaks(peaks, alignment.zero_shift)
+    peaks = [peak for peak in profile_peaks if low <= float(peak.two_theta) <= high]
+    if peaks_override is None:
+        maximum = max((peak.intensity for peak in peaks),default=0.)
+        if maximum > 0.:
+            peaks = [replace(peak,intensity=100.*peak.intensity/maximum) for peak in peaks]
+    x, y = x_grid, None
+    if include_profile or observed is None:
         x, y = calculated_profile_from_peaks(
-            peaks,
-            x_grid,
-            fwhm=profile_fwhm,
-            wavelength=effective_wavelength,
+            profile_peaks, x_grid, fwhm=profile_fwhm, wavelength=effective_wavelength,
             include_kalpha2=include_kalpha2,
         )
-    alignment = estimate_phase_alignment(peaks, peak_positions, structure)
-    peaks = shifted_peaks(peaks, alignment.zero_shift)
-    effective_wavelength = wavelength or getattr(structure, "wavelength", None) or CU_KA1_WAVELENGTH
-    x, y = calculated_profile_from_peaks(
-        peaks,
-        x_grid,
-        fwhm=profile_fwhm,
-        wavelength=effective_wavelength,
-        include_kalpha2=include_kalpha2,
-    )
-    if observed_ymax is not None:
-        baseline = float(np.nanpercentile(background, 50))
-        y = scale_profile_to_reference(y, max(observed_ymax - baseline, 1.0))
-    else:
-        y = scale_profile_to_reference(y, 100.0)
+        if observed_ymax is not None:
+            baseline = float(np.nanpercentile(background, 50))
+            y = scale_profile_to_reference(y, max(observed_ymax - baseline, 1.0))
+        else:
+            y = scale_profile_to_reference(y, 100.0)
 
     return StructureOverlayData(
         x_grid=np.asarray(x_grid, dtype=float),
         x=np.asarray(x, dtype=float),
-        y=np.asarray(y, dtype=float),
+        y=np.asarray(y, dtype=float) if y is not None else None,
         peaks=peaks,
         background=np.asarray(background, dtype=float),
         observed_ymax=observed_ymax,

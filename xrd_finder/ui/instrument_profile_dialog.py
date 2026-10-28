@@ -390,6 +390,7 @@ class InstrumentProfileEditor(QWidget):
     def _sync_resolution_fields(self) -> None:
         constant = self.resolution_model.currentData() == "constant_fwhm"
         self.constant_fwhm.setEnabled(constant)
+        self.tch_units.setEnabled(not constant)
         for control in (self.tch_u, self.tch_v, self.tch_w, self.tch_x, self.tch_y):
             control.setEnabled(not constant)
         self.tch_units.setEnabled(not constant)
@@ -411,7 +412,10 @@ class InstrumentProfileEditor(QWidget):
         self.resolution_preview.setText(f"{width:.4f}°")
 
 
-class InstrumentProfileDialog(QDialog):
+from xrd_finder.ui.screen_bound_dialog import ScreenBoundDialog, scrollable_dialog_body
+
+
+class InstrumentProfileDialog(ScreenBoundDialog):
     importRequested = Signal(object)
     saveAsRequested = Signal(object)
     updateRequested = Signal(object)
@@ -483,7 +487,7 @@ class InstrumentProfileDialog(QDialog):
         close_buttons.rejected.connect(self.reject)
         close_buttons.clicked.connect(self.close)
         actions.addWidget(close_buttons)
-        layout = QVBoxLayout(self)
+        layout = scrollable_dialog_body(self)
         layout.addLayout(selector_row)
         layout.addWidget(self.project_profile_note)
         layout.addWidget(self.editor, 1)

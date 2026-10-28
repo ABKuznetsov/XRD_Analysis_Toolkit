@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.7 - 2026-10-28
+
+- Responsive HD/2K interface and saved table-column proportions.
+- Common or individual phase legends and properly formatted chemical formulas.
+- Manual peak lists, peak information and background-aware peak detection.
+- Reversible manual angle calibration and consistent numeric-setting arrows.
+- Search and calculated-reference display limited to the measured scan range.
+- Restore accepted-phase colors and keep table columns within their panels.
+
 ## 1.6.4 - 2026-10-03
 
 ### Added

@@ -5,15 +5,18 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
+import math
 from scipy.optimize import nnls
 from scipy.signal import find_peaks
 
 from xrd_finder.finder.assignment_builder import AssignmentBuilder, nearest_index as nearest_peak_index, nearest_phase_peak
 from xrd_finder.finder.cell_parameter_estimator import CellParameterEstimate, FastCellParameterEstimator
 from xrd_finder.finder.context import CalculationContext
+from xrd_finder.finder.fingerprint_matching import fingerprint_match_score
 from xrd_finder.finder.quantification import fit_accepted_phases, mass_fractions
 from xrd_finder.finder.models import (
     FinderCandidateInput,
+    FinderCandidateFailure,
     FinderCandidateResult,
     FinderInput,
     FinderResult,
@@ -23,6 +26,7 @@ from xrd_finder.finder.matching import XrdMatchingOptions, XrdSearchMatchResult,
 from xrd_finder.finder.observed_pattern_processor import ObservedPatternData, ObservedPatternProcessor
 from xrd_finder.finder.profile_calculator import CachedProfileCalculator, array_fingerprint
 from xrd_finder.finder.profile_width_estimator import estimate_phase_fwhm_from_signal
+from xrd_finder.finder.profile_backend import instrument_fwhm_at, profile_reference_angle
 from xrd_finder.services.calculated_pattern_service import (
     CU_KA1_WAVELENGTH,
     CalculatedPatternService,
@@ -31,6 +35,7 @@ from xrd_finder.services.calculated_pattern_service import (
     radiation_lines_from_wavelength,
 )
 from xrd_finder.services.element_masses import atomic_weight
+from xrd_finder.services.peak_cell_alignment import apply_peak_cell, estimate_peak_cell_alignment, improve_peak_cell_estimate
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,8 +106,11 @@ class FinderService:
             wavelength,
             include_kalpha2=finder_input.include_kalpha2,
         )[0][0]
+        if finder_input.instrument_profile is not None:
+            primary_wavelength = finder_input.instrument_profile.radiation.components[0].wavelength_angstrom
 
         candidate_data = []
+        candidate_failures = []
         two_theta_min = finder_input.two_theta_min or float(np.nanmin(x_grid))
         two_theta_max = finder_input.two_theta_max or float(np.nanmax(x_grid))
         context = CalculationContext(
@@ -137,6 +145,7 @@ class FinderService:
                     peaks = self.profile_calculator.peaks_from_reference_lines(
                         candidate.reference_lines,
                         context,
+                        instrument_profile=finder_input.instrument_profile,
                     )
                 else:
                     structure, line_data = self.profile_calculator.line_calculator.candidate_structure_and_lines(
@@ -146,7 +155,10 @@ class FinderService:
                         instrument_profile=finder_input.instrument_profile,
                     )
                     peaks = list(line_data.peaks)
-            except Exception:
+            except Exception as exc:
+                candidate_failures.append(FinderCandidateFailure(
+                    self._candidate_key(candidate), candidate.entry_id, candidate.source,
+                    candidate.cif_path, 'reference_lines', type(exc).__name__, str(exc)))
                 continue
             candidate_data.append((candidate, structure, peaks, line_data))
 
@@ -157,19 +169,36 @@ class FinderService:
         # Adding an impurity candidate must not move the instrument alignment
         # already established by the primary phase.
         primary_alignment_data = alignment_data[:1]
-        trusted_zero = self._estimate_global_zero_shift_from_trusted_assignments(
-            primary_alignment_data,
+        global_zero = self.estimate_zero_shift(
+            primary_alignment_data[0][1] if primary_alignment_data else [],
             observed.peaks,
+            wavelength=context.primary_wavelength,
         )
-        global_zero = (
-            trusted_zero
-            if trusted_zero is not None
-            else self._estimate_global_zero_shift(primary_alignment_data, observed.peak_positions)
-        )
+        if not finder_input.refine_scan_zero:
+            trusted_zero = self._estimate_global_zero_shift_from_trusted_assignments(
+                primary_alignment_data, observed.peaks)
+            if trusted_zero is not None:
+                global_zero = float(trusted_zero)
         prepared_profiles = []
         for candidate_index, (candidate, structure, peaks, line_data) in enumerate(candidate_data):
             cell_estimate = None
-            if candidate.cif_path and self._has_indexed_cell(structure, peaks):
+            if structure is None and candidate.reference_lines is not None:
+                # The accepted-phase fast path has indexed d spacings but no CIF
+                # object. Estimate its metric without recalculating intensities.
+                alignment = estimate_peak_cell_alignment(
+                    self._shift_peaks(peaks, global_zero),
+                    observed.peaks,
+                    wavelength=context.primary_wavelength,
+                    zero_shift=global_zero,
+                    initial_cell=candidate.initial_cell,
+                    refine_scan_zero=candidate_index == 0 and finder_input.refine_scan_zero,
+                )
+                cell_estimate = alignment.estimate
+                if cell_estimate is not None:
+                    if candidate_index == 0 and finder_input.refine_scan_zero:
+                        global_zero = float(cell_estimate.zero_shift_deg)
+                    peaks = self._shift_peaks(list(alignment.peaks), -global_zero)
+            if self._has_indexed_cell(structure, peaks):
                 cell_estimate = self.cell_parameter_estimator.estimate(
                     initial_cell=structure.cell,
                     calculated_peaks=peaks,
@@ -177,19 +206,30 @@ class FinderService:
                     wavelength=context.primary_wavelength,
                     zero_shift_deg=global_zero,
                     tolerance_deg=self.heuristics.cell_parameter_peak_tolerance,
-                    refine_zero_shift=candidate_index == 0,
+                    refine_zero_shift=candidate_index == 0 and finder_input.refine_scan_zero,
                 )
+                cell_estimate = improve_peak_cell_estimate(peaks, observed.peaks,
+                    baseline_estimate=cell_estimate, initial_cell=structure.cell,
+                    wavelength=context.primary_wavelength, zero_shift=global_zero,
+                    refine_scan_zero=candidate_index == 0 and finder_input.refine_scan_zero)
                 if cell_estimate is not None:
                     try:
-                        structure, line_data = self.profile_calculator.line_calculator.candidate_structure_and_lines(
-                            candidate.cif_path,
-                            context=context,
-                            use_lp=True,
-                            instrument_profile=finder_input.instrument_profile,
-                            cell_override=cell_estimate.cell,
-                        )
-                        peaks = list(line_data.peaks)
-                        if candidate_index == 0:
+                        if candidate.cif_path:
+                            structure, line_data = self.profile_calculator.line_calculator.candidate_structure_and_lines(
+                                candidate.cif_path,
+                                context=context,
+                                use_lp=True,
+                                instrument_profile=finder_input.instrument_profile,
+                                cell_override=cell_estimate.cell,
+                            )
+                            peaks = list(line_data.peaks)
+                        else:
+                            positioned = apply_peak_cell(peaks, cell_estimate.cell,
+                                wavelength=context.primary_wavelength, zero_shift=0.0)
+                            if positioned is None:
+                                raise ValueError("Invalid estimated peak metric")
+                            peaks = list(positioned)
+                        if candidate_index == 0 and finder_input.refine_scan_zero:
                             global_zero = float(cell_estimate.zero_shift_deg)
                     except Exception:
                         cell_estimate = None
@@ -209,11 +249,34 @@ class FinderService:
             )
             phase_context = context.with_alignment(global_zero, cell_scale)
             reference_peaks = self._apply_peak_model(peaks, phase_context)
+            indexed_geometry = any((peak.h, peak.k, peak.l) != (0, 0, 0) for peak in reference_peaks)
             adjusted = (
                 self._snap_peaks_to_observed(reference_peaks, observed.peak_positions)
-                if finder_input.snap_peak_positions and cell_estimate is None
+                # An indexed phase must retain one coherent lattice even when
+                # its cell estimate is rejected. Independent peak snapping can
+                # otherwise impersonate reflections of another phase.
+                if finder_input.snap_peak_positions and cell_estimate is None and not indexed_geometry
                 else reference_peaks
             )
+            # Load accepted physical line sets before optimizing their shape,
+            # so the trial and final profiles share geometry, spectrum and LP.
+            if line_data is None and candidate.quantification_cif_path:
+                try:
+                    physical_structure, physical_lines = self.profile_calculator.line_calculator.candidate_structure_and_lines(
+                        candidate.quantification_cif_path, context=context, use_lp=True,
+                        instrument_profile=finder_input.instrument_profile,
+                        cell_override=(cell_estimate.cell if cell_estimate is not None else
+                                       getattr(structure, "cell", None)),
+                    )
+                    if structure is not None and (
+                        structure.atoms != physical_structure.atoms or structure.symops != physical_structure.symops
+                    ):
+                        raise ValueError("Modified atomic sites require a new physical structure calculation")
+                    structure, line_data = physical_structure, physical_lines
+                    reference_peaks = self._apply_peak_model(list(line_data.peaks), phase_context)
+                    adjusted = reference_peaks
+                except (OSError, ValueError, RuntimeError):
+                    line_data = None
             prepared_profiles.append(
                 (
                     candidate,
@@ -227,8 +290,8 @@ class FinderService:
                 )
             )
 
-        # Keep the primary phase shape stable while later phases are tested
-        # against the positive residual.
+        # Estimate shape from the first accepted phase and keep its model stable
+        # as further accepted phases are added. This is not candidate searching.
         primary_peak_sets = (
             [prepared_profiles[0][3]]
             if prepared_profiles
@@ -238,8 +301,12 @@ class FinderService:
             observed.target_y,
             primary_peak_sets,
             x_grid,
-            context,
+            prepared_profiles[0][4] if prepared_profiles else context,
+            finder_input.instrument_profile,
+            prepared_profiles[0][6] if prepared_profiles else None,
         )
+        if finder_input.instrument_profile is not None:
+            fitted_eta = (0.0 if finder_input.instrument_profile.resolution.model == 'constant_fwhm' else None)
         profiles = []
         for (
             candidate,
@@ -258,48 +325,19 @@ class FinderService:
                 base_fwhm=fitted_fwhm,
             )
             phase_eta = fitted_eta
-            fitted_context = replace(phase_context, fwhm=phase_fwhm, profile_eta=phase_eta)
-            absolute_peaks = [
-                replace(
-                    peak,
-                    intensity=(
-                        float(getattr(peak, "raw_intensity", 0.0) or 0.0)
-                        if float(getattr(peak, "raw_intensity", 0.0) or 0.0) > 0.0
-                        else float(getattr(peak, "intensity", 0.0) or 0.0)
-                    ),
-                )
-                for peak in adjusted
-            ]
-            if (
-                line_data is not None
-                and finder_input.instrument_profile is not None
-                and (cell_estimate is not None or not finder_input.snap_peak_positions)
-            ):
-                profile = self.profile_calculator.profile_from_lines(
-                    line_data,
-                    x_grid,
-                    fitted_context,
-                    instrument_profile=finder_input.instrument_profile,
-                )
-            else:
-                profile = self.profile_calculator.profile_from_peaks(
-                    absolute_peaks,
-                    x_grid,
-                    context=fitted_context,
-                    source_fingerprint=(
-                        None
-                        if candidate.reference_lines is None
-                        else candidate.reference_lines.fingerprint
-                    ),
-                    instrument_profile=finder_input.instrument_profile,
-                )
+            if finder_input.instrument_profile is not None:
+                angle = profile_reference_angle(adjusted, finder_input.instrument_profile)
+                phase_fwhm = max(phase_fwhm, instrument_fwhm_at(finder_input.instrument_profile, angle))
             profiles.append(
                 (
                     candidate,
-                    structure,
+                    # Only a CrIStMa line set supplies the validated physical
+                    # convention. Legacy structure-object profiles can still
+                    # be drawn, but their scales are not comparable for Quant.
+                    structure if line_data is not None and line_data.cristma_lines is not None else None,
                     reference_peaks,
                     adjusted,
-                    profile,
+                    None,  # The physical fit does not consume display profiles.
                     cell_scale,
                     phase_fwhm,
                     phase_eta,
@@ -307,9 +345,19 @@ class FinderService:
                 )
             )
 
+        quantification_errors = []
+        if candidate_failures:
+            quantification_errors.append('Selected CIF candidates failed: ' + '; '.join(
+                f'{Path(failure.cif_path).name or failure.candidate_key}: {failure.message}'
+                for failure in candidate_failures))
+        elif not finder_input.quantification_complete:
+            quantification_errors.append('Not all selected structures are available for quantitative analysis')
         physical_fit = fit_accepted_phases(
             profiles,x_grid,observed.target_y,context.with_alignment(global_zero,1.0),
             finder_input.instrument_profile,self.profile_calculator,
+            refine_sample_broadening=finder_input.refine_sample_broadening,
+            observed_peaks=observed.peaks,
+            diagnostics=quantification_errors,
         ) if (finder_input.quantification_complete and len(profiles) == len(finder_input.candidates)) else None
         if physical_fit is not None:
             quantity_fractions = physical_fit.fractions
@@ -328,6 +376,59 @@ class FinderService:
                 physical_profiles.append((*item[:2], peaks, peaks, profile, *item[5:]))
             profiles = physical_profiles
         else:
+            display_profiles = []
+            for item, prepared in zip(profiles, prepared_profiles):
+                (
+                    candidate, _structure, _reference, adjusted, _display,
+                    _scale, phase_fwhm, phase_eta, cell_estimate,
+                ) = item
+                phase_context, line_data = prepared[4], prepared[6]
+                fitted_context = replace(phase_context, fwhm=phase_fwhm, profile_eta=float(phase_eta or 0.0))
+                absolute_peaks = [
+                    replace(
+                        peak,
+                        intensity=(
+                            float(getattr(peak, "raw_intensity", 0.0) or 0.0)
+                            if float(getattr(peak, "raw_intensity", 0.0) or 0.0) > 0.0
+                            else float(getattr(peak, "intensity", 0.0) or 0.0)
+                        ),
+                    )
+                    for peak in adjusted
+                ]
+                if (
+                    line_data is not None
+                    and finder_input.instrument_profile is not None
+                    and (cell_estimate is not None or not finder_input.snap_peak_positions)
+                ):
+                    profile = self.profile_calculator.profile_from_lines(
+                        line_data,
+                        x_grid,
+                        fitted_context,
+                        instrument_profile=finder_input.instrument_profile,
+                    )
+                else:
+                    if candidate.reference_lines is not None:
+                        support = self.profile_calculator.peaks_from_reference_lines(
+                            candidate.reference_lines, fitted_context,
+                            instrument_profile=finder_input.instrument_profile,
+                            include_boundary_wings=True)
+                        support = self._apply_peak_model(support,fitted_context)
+                        existing = {(p.h,p.k,p.l,round(p.d,8)) for p in absolute_peaks}
+                        absolute_peaks.extend(replace(p,intensity=float(p.raw_intensity or p.intensity))
+                            for p in support if (p.h,p.k,p.l,round(p.d,8)) not in existing)
+                    profile = self.profile_calculator.profile_from_peaks(
+                        absolute_peaks,
+                        x_grid,
+                        context=fitted_context,
+                        source_fingerprint=(
+                            None
+                            if candidate.reference_lines is None
+                            else candidate.reference_lines.fingerprint
+                        ),
+                        instrument_profile=finder_input.instrument_profile,
+                    )
+                display_profiles.append((*item[:4], profile, *item[5:]))
+            profiles = display_profiles
             quantity_fractions = np.full(len(profiles), np.nan)
             scales = self._fit_incremental_scales(observed.target_y, [item[4] for item in profiles])
         calculated_total = np.zeros_like(x_grid)
@@ -347,7 +448,7 @@ class FinderService:
         ), scale, quantity_fraction in zip(profiles, scales, quantity_fractions):
             scaled_profile = profile * float(scale)
             calculated_total += scaled_profile
-            if float(scale) > 1e-9:
+            if float(scale) > 0.0:
                 phase_fwhm_values.append(float(phase_fwhm))
             match_result = self._match_result(peaks, observed.peak_positions)
             candidate_result = FinderCandidateResult(
@@ -373,7 +474,7 @@ class FinderService:
                     0.0 if cell_estimate is None else float(cell_estimate.fitted_rms_deg)
                 ),
                 fwhm=float(phase_fwhm),
-                profile_eta=float(phase_eta),
+                profile_eta=None if phase_eta is None else float(phase_eta),
                 two_theta=x_grid.tolist(),
                 profile=scaled_profile.tolist(),
                 peak_two_theta=[float(peak.two_theta) for peak in peaks],
@@ -385,9 +486,19 @@ class FinderService:
                 matched_reference_two_theta=[float(match.reference_two_theta) for match in match_result.matches],
                 matched_observed_two_theta=[float(match.observed_two_theta) for match in match_result.matches],
                 matched_delta_two_theta=[float(match.delta_two_theta) for match in match_result.matches],
+                sample_broadening=(
+                    physical_fit.sample_broadening[len(results)]
+                    if physical_fit is not None and finder_input.refine_sample_broadening
+                    else ({"status": "unavailable_physical_profile", "profile_model": "legacy_width_floor"}
+                          if finder_input.refine_sample_broadening else {})
+                ),
+                mass_profile=(
+                    (physical_fit.profiles[:, len(results)] / physical_fit.mass_factors[len(results)]).tolist()
+                    if physical_fit is not None and physical_fit.mass_factors else []
+                ),
             )
             results.append(candidate_result)
-            if float(scale) > 1e-9:
+            if float(scale) > 0.0:
                 assignment_phase_sets.append((candidate_result, peaks))
 
         assigned_peaks = self.assignment_builder.assign_observed_peaks(
@@ -403,9 +514,12 @@ class FinderService:
             calculated_total=(calculated_total + observed.background).tolist(),
             global_zero_shift=float(global_zero),
             fwhm=float(np.nanmedian(phase_fwhm_values)) if phase_fwhm_values else float(fitted_fwhm),
-            profile_eta=float(fitted_eta),
+            profile_eta=None if fitted_eta is None else float(fitted_eta),
             candidates=results,
             observed_peaks=assigned_peaks,
+            sample_broadening_requested=finder_input.refine_sample_broadening,
+            quantification_error='; '.join(quantification_errors),
+            candidate_failures=candidate_failures,
         )
 
     @staticmethod
@@ -420,19 +534,43 @@ class FinderService:
         }
 
     @staticmethod
-    def _unit_cell_molar_mass(structure) -> float:
+    def _unit_cell_molar_mass(structure) -> float | None:
         """Return the molar mass of all occupied atoms in one unit cell."""
 
         if structure is None:
-            return 1.0
+            return None
+        if getattr(structure, "metadata", {}).get("quantification_symmetry_unresolved"):
+            return None
+        atoms = getattr(structure, "atoms", None) or []
+        if not atoms or any(any(getattr(atom, name, None) is None for name in ("x", "y", "z")) for atom in atoms):
+            return None
         total = 0.0
         for atom in expand_atoms_by_symmetry(structure):
             try:
                 weight = atomic_weight(str(atom.element))
             except (AttributeError, RuntimeError, TypeError, ValueError):
-                weight = 0.0
-            total += max(float(atom.occupancy), 0.0) * max(weight, 0.0)
-        return max(total, 1.0e-12)
+                return None
+            occupancy = float(atom.occupancy)
+            if not math.isfinite(weight) or weight <= 0 or not math.isfinite(occupancy) or occupancy < 0:
+                return None
+            total += occupancy * weight
+        return total if math.isfinite(total) and total > 0 else None
+
+    @staticmethod
+    def _unit_cell_volume(structure) -> float | None:
+        """Compute volume from the current metric, never a stale CIF volume."""
+        cell = getattr(structure, "cell", None)
+        try:
+            a, b, c = (float(getattr(cell, name)) for name in ("a", "b", "c"))
+            angles = [float(getattr(cell, name)) for name in ("alpha", "beta", "gamma")]
+            if min(a, b, c) <= 0 or any(not 0 < angle < 180 for angle in angles):
+                return None
+            ca, cb, cg = np.cos(np.radians(angles))
+            determinant = 1 + 2*ca*cb*cg - ca*ca - cb*cb - cg*cg
+            volume = a*b*c*math.sqrt(max(0., float(determinant)))
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return None
+        return volume if math.isfinite(volume) and volume > 0 else None
 
     @staticmethod
     def _mass_fractions(scales, cell_masses, cell_volumes) -> np.ndarray:
@@ -515,12 +653,8 @@ class FinderService:
         x = x[finite]
         y = y[finite]
         return (
-            int(len(x)),
-            round(float(x[0]), 6),
-            round(float(x[-1]), 6),
-            round(float(np.nanmin(y)), 6),
-            round(float(np.nanmax(y)), 6),
-            round(float(np.nanmean(y)), 6),
+            array_fingerprint(x),
+            array_fingerprint(y),
         )
 
     def _candidate_key(self, candidate: FinderCandidateInput) -> str:
@@ -536,7 +670,7 @@ class FinderService:
 
     def _estimate_global_zero_shift(
         self,
-        candidate_data: list[tuple[FinderCandidateInput, list[HKLPeak]]],
+        candidate_data: list[tuple[FinderCandidateInput | None, list[HKLPeak]]],
         observed_positions: np.ndarray,
     ) -> float:
         if len(observed_positions) == 0:
@@ -566,9 +700,68 @@ class FinderService:
         center = float(np.average(zeros, weights=weights))
         return float(np.clip(center, -0.5, 0.5))
 
+    def estimate_zero_shift(
+        self,
+        peaks: list[HKLPeak],
+        observed_peaks: list[ObservedPeak],
+        *,
+        wavelength: float,
+    ) -> float:
+        """Compare local alignment with the independently searched Match seed.
+
+        Match supplies a starting offset, not permission to alter the cell or
+        force a fit. The offset must still explain distinct strong lines under
+        the existing zero-residual and coverage criteria.
+        """
+        if not peaks or len(observed_peaks) < 3:
+            return 0.0
+        alignment_data = [(None, peaks)]
+        positions = np.sort(np.asarray([peak.two_theta for peak in observed_peaks], dtype=float))
+        local_zero = self._estimate_global_zero_shift_from_trusted_assignments(alignment_data, observed_peaks)
+        if local_zero is None and self._candidate_zero_shift_estimate(peaks, positions) is not None:
+            local_zero = self._estimate_global_zero_shift(alignment_data, positions)
+        fallback_zero = local_zero if local_zero is not None else 0.0
+
+        records = [(peak.two_theta, peak.intensity) for peak in observed_peaks]
+        match = fingerprint_match_score(
+            peaks,
+            records,
+            wavelength=wavelength,
+            line_tolerance_two_theta=self.heuristics.cell_parameter_peak_tolerance,
+        )
+        if local_zero is not None:
+            if abs(match.zero_shift - local_zero) <= self.heuristics.zero_outlier_tolerance:
+                return local_zero
+            local_match = fingerprint_match_score(
+                peaks, records, wavelength=wavelength,
+                line_tolerance_two_theta=self.heuristics.cell_parameter_peak_tolerance,
+                fixed_zero_shift=local_zero,
+            )
+            if match.score <= local_match.score:
+                return local_zero
+        if match.features.observed_matched < 3 or match.features.reference_matched < 3:
+            return fallback_zero
+        residual_estimate = self._candidate_zero_shift_estimate(peaks, positions - match.zero_shift)
+        if residual_estimate is None:
+            return fallback_zero
+        zero = float(match.zero_shift + residual_estimate['zero'])
+        strong = sorted(
+            [peak for peak in peaks if peak.intensity >= self.heuristics.strong_peak_intensity_min],
+            key=lambda peak: peak.intensity,
+            reverse=True,
+        )[:25]
+        used = set()
+        for peak in strong:
+            index = nearest_peak_index(positions, float(peak.two_theta) + zero)
+            if abs(float(positions[index]) - peak.two_theta - zero) <= self.heuristics.zero_outlier_tolerance:
+                used.add(index)
+        if len(used) < 3 or len(used) / max(len(strong), 1) < self.heuristics.zero_min_matched_fraction:
+            return fallback_zero
+        return zero
+
     def _estimate_global_zero_shift_from_trusted_assignments(
         self,
-        candidate_data: list[tuple[FinderCandidateInput, list[HKLPeak]]],
+        candidate_data: list[tuple[FinderCandidateInput | None, list[HKLPeak]]],
         observed_peaks: list[ObservedPeak],
     ) -> float | None:
         if not candidate_data or len(observed_peaks) < 3:
@@ -811,16 +1004,13 @@ class FinderService:
             return np.array([], dtype=float)
         matrix = np.column_stack(profiles)
         weights = self._fit_weights(target_y)
-        try:
-            scales, _residual = nnls(matrix * weights[:, None], target_y * weights)
-        except Exception:
-            try:
-                scales, *_rest = np.linalg.lstsq(matrix * weights[:, None], target_y * weights, rcond=None)
-            except Exception:
-                scales = np.ones(len(profiles), dtype=float)
-        scales = np.clip(np.asarray(scales, dtype=float), 0.0, None)
-        if not np.any(scales):
-            scales = np.ones(len(profiles), dtype=float)
+        weighted = matrix * weights[:, None]
+        norms = np.linalg.norm(weighted, axis=0)
+        active = norms > 0
+        scales = np.zeros(len(profiles), dtype=float)
+        if np.any(active):
+            fitted, _residual = nnls(weighted[:, active] / norms[active], target_y * weights)
+            scales[active] = fitted / norms[active]
         return scales
 
     def _fit_incremental_scales(self, target_y: np.ndarray, profiles: list[np.ndarray]) -> np.ndarray:
@@ -834,7 +1024,7 @@ class FinderService:
         """
         if not profiles:
             return np.array([], dtype=float)
-        target = np.clip(np.asarray(target_y, dtype=float), 0.0, None)
+        target = np.asarray(target_y, dtype=float)
         clean_profiles = [
             np.clip(np.asarray(profile, dtype=float), 0.0, None)
             for profile in profiles
@@ -847,10 +1037,20 @@ class FinderService:
         peak_sets: list[list[HKLPeak]],
         x_grid: np.ndarray,
         context: CalculationContext,
-    ) -> tuple[float, float]:
-        base = float(context.fwhm)
+        instrument_profile=None,
+        primary_line_data=None,
+    ) -> tuple[float, float | None]:
+        minimum_width = .04
+        if instrument_profile is not None:
+            reference_peaks = (primary_line_data.peaks if primary_line_data is not None
+                               else (peak_sets[0] if peak_sets else []))
+            angle = profile_reference_angle(reference_peaks, instrument_profile,
+                context.cell_scale if primary_line_data is not None else 1.0)
+            minimum_width = max(minimum_width, instrument_fwhm_at(instrument_profile, angle))
+        base = max(float(context.fwhm), minimum_width)
+        fixed_eta = (0.0 if instrument_profile is None or instrument_profile.resolution.model == 'constant_fwhm' else None)
         if not peak_sets:
-            return base, float(context.profile_eta)
+            return base, float(context.profile_eta) if instrument_profile is None else fixed_eta
         candidates = np.unique(
             np.clip(
                 np.concatenate([
@@ -861,7 +1061,8 @@ class FinderService:
                 0.45,
             )
         )
-        eta_candidates = (0.0, 0.25, 0.5, 0.7)
+        candidates = np.unique(np.maximum(candidates, minimum_width))
+        eta_candidates = (0.0, 0.25, 0.5, 0.7) if instrument_profile is None else (0.0,)
         weights = self._fit_weights(target_y)
         best_fwhm = base
         best_eta = float(context.profile_eta)
@@ -869,11 +1070,17 @@ class FinderService:
         for fwhm in candidates:
             for eta in eta_candidates:
                 trial_context = replace(context, fwhm=float(fwhm), profile_eta=float(eta))
-                profiles = [
-                    self.profile_calculator.profile_from_peaks(peaks, x_grid, context=trial_context)
-                    for peaks in peak_sets
-                    if peaks
-                ]
+                profiles = []
+                for index, peaks in enumerate(peak_sets):
+                    if not peaks:
+                        continue
+                    if index == 0 and primary_line_data is not None and instrument_profile is not None:
+                        profile = self.profile_calculator.profile_from_lines(primary_line_data, x_grid,
+                            trial_context, instrument_profile=instrument_profile, normalize=False)
+                    else:
+                        profile = self.profile_calculator.profile_from_peaks(peaks, x_grid,
+                            context=trial_context, instrument_profile=instrument_profile)
+                    profiles.append(profile)
                 if not profiles:
                     continue
                 scales = self._fit_scales(target_y, profiles)
@@ -886,7 +1093,8 @@ class FinderService:
                     best_score = score
                     best_fwhm = float(fwhm)
                     best_eta = float(eta)
-        return float(np.clip(best_fwhm, 0.04, 0.45)), float(np.clip(best_eta, 0.0, 0.85))
+        return max(minimum_width, float(np.clip(best_fwhm, 0.04, 0.45))), (
+            float(np.clip(best_eta, 0.0, 0.85)) if instrument_profile is None else fixed_eta)
 
     def _estimate_phase_fwhm_from_observed_peaks(
         self,
@@ -1000,7 +1208,10 @@ class FinderService:
         peaks: list[HKLPeak],
         x_grid: np.ndarray,
         context: CalculationContext,
-    ) -> tuple[float, float]:
+        instrument_profile=None,
+    ) -> tuple[float, float | None]:
+        if instrument_profile is not None:
+            return self._optimized_profile_parameters(target_y, [peaks], x_grid, context, instrument_profile)
         base_fwhm = float(context.fwhm)
         base_eta = float(context.profile_eta)
         if not peaks:

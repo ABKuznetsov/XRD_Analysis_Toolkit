@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from xrd_finder.ui.screen_bound_dialog import ScreenBoundDialog
+
 import shutil
 import threading
 from pathlib import Path
@@ -58,6 +60,7 @@ class PhaseFinderDatabaseActionsMixin:
         self.database_panel.manageUserLibraryRequested.connect(self._show_user_phase_library_window)
         self.database_panel.rebuildUserIndexRequested.connect(self._build_local_phase_cache_index)
         self.database_panel.rebuildLocalPeakIndexRequested.connect(self._rebuild_local_peak_index)
+        self.database_panel.auditLocalCompositionRequested.connect(self._audit_local_phase_cache_composition)
         self.database_panel.clearUserLibraryRequested.connect(self._clear_user_phase_library)
         self.database_panel.indexCodFolderRequested.connect(self._index_cod_cif_folder)
         self.database_panel.indexCodZipRequested.connect(self._index_cod_zip_archive)
@@ -83,7 +86,7 @@ class PhaseFinderDatabaseActionsMixin:
     def _show_database_settings_window(self) -> None:
         dialog = getattr(self, "_database_settings_dialog", None)
         if dialog is None:
-            dialog = QDialog(self)
+            dialog = ScreenBoundDialog(self)
             dialog.setWindowTitle("Database settings")
             dialog.setMinimumSize(760, 620)
             dialog.resize(820, 720)
@@ -182,7 +185,7 @@ class PhaseFinderDatabaseActionsMixin:
             count = int(result or 0)
             self._refresh_database_rows()
             self._refresh_user_phase_library_window()
-            QMessageBox.information(self, "Build local index", f"Indexed {count} saved CIF files.")
+            QMessageBox.information(self, "Build local index", f"Indexed {count} saved CIF files.\nRun search again to refresh displayed candidates.")
 
         self._run_background_task(
             "Build local index",
@@ -195,7 +198,7 @@ class PhaseFinderDatabaseActionsMixin:
     def _show_user_phase_library_window(self) -> None:
         dialog = getattr(self, "_user_phase_library_dialog", None)
         if dialog is None:
-            dialog = QDialog(self)
+            dialog = ScreenBoundDialog(self)
             dialog.setWindowTitle("User phase library")
             dialog.setMinimumWidth(480)
             layout = QVBoxLayout(dialog)
@@ -320,6 +323,25 @@ class PhaseFinderDatabaseActionsMixin:
         self._refresh_database_rows()
         QMessageBox.information(self, f"Import {title}", f"Imported {count} new cached phase(s).")
 
+    def _audit_local_phase_cache_composition(self) -> None:
+        def success(reports):
+            needs=sum(report.needs_reindex for report in reports)
+            warnings=sum(bool(report.warning) for report in reports)
+            unavailable=sum(report.status=='unavailable' for report in reports)
+            details='\n'.join(f'{report.source} {report.entry_id}: {report.warning}'
+                for report in [item for item in reports if item.warning][:5])
+            message=(f'Checked {len(reports)} saved CIFs: {needs} need reindex, '
+                     f'{warnings} have warnings, {unavailable} could not be checked.\n'
+                     'This check did not change the database.\n'
+                     'Use Recalculate CIF patterns to rebuild old records, then run search again.')
+            if details:
+                message+='\n\n'+details
+            QMessageBox.information(self,'CIF composition check',message)
+        self._run_background_task('CIF composition check','Checking saved CIF compositions...',
+            lambda progress:self.local_phase_cache.audit_compositions(progress=progress),success,
+            lambda message,details:QMessageBox.warning(self,'CIF composition check failed',message or details),
+            with_progress=True,show_progress_dialog=True)
+
     def _rebuild_local_peak_index(self) -> None:
         def success(result) -> None:
             count = int(result or 0)
@@ -327,7 +349,7 @@ class PhaseFinderDatabaseActionsMixin:
             QMessageBox.information(
                 self,
                 "Recalculate CIF patterns",
-                f"Recalculated and indexed {count} saved CIF files.",
+                f"Recalculated and indexed {count} saved CIF files.\nRun search again to refresh displayed candidates.",
             )
 
         self._run_background_task(

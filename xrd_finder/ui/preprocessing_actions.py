@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 import hashlib
+import math
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QMessageBox, QWidget
 from scipy.signal import find_peaks
 
 from xrd_finder.services.preprocessing_service import (
@@ -17,6 +18,9 @@ from xrd_finder.services.preprocessing_service import (
     restore_amorphous_contribution,
 )
 from xrd_finder.services.background_model_selection import BackgroundModelSelection, select_background_model
+from xrd_finder.services.preprocessing_history import (
+    capture_processing,restore_processing,remember_processing,reset_processing,
+)
 from xrd_finder.ui.observed_patterns import observed_pattern_data
 from xrd_finder.ui.preprocessing_dialogs import BackgroundRemovalPanel, SmoothPanel, XrdCropPanel
 from xrd_finder.ui.theme import preprocessing_panel_style
@@ -102,8 +106,142 @@ def _expand_sampled_signal(
 
 
 class PhaseFinderPreprocessingActionsMixin:
+    def _pattern_zero_shift_deg(self, pattern_id: str) -> float:
+        state = self.profile_states.get(pattern_id, {})
+        value = state.get("zero_shift_auto_deg")
+        if value is None:
+            value = state.get("result_snapshot", {}).get("fit", {}).get("zero_shift_deg", 0.)
+        value = float(value)
+        return value if math.isfinite(value) else 0.
+
+    def _pattern_display_zero_shift_deg(self, pattern_id: str) -> float:
+        extra = self.profile_states.get(pattern_id, {}).get("zero_shift_visual_deg")
+        return self._pattern_zero_shift_deg(pattern_id) + (float(extra) if extra is not None else 0.)
+
+    def _record_pattern_zero_shift(self, pattern, result) -> None:
+        state = self.profile_states.setdefault(pattern.id, {})
+        state["zero_shift_auto_deg"] = float(result.global_zero_shift)
+        widths = [float(peak.fwhm) for peak in getattr(result, "observed_peaks", ())
+                  if math.isfinite(float(peak.fwhm)) and float(peak.fwhm) > 0.]
+        state["zero_shift_observed_width_deg"] = float(np.median(widths)) if len(widths) >= 3 else None
+        if pattern.id == self._current_profile_pattern_id():
+            self._sync_zero_shift_controls()
+
+    def _zero_shift_warning_text(self, pattern_id: str) -> str:
+        shift = self._pattern_zero_shift_deg(pattern_id)
+        if abs(shift) <= 0.5:
+            return ""
+        return (f"Zero correction {shift:+.3f} deg exceeds 0.500 deg in magnitude. "
+                "Check the phase alignment and instrument calibration. "
+                "The correction has not been clipped.")
+
+    def _warn_large_zero_shift(self) -> None:
+        pattern = self._active_pattern()
+        if pattern is None:
+            return
+        text = self._zero_shift_warning_text(pattern.id)
+        if not text:
+            return
+        key = (pattern.id, self._instrument_profile_for_pattern(pattern).calculation_key())
+        warned = getattr(self, "_zero_shift_warned_patterns", set())
+        if key in warned:
+            return
+        warned.add(key)
+        self._zero_shift_warned_patterns = warned
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setWindowTitle("Check zero correction")
+        message.setText(text)
+        message.setStandardButtons(QMessageBox.StandardButton.Ok)
+        message.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        message.show()
+
+    def _sync_zero_shift_controls(self) -> None:
+        pattern = self._active_pattern()
+        action_bar = self.finder_action_bar
+        check = self.finder_plot_control_bar.correct_zero_checkbox
+        controls = (action_bar.zero_shift_value, check)
+        blocked = [control.blockSignals(True) for control in controls]
+        try:
+            state = self.profile_states.get(pattern.id, {}) if pattern is not None else {}
+            action_bar.zero_shift_refined_value.setText(
+                f"{self._pattern_zero_shift_deg(pattern.id):.6f}" if pattern else "-")
+            action_bar.zero_shift_refined_value.setEnabled(pattern is not None)
+            warning = self._zero_shift_warning_text(pattern.id) if pattern else ""
+            action_bar.zero_shift_warning_label.setText(warning)
+            action_bar.zero_shift_warning_label.setVisible(bool(warning))
+            action_bar.zero_shift_refined_value.setToolTip(warning or "Scan-zero displacement from the current refinement")
+            action_bar.zero_shift_value.setValue(float(state.get("zero_shift_visual_deg") or 0.))
+            check.setChecked(bool(state.get("correct_zero", False)))
+            for control in controls:
+                control.setEnabled(pattern is not None)
+        finally:
+            for control, previous in zip(controls, blocked):
+                control.blockSignals(previous)
+
+    def _set_manual_zero_shift(self, value: float | None) -> None:
+        pattern = self._active_pattern()
+        if pattern is None:
+            return
+        value = float(value) if value is not None else 0.
+        if not math.isfinite(value):
+            raise ValueError("Manual zero shift must be finite")
+        state = self.profile_states.setdefault(pattern.id, {})
+        if float(state.get("zero_shift_visual_deg") or 0.) == value:
+            self._sync_zero_shift_controls()
+            return
+        state["zero_shift_visual_deg"] = value
+        self.analysis_preview_paths.pop(pattern.id, None)
+        self._sync_zero_shift_controls()
+        self._apply_zero_shift_display()
+        self._refresh_multi_pattern_legends()
+        self.project.touch()
+        self.project_changed.emit()
+
+    def _set_zero_correction_visible(self, enabled: bool) -> None:
+        pattern = self._active_pattern()
+        if pattern is None:
+            return
+        self.profile_states.setdefault(pattern.id, {})["correct_zero"] = bool(enabled)
+        self.analysis_preview_paths.pop(pattern.id, None)
+        self._apply_zero_shift_display()
+        self._refresh_multi_pattern_legends()
+        self.project.touch()
+        self.project_changed.emit()
+
+    def _apply_zero_shift_display(self) -> None:
+        # A translation at the canvas boundary keeps fitting arrays, marker
+        # interpolation and stored data on their original, common scan grid.
+        seen = set()
+        for layer, items in self.plot_layers.items():
+            if layer in {"pattern_legends", "legend_info"}:
+                continue
+            for item in items:
+                if id(item) in seen:
+                    continue
+                seen.add(id(item))
+                pattern_id = getattr(item, "_xrd_pattern_id", "")
+                if not pattern_id:
+                    continue
+                state = self.profile_states.get(pattern_id, {})
+                shift = self._pattern_zero_shift_deg(pattern_id) if state.get("correct_zero", False) else 0.
+                # Only experimental layers receive the independent visual trim.
+                # Calculated geometry and all analysis results stay unchanged.
+                if state.get("correct_zero", False) and layer in {
+                    "observed", "background", "amorphous", "coverage_markers", "unknown_peaks", "peak_labels", "search_peak_selection"
+                }:
+                    shift = self._pattern_display_zero_shift_deg(pattern_id)
+                previous = float(getattr(item, "_finder_zero_display_shift", 0.))
+                if previous != shift:
+                    item.setPos(item.pos().x() + previous - shift, item.pos().y())
+                    item._finder_zero_display_shift = shift
+
     def _close_preprocessing_panel(self) -> None:
         panel = getattr(self, "_preprocessing_panel", None)
+        timer = getattr(panel, '_preview_timer', None)
+        if timer is not None:
+            timer.stop()
+        self._preprocessing_cancel_callback = None
         action_bar = getattr(self, "finder_action_bar", None)
         close_embedded = getattr(action_bar, "close_preprocessing_panel", None)
         if callable(close_embedded):
@@ -117,6 +255,40 @@ class PhaseFinderPreprocessingActionsMixin:
         self._preprocessing_panel = None
         self._preprocessing_panel_key = None
 
+    def _prepare_preprocessing_panel(self,key) -> bool:
+        if getattr(self._active_pattern(), 'input_kind', '') == 'peak_list':
+            QMessageBox.information(self, 'Processing', 'This is a manual peak list, not a measured profile. Edit its peaks through Peaks → Add peak.')
+            return False
+        if getattr(self,'_preprocessing_panel',None) is not None:
+            active=self._active_pattern()
+            if (getattr(self,'_preprocessing_panel_key',None)==key
+                    and getattr(self,'_preprocessing_panel_pattern_id',None)==getattr(active,'id',None)):
+                return False
+            cancel=getattr(self,'_preprocessing_cancel_callback',None)
+            self._close_preprocessing_panel()
+            if cancel is not None:
+                cancel()
+        return True
+
+    def _refresh_preprocessing_state(self,pattern,*,modified=False) -> None:
+        if modified:
+            self.project.touch()
+            self.project_changed.emit()
+        if hasattr(self,'_set_scoring_source_status'):
+            self._set_scoring_source_status('Visible' if pattern.processed_points else 'Auto')
+        if hasattr(self,'_auto_scoring_cache'):
+            self._auto_scoring_cache.clear()
+        self._clear_probability_caches()
+        if hasattr(self,'_invalidate_match_profile_cache'):
+            self._invalidate_match_profile_cache(pattern.id)
+        self._refresh_observed_pattern_plot()
+        self._rerun_active_calculation()
+
+    def _reset_preprocessing_step(self,pattern,kind,opening_state) -> None:
+        restore_processing(pattern,opening_state)
+        modified=reset_processing(pattern,kind)
+        self._refresh_preprocessing_state(pattern,modified=modified)
+
     def _show_preprocessing_panel(
         self,
         key: str,
@@ -126,6 +298,7 @@ class PhaseFinderPreprocessingActionsMixin:
         cancel_callback,
         subtract_callback=None,
         apply_callback=None,
+        reset_callback=None,
     ) -> None:
         if getattr(self, "_preprocessing_panel", None) is not None:
             if getattr(self, "_preprocessing_panel_key", None) == key:
@@ -141,7 +314,15 @@ class PhaseFinderPreprocessingActionsMixin:
         panel.setAutoFillBackground(True)
         panel.setStyleSheet(preprocessing_panel_style(self._is_dark_theme()))
 
+        pattern_id=getattr(self._active_pattern(),'id',None)
+
+        def current_pattern() -> bool:
+            return key=='xrd_crop' or getattr(self._active_pattern(),'id',None)==pattern_id
+
         def accept_panel() -> None:
+            if not current_pattern():
+                cancel_panel()
+                return
             (apply_callback or preview_callback)()
             self._close_preprocessing_panel()
 
@@ -149,13 +330,23 @@ class PhaseFinderPreprocessingActionsMixin:
             cancel_callback()
             self._close_preprocessing_panel()
 
-        panel.previewRequested.connect(preview_callback)
+        panel.previewRequested.connect(lambda:preview_callback() if current_pattern() else None)
         panel.applyRequested.connect(accept_panel)
         if subtract_callback is not None and hasattr(panel, "subtractRequested"):
             panel.subtractRequested.connect(lambda: (subtract_callback(), self._close_preprocessing_panel()))
         panel.cancelRequested.connect(cancel_panel)
+        if reset_callback is not None:
+            def reset_panel() -> None:
+                if not current_pattern():
+                    cancel_panel()
+                    return
+                self._close_preprocessing_panel()
+                reset_callback()
+            panel.resetRequested.connect(reset_panel)
         self._preprocessing_panel = panel
         self._preprocessing_panel_key = key
+        self._preprocessing_panel_pattern_id = pattern_id
+        self._preprocessing_cancel_callback = cancel_callback
         if callable(embedded_host):
             title = {
                 "smooth": "Smoothing",
@@ -173,6 +364,8 @@ class PhaseFinderPreprocessingActionsMixin:
         panel.show()
 
     def _smooth_active_pattern_plot(self) -> None:
+        if not PhaseFinderPreprocessingActionsMixin._prepare_preprocessing_panel(self,'smooth'):
+            return
         data = self._active_processed_observed_data()
         if data is None:
             data = self._active_observed_data()
@@ -183,9 +376,7 @@ class PhaseFinderPreprocessingActionsMixin:
         pattern = self._active_pattern()
         if pattern is None:
             return
-        original_processed_points = [list(point) for point in pattern.processed_points]
-        original_processed_label = pattern.processed_label
-        original_background_removed = pattern.processed_background_removed
+        opening_state = capture_processing(pattern)
         source_label = pattern.processed_label or "Observed"
         analysis_x, analysis_y = _preprocessing_analysis_sample(x, y)
         sampled_plan = auto_smoothing_plan(analysis_x, analysis_y)
@@ -205,6 +396,7 @@ class PhaseFinderPreprocessingActionsMixin:
 
         def apply_smoothing() -> None:
             smooth_y, label = smoothed_curve()
+            remember_processing(pattern,'smooth',opening_state)
             self._set_preprocessed_observed_curve(
                 x,
                 smooth_y,
@@ -213,14 +405,8 @@ class PhaseFinderPreprocessingActionsMixin:
             )
 
         def cancel_smoothing() -> None:
-            pattern.processed_points = original_processed_points
-            pattern.processed_label = original_processed_label
-            pattern.processed_background_removed = original_background_removed
-            self._clear_probability_caches()
-            if hasattr(self, "_invalidate_match_profile_cache"):
-                self._invalidate_match_profile_cache(pattern.id if pattern is not None else None)
-            self._refresh_observed_pattern_plot()
-            self._rerun_active_calculation()
+            restore_processing(pattern,opening_state)
+            self._refresh_preprocessing_state(pattern)
 
         self._show_preprocessing_panel(
             "smooth",
@@ -229,8 +415,11 @@ class PhaseFinderPreprocessingActionsMixin:
             preview_smoothing,
             cancel_smoothing,
             apply_callback=apply_smoothing,
+            reset_callback=lambda:self._reset_preprocessing_step(pattern,'smooth',opening_state),
         )
     def _subtract_active_background_plot(self) -> None:
+        if not PhaseFinderPreprocessingActionsMixin._prepare_preprocessing_panel(self,'background'):
+            return
         data = self._active_processed_observed_data()
         if data is None:
             data = self._active_observed_data()
@@ -241,11 +430,7 @@ class PhaseFinderPreprocessingActionsMixin:
         pattern = self._active_pattern()
         if pattern is None:
             return
-        original_processed_points = [list(point) for point in pattern.processed_points]
-        original_processed_label = pattern.processed_label
-        original_background_removed = pattern.processed_background_removed
-        original_background_points = [list(point) for point in pattern.estimated_background_points]
-        original_background_with_halo_points = [list(point) for point in pattern.estimated_background_with_halo_points]
+        opening_state = capture_processing(pattern)
         source_label = pattern.processed_label or "Observed"
         analysis_x, analysis_y = _preprocessing_analysis_sample(x, y)
         sampled_background_fit_y = self._background_estimation_signal(pattern, analysis_x, analysis_y)
@@ -357,6 +542,7 @@ class PhaseFinderPreprocessingActionsMixin:
             save_background_panel_state()
             background, combined = estimate_components(exact=True)
             corrected, displayed_total, processed_label = processed_background_result(background, combined)
+            remember_processing(pattern,'background',opening_state)
             pattern.estimated_background_points = (
                 np.column_stack([x, background]).astype(float).tolist() if panel.estimate_background() else []
             )
@@ -371,16 +557,8 @@ class PhaseFinderPreprocessingActionsMixin:
             )
 
         def cancel_background_removal() -> None:
-            pattern.processed_points = original_processed_points
-            pattern.processed_label = original_processed_label
-            pattern.processed_background_removed = original_background_removed
-            pattern.estimated_background_points = original_background_points
-            pattern.estimated_background_with_halo_points = original_background_with_halo_points
-            self._clear_probability_caches()
-            if hasattr(self, "_invalidate_match_profile_cache"):
-                self._invalidate_match_profile_cache(pattern.id if pattern is not None else None)
-            self._refresh_observed_pattern_plot()
-            self._rerun_active_calculation()
+            restore_processing(pattern,opening_state)
+            self._refresh_preprocessing_state(pattern)
 
         preview_background_components()
         self._show_preprocessing_panel(
@@ -391,6 +569,7 @@ class PhaseFinderPreprocessingActionsMixin:
             cancel_background_removal,
             apply_background_components,
             apply_callback=apply_background_components,
+            reset_callback=lambda:self._reset_preprocessing_step(pattern,'background',opening_state),
         )
 
     def _background_estimation_signal(self, pattern, x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -465,6 +644,8 @@ class PhaseFinderPreprocessingActionsMixin:
         return max(1.4826 * mad / np.sqrt(2.0), 1.0)
 
     def _crop_xrd_patterns_plot(self) -> None:
+        if not self._prepare_preprocessing_panel('xrd_crop'):
+            return
         patterns = []
         ranges_by_pattern = {}
         for pattern in self.project.patterns:
@@ -515,6 +696,10 @@ class PhaseFinderPreprocessingActionsMixin:
         )
 
     def _reset_observed_preprocessing(self) -> None:
+        cancel=getattr(self,'_preprocessing_cancel_callback',None)
+        self._close_preprocessing_panel()
+        if cancel is not None:
+            cancel()
         pattern = self._active_pattern()
         if pattern is not None:
             pattern.processed_points.clear()
@@ -523,6 +708,8 @@ class PhaseFinderPreprocessingActionsMixin:
             pattern.estimated_background_points.clear()
             pattern.estimated_background_with_halo_points.clear()
             pattern.crop_ranges.clear()
+            pattern.preprocessing_history.clear()
+            pattern.angle_calibration_deg = 0.
             self.project.touch()
             self.project_changed.emit()
         if hasattr(self, "_set_scoring_source_status"):

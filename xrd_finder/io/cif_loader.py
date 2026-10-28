@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 import cristma
+from xrd_finder.io.native_cif_session import read_native_cif
 from cristma.chemistry.composition import Composition
 from cristma.symmetry.affine import format_xyz_operation
 
@@ -169,7 +170,7 @@ def _cif_symops(block) -> list[str]:
         op = _cif_value(block, tag).replace(" ", "")
         if op:
             return [op]
-    return ["x,y,z"]
+    return []
 
 
 def _cif_value(block, *tags: str) -> str:
@@ -373,7 +374,7 @@ def _fallback_metadata(text: str, values: dict[str, str]) -> dict[str, str]:
 
 
 def _read_structure_from_cif(path: Path) -> Structure:
-    read_result = cristma.read(path, format="cif")
+    read_result = read_native_cif(path)
     if len(read_result.structures) == 0:
         raise ValueError("CIF does not contain a mapped crystal structure")
     crystal = read_result.structures.primary or read_result.structures[0]
@@ -441,15 +442,17 @@ def _read_structure_from_cif(path: Path) -> Structure:
         volume=float(crystal.cell.volume),
     )
     structure.atoms = _cristma_atoms(crystal) or (_cif_atoms(block) if block is not None else [])
-    if block is not None:
-        structure.symops = _cif_symops(block)
-    elif getattr(crystal, "space_group", None) is not None:
-        structure.symops = [
-            format_xyz_operation(operation).replace(" ", "")
-            for operation in getattr(crystal.space_group, "operations", ())
-        ] or ["x,y,z"]
-    else:
-        structure.symops = ["x,y,z"]
+    structure.symops = _cif_symops(block) if block is not None else []
+    if not structure.symops:
+        # Use the same setting/basis resolver as the diffraction calculation.
+        # A missing explicit loop does not imply a P1 asymmetric unit.
+        from xrd_finder.services.cristma_powder_adapter import CristmaPowderAdapter, CristmaPowderError
+        try:
+            canonical, _setting = CristmaPowderAdapter._structure_and_setting(path, read_result=read_result)
+            structure.symops = [format_xyz_operation(op).replace(" ", "")
+                                for op in canonical.space_group.operations]
+        except CristmaPowderError:
+            structure.metadata["quantification_symmetry_unresolved"] = "true"
     structure.atom_count = len(structure.atoms)
     return structure
 

@@ -10,15 +10,15 @@
 
 **[Explore the interactive presentation and live guide →](https://abkuznetsov.github.io/XRD_Analysis_Toolkit/)**
 
-The nine horizontal slides introduce capabilities, data sources, libraries, installation, updates and offline mode. Open the presentation in the expanded window, then follow the embedded Finder guide using a real CaWO4 measurement. Candidate scores and fitted curves in the tutorial are illustrative. The editable [SPICY source](docs/XRD_Phase_Finder.spicy) is included; the HTML presentation is exported with [SPICY SLIDES](https://abkuznetsov.github.io/SPICY/).
+The nine horizontal slides introduce capabilities, data sources, libraries, installation, updates and offline mode. Open the presentation in the expanded window, then follow the embedded Finder guide using a real CaWO4 measurement. Candidate scores and fitted curves in the tutorial are illustrative. The HTML presentation is exported with [SPICY SLIDES](https://abkuznetsov.github.io/SPICY/).
 
 ## Download
 
-- [Windows installer: XRD_Phase_Finder_Setup_v1_6_6.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.6/XRD_Phase_Finder_Setup_v1_6_6.exe)
-- [macOS package: XRD_Phase_Finder_macOS_1.6.6.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.6/XRD_Phase_Finder_macOS_1.6.6.pkg)
+- [Windows installer (1.6.7): XRD_Phase_Finder_Setup_v1_6_7.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_Setup_v1_6_7.exe)
+- [macOS package (1.6.6): XRD_Phase_Finder_macOS_1.6.6.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.6/XRD_Phase_Finder_macOS_1.6.6.pkg)
 - [Ubuntu / Debian package (1.6.4): XRD_Phase_Finder_1.6.4_amd64.deb](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.4/XRD_Phase_Finder_1.6.4_amd64.deb)
 
-The current Windows and macOS installers are on the [XRD Phase Finder 1.6.6 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.6). The Linux package above remains at 1.6.4 until rebuilt.
+The current Windows installer is on the [XRD Phase Finder 1.6.7 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7). The macOS package remains at 1.6.6 and the Linux package at 1.6.4 until rebuilt.
 
 ## Main window
 
@@ -43,7 +43,7 @@ The project tree (A) contains imported patterns and structures. The toolbar (B) 
 
 ### Windows
 
-Download and run `XRD_Phase_Finder_Setup_v1_6_6.exe`. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
+Download and run `XRD_Phase_Finder_Setup_v1_6_7.exe`. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
 
 On first launch, the launcher checks the per-user scientific Python runtime and offers to install or repair missing packages. User projects, settings and database caches are stored in the user profile.
 
@@ -102,6 +102,14 @@ run_finder.bat
 ```
 
 Command-line entry points are also provided as `run_finder_cli.bat`, `run_finder_cli.sh` and `run_finder_cli.command`.
+
+The CLI uses the built-in Cu K-alpha instrument profile by default:
+
+```bash
+python -m xrd_finder.apps.finder_cli pattern.txt --cif phase.cif --output result.json
+```
+
+Use `--wavelength 0.7093` for a monochromatic wavelength in angstroms, or `--instrument-profile instrument.json` for a calibrated profile saved with the instrument dialog's **Export** button. These two options are mutually exclusive. Supply each additional structure with another `--cif` option.
 
 ## License
 

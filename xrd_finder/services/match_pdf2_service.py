@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from concurrent.futures import CancelledError
+from contextlib import closing
 import mmap
 import os
 from pathlib import Path
@@ -44,7 +46,7 @@ class MatchPdf2Peak:
 
 
 class MatchPdf2Service:
-    def __init__(self, root: str | Path | None = None) -> None:
+    def __init__(self, root: str | Path | None = None, *, initialize_index: bool = True) -> None:
         env_root = os.environ.get(MATCH_PDF2_ENV)
         self.root = Path(root or env_root or DEFAULT_MATCH_PDF2_ROOT)
         self.summary_path = self.root / "summary.dat"
@@ -55,7 +57,8 @@ class MatchPdf2Service:
         self._details_cache: dict[str, dict[str, object]] = {}
         self._card_offsets: dict[str, tuple[int, str]] | None = None
         self._lock = threading.RLock()
-        self._ensure_schema()
+        if initialize_index:
+            self._ensure_schema()
 
     def status(self) -> MatchPdf2Status:
         if not self.summary_path.exists():
@@ -94,15 +97,17 @@ class MatchPdf2Service:
         elements: list[str] | None = None,
         excluded_elements: list[str] | None = None,
         limit: int = 100,
+        *, cancelled=None,
     ) -> list[MatchPdf2Entry]:
+        self._check_cancelled(cancelled)
         if not self.summary_path.exists():
             return []
         required = {element.strip() for element in elements or [] if element.strip()}
         excluded = {element.strip() for element in excluded_elements or [] if element.strip()}
         query = text.strip().lower()
         if not self._index_is_fresh():
-            self._load_entries()
-        return self._search_index(query, required, excluded, limit)
+            self._load_entries(cancelled=cancelled)
+        return self._search_index(query, required, excluded, limit, cancelled=cancelled)
 
     def diffraction_peaks(self, entry_id: str, limit: int = 250) -> list[MatchPdf2Peak]:
         if not self.pdf2_path.exists():
@@ -143,12 +148,23 @@ class MatchPdf2Service:
         details = self.card_details(entry_id)
         return bool(details.get("cell") or details.get("space_group") or details.get("space_group_number"))
 
-    def _load_entries(self) -> list[MatchPdf2Entry]:
-        with self._lock:
+    @staticmethod
+    def _check_cancelled(cancelled):
+        if cancelled is not None and cancelled():
+            raise CancelledError('PDF-2 search cancelled')
+
+    def _load_entries(self, *, cancelled=None) -> list[MatchPdf2Entry]:
+        while not self._lock.acquire(timeout=.05):
+            self._check_cancelled(cancelled)
+        try:
+            self._check_cancelled(cancelled)
             if self._entries is None:
-                self._entries = self._read_summary()
-                self._replace_index(self._entries)
+                entries=self._read_summary(cancelled=cancelled)
+                self._replace_index(entries,cancelled=cancelled)
+                self._entries=entries
             return self._entries
+        finally:
+            self._lock.release()
 
     def short_entry_id(self, entry_id: str) -> str:
         match = re.match(r"\d{2}-(\d{3})-(\d{4})$", entry_id or "")
@@ -280,9 +296,10 @@ class MatchPdf2Service:
                 return cell
         return None
 
-    def _read_summary(self) -> list[MatchPdf2Entry]:
+    def _read_summary(self, *, cancelled=None) -> list[MatchPdf2Entry]:
         entries = []
         for raw in self.summary_path.read_bytes().split(b"\x00"):
+            self._check_cancelled(cancelled)
             text = raw.decode("latin1", errors="ignore").strip()
             if not text:
                 continue
@@ -302,7 +319,7 @@ class MatchPdf2Service:
         summary_path, summary_mtime, summary_size = self._summary_signature()
         if summary_mtime <= 0:
             return False
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             row = connection.execute(
                 """
                 select count(*) as count
@@ -315,7 +332,7 @@ class MatchPdf2Service:
 
     def _indexed_count(self) -> int:
         summary_path, summary_mtime, summary_size = self._summary_signature()
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             row = connection.execute(
                 """
                 select count(*) as count
@@ -326,11 +343,16 @@ class MatchPdf2Service:
             ).fetchone()
         return int(row["count"] if row else 0)
 
-    def _replace_index(self, entries: list[MatchPdf2Entry]) -> None:
+    def _replace_index(self, entries: list[MatchPdf2Entry], *, cancelled=None) -> None:
         summary_path, summary_mtime, summary_size = self._summary_signature()
         if summary_mtime <= 0:
             return
-        rows = [
+        def checked_entries():
+            for entry in entries:
+                self._check_cancelled(cancelled)
+                yield entry
+
+        rows = (
             (
                 entry.entry_id,
                 self.short_entry_id(entry.entry_id),
@@ -344,11 +366,11 @@ class MatchPdf2Service:
                 summary_size,
                 time.time(),
             )
-            for entry in entries
-        ]
-        with self._connect() as connection:
+            for entry in checked_entries()
+        )
+        with closing(self._connect()) as connection, connection:
             connection.execute("delete from pdf2_entries where summary_path = ?", (summary_path,))
-            if rows:
+            if entries:
                 connection.executemany(
                     """
                     insert or replace into pdf2_entries(
@@ -361,7 +383,7 @@ class MatchPdf2Service:
 
     def _clear_index_for_current_summary(self) -> None:
         summary_path, _summary_mtime, _summary_size = self._summary_signature()
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute("delete from pdf2_entries where summary_path = ?", (summary_path,))
 
     def _search_index(
@@ -370,6 +392,7 @@ class MatchPdf2Service:
         required: set[str],
         excluded: set[str],
         limit: int,
+        *, cancelled=None,
     ) -> list[MatchPdf2Entry]:
         summary_path, summary_mtime, summary_size = self._summary_signature()
         where = ["summary_path = ?", "summary_mtime = ?", "summary_size = ?"]
@@ -392,17 +415,27 @@ class MatchPdf2Service:
                 ")"
             )
             params.extend([like_text, like_text, like_text, like_text, like_text])
-        with self._connect() as connection:
-            rows = connection.execute(
-                f"""
-                select entry_id, formula, name, chemical_name, quality
-                from pdf2_entries
-                where {" and ".join(where)}
-                order by updated_at desc
-                limit ?
-                """,
-                (*params, max(int(limit), 1)),
-            ).fetchall()
+        self._check_cancelled(cancelled)
+        with closing(self._connect()) as connection, connection:
+            connection.set_progress_handler(lambda: int(cancelled is not None and cancelled()),5000)
+            try:
+                rows = connection.execute(
+                    f"""
+                    select entry_id, formula, name, chemical_name, quality
+                    from pdf2_entries
+                    where {" and ".join(where)}
+                    order by updated_at desc
+                    limit ?
+                    """,
+                    (*params, max(int(limit), 1)),
+                ).fetchall()
+            except sqlite3.OperationalError as error:
+                if cancelled is not None and cancelled():
+                    raise CancelledError('PDF-2 search cancelled') from error
+                raise
+            finally:
+                connection.set_progress_handler(None,0)
+        self._check_cancelled(cancelled)
         return [
             MatchPdf2Entry(
                 entry_id=row["entry_id"],
@@ -415,7 +448,7 @@ class MatchPdf2Service:
         ]
 
     def _ensure_schema(self) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 create table if not exists pdf2_entries (

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 
 import numpy as np
+from scipy.optimize import least_squares
 from scipy.signal import find_peaks, peak_prominences, peak_widths, savgol_filter
 
 from xrd_finder.instrument.models import InstrumentProfile
 from xrd_finder.instrument.resolution import cristma_tch_profile
-from xrd_finder.finder.residual_peak_refinement import refine_residual_peak
+from xrd_finder.finder.residual_peak_refinement import (
+    pseudo_voigt_unit_height, refine_residual_peak,
+)
 from xrd_finder.services.profile_matched_peak_detector import (
     is_broad_rescue_candidate,
+    is_narrow_rescue_candidate,
     profile_matched_peak_hypotheses,
 )
 
@@ -48,6 +52,8 @@ class ObservedLineRecord:
     delta_chi2: float = 0.0
     width_persistence: int = 0
     evidence_class: str = ""
+    # Preserve the detected maximum when a later local fit moves its center.
+    seed_two_theta: float | None = None
 
     def __iter__(self):
         yield self.two_theta
@@ -91,7 +97,11 @@ def observed_peak_records(
     distance_scale: float = 1.0,
     instrument_profile: InstrumentProfile | None = None,
     sigma_threshold: float = 3.0,
+    refine_peak=None,
+    residual: bool = False,
+    global_zero_shift: float = 0.0,
 ) -> list[ObservedLineRecord]:
+    """Measure input peaks compatibly; opt into additive measurement for residuals."""
     y = np.asarray(corrected_y, dtype=float)
     x_values = np.asarray(x, dtype=float)
     if len(y) < 5 or float(np.nanmax(y)) <= 0:
@@ -115,54 +125,40 @@ def observed_peak_records(
             instrument_width = instrument_fwhm_at(
                 instrument_profile, hypothesis.position
             )
-            fitted = refine_residual_peak(
-                x_values,
-                y,
-                hypothesis.position,
-                expected_fwhm=hypothesis.effective_fwhm,
-                instrument_fwhm=instrument_width,
-                satellite_offsets_weights=radiation_satellites_at(
-                    instrument_profile, hypothesis.position
-                ),
+            sample_fwhm, instrument_limited = _sample_fwhm(
+                hypothesis.effective_fwhm, instrument_width,
             )
-            use_fit = bool(
-                fitted is not None
-                and fitted.fit_quality >= 0.20
-                and fitted.height > 0.0
-            )
-            position = fitted.two_theta if use_fit else hypothesis.position
-            area = fitted.area if use_fit else hypothesis.area
-            observed_fwhm = (
-                fitted.fwhm_observed if use_fit else hypothesis.effective_fwhm
-            )
-            height = fitted.height if use_fit else hypothesis.amplitude
-            prominence = fitted.prominence if use_fit else hypothesis.amplitude
-            if use_fit:
-                sample_fwhm = fitted.fwhm_sample
-                instrument_limited = fitted.instrument_limited
-            else:
-                sample_fwhm, instrument_limited = _sample_fwhm(
-                    observed_fwhm,
-                    instrument_width,
+            fitted = None
+            if not residual:
+                # Keep the established input measurements used for accepted
+                # phase fitting. Missing bank candidates are checked separately
+                # below, including a physical-width fit for narrow rescue.
+                fitted = (refine_peak or refine_residual_peak)(
+                    x_values, y, hypothesis.position,
+                    expected_fwhm=hypothesis.effective_fwhm,
+                    instrument_fwhm=instrument_width,
+                    satellite_offsets_weights=radiation_satellites_at(instrument_profile, hypothesis.position),
+                    constrain_center=False,
+                    enforce_instrument_floor=False,
                 )
+            use_fit = fitted is not None and fitted.fit_quality >= 0.20 and fitted.height > 0.0
+            if use_fit:
+                sample_fwhm, instrument_limited = fitted.fwhm_sample, fitted.instrument_limited
             matched_records.append(
                 ObservedLineRecord(
-                    two_theta=position,
-                    area=area,
-                    fwhm=observed_fwhm,
-                    height=height,
-                    prominence=prominence,
+                    two_theta=fitted.two_theta if use_fit else hypothesis.position,
+                    area=fitted.area if use_fit else hypothesis.area,
+                    fwhm=fitted.fwhm_observed if use_fit else hypothesis.effective_fwhm,
+                    height=fitted.height if use_fit else hypothesis.amplitude,
+                    prominence=fitted.prominence if use_fit else (hypothesis.prominence if residual else hypothesis.amplitude),
                     area_positive=hypothesis.area_positive,
                     area_signed=hypothesis.area_signed,
                     area_snr=hypothesis.area_snr,
                     curvature=hypothesis.curvature,
-                    fwhm_observed=observed_fwhm,
+                    fwhm_observed=fitted.fwhm_observed if use_fit else hypothesis.effective_fwhm,
                     fwhm_sample=sample_fwhm,
                     instrument_limited=instrument_limited,
-                    fit_quality=max(
-                        hypothesis.profile_match,
-                        fitted.fit_quality if use_fit else 0.0,
-                    ),
+                    fit_quality=(max(hypothesis.profile_match, fitted.fit_quality if use_fit else 0.0) if not residual else 0.0),
                     asymmetry=fitted.asymmetry if use_fit else 0.0,
                     broadening_scale=hypothesis.broadening_scale,
                     profile_match=hypothesis.profile_match,
@@ -172,6 +168,7 @@ def observed_peak_records(
                     delta_chi2=hypothesis.delta_chi2,
                     width_persistence=hypothesis.width_persistence,
                     evidence_class=hypothesis.evidence_class,
+                    seed_two_theta=hypothesis.position,
                 )
             )
         matched_records.sort(key=lambda item: item.height, reverse=True)
@@ -184,17 +181,38 @@ def observed_peak_records(
         distance_scale=distance_scale,
     )
     if len(peak_indices) == 0:
-        return [
-            record for record in matched_records if is_broad_rescue_candidate(record)
-        ][:limit]
+        records = [rescued for record in matched_records
+            if (rescued := _rescue_profile_peak(x_values, y, record, instrument_profile,
+                residual=residual, sigma_threshold=sigma_threshold)) is not None]
+        if residual:
+            records = _unique_measured_peaks(records)
+            records = _instrument_resolved_records(x_values, records, instrument_profile)
+        return _associate_radiation_peaks(x_values, y, records, instrument_profile,
+            sigma_threshold=sigma_threshold, global_zero_shift=global_zero_shift)[:limit]
     step = _median_step(x_values)
-    peak_indices = _refine_peak_indices_on_raw(x_values, y, peak_indices)
+    detection_prominence_by_raw: dict[int, float] = {}
+    if residual:
+        # Raw coordinate refinement may land on a small wiggle on the top of
+        # a genuine broad feature. Keep the original feature's prominence;
+        # its local height alone can also come from a neighbouring peak flank.
+        detection_prominences = peak_prominences(detection_y, peak_indices)[0]
+        refined_indices = _refine_peak_indices_on_raw(
+            x_values, y, peak_indices, preserve_seed_order=True,
+        )
+        for index, prominence in zip(refined_indices, detection_prominences, strict=True):
+            detection_prominence_by_raw[int(index)] = max(
+                detection_prominence_by_raw.get(int(index), 0.0), float(prominence),
+            )
+        peak_indices = np.asarray(sorted(set(refined_indices)), dtype=int)
+    else:
+        peak_indices = _refine_peak_indices_on_raw(x_values, y, peak_indices)
     prominences = peak_prominences(y, peak_indices)[0]
     width_result = peak_widths(y, peak_indices, rel_height=0.5)
     widths = width_result[0]
     left_ips = width_result[2]
     right_ips = width_result[3]
     records = []
+    seed_widths: dict[float, float] = {}
     global_noise = _robust_noise(y)
     for index, prominence, width, left, right in zip(
         peak_indices,
@@ -214,7 +232,13 @@ def observed_peak_records(
         )
         if local_snr < max(float(sigma_threshold), 0.0):
             continue
-        measured_fwhm = float(np.clip(float(width) * step, 0.05, 0.90))
+        if residual:
+            local_snr = max(
+                float(prominence), detection_prominence_by_raw.get(int(index), 0.0),
+            ) / effective_noise
+        raw_fwhm = max(float(width)*step, 0.0)
+        seed_widths[float(x_values[index])] = raw_fwhm
+        measured_fwhm = float(np.clip(raw_fwhm, 0.05, 0.90))
         sample_fwhm, instrument_limited = _sample_fwhm(
             measured_fwhm,
             instrument_fwhm_at(instrument_profile, float(x_values[index])),
@@ -235,49 +259,291 @@ def observed_peak_records(
                 fwhm_sample=sample_fwhm,
                 instrument_limited=instrument_limited,
                 local_snr=float(local_snr),
+                seed_two_theta=float(x_values[index]),
             )
         )
     records.sort(key=lambda item: item.height, reverse=True)
+    fit_attempts: set[float] = set()
+    if residual and instrument_profile is not None:
+        # Measure primary maxima independently of the optional bank. Bound the
+        # local-fit work by the same 48-line budget used for residual refinement.
+        fit_limit = min(max(int(limit), 0), 48, len(records))
+        fit_attempts = {record.seed_two_theta for record in records[:fit_limit]}
+        records[:fit_limit] = [
+            _refine_measured_peak(x_values, y, record, instrument_profile,
+                seed_fwhm=seed_widths.get(record.seed_two_theta))
+            for record in records[:fit_limit]
+        ]
+    if residual:
+        # Preserve the existing bounded local-fit workset and measurements.
+        # Only eligible primary features can then be corroborated by the bank;
+        # A rejected wiggle needs independent bank evidence and, for narrow
+        # rescue, a successful local fit at a physically allowed width.
+        records = [record for record in records
+                   if record.local_snr >= max(float(sigma_threshold), 0.0)]
+        if instrument_profile is not None:
+            # A failed physical measurement must not occupy the bank feature's
+            # position. Raw widths outside the fit budget are not enough to
+            # reject a weak line: noise can make its half-height width too small.
+            records = _instrument_resolved_records(
+                x_values, records, instrument_profile, seed_widths=seed_widths,
+                fit_attempts=fit_attempts,
+            )
+            records = _unique_measured_peaks(records)
     for matched in matched_records:
-        nearest = min(
-            records,
-            key=lambda item: abs(item.two_theta - matched.two_theta),
-            default=None,
-        )
-        duplicate_tolerance = (
-            max(0.025, min(nearest.fwhm, matched.fwhm) * 0.45)
-            if nearest is not None
-            else 0.0
-        )
-        if nearest is None or abs(nearest.two_theta - matched.two_theta) > duplicate_tolerance:
-            if is_broad_rescue_candidate(matched):
+        nearest = _matching_measured_peak(matched, records)
+        if nearest is None:
+            matched = _rescue_profile_peak(x_values, y, matched, instrument_profile,
+                residual=residual, sigma_threshold=sigma_threshold)
+            if matched is None:
+                continue
+            nearest = _matching_measured_peak(matched, records)
+            if nearest is None:
                 records.append(matched)
-            continue
-        if matched.fit_quality >= nearest.fit_quality:
-            nearest.two_theta = matched.two_theta
-            nearest.area = matched.area
-            nearest.fwhm = matched.fwhm
-            nearest.height = matched.height
-            nearest.prominence = matched.prominence
-            nearest.area_positive = matched.area_positive
-            nearest.area_signed = matched.area_signed
-            nearest.area_snr = matched.area_snr
-            nearest.curvature = matched.curvature
-            nearest.fwhm_observed = matched.fwhm_observed
-            nearest.fwhm_sample = matched.fwhm_sample
-            nearest.instrument_limited = matched.instrument_limited
-            nearest.asymmetry = matched.asymmetry
+                continue
+        if not residual:
+            if matched.fit_quality >= nearest.fit_quality:
+                for field in ('two_theta', 'area', 'fwhm', 'height', 'prominence',
+                              'area_positive', 'area_signed', 'area_snr', 'curvature',
+                              'fwhm_observed', 'fwhm_sample', 'instrument_limited', 'asymmetry'):
+                    setattr(nearest, field, getattr(matched, field))
+            nearest.local_snr = matched.local_snr
+            nearest.fit_quality = max(nearest.fit_quality, matched.fit_quality)
+        # The bank corroborates an existing measurement, rather than changing
+        # its coordinates, intensities, widths or measured noise significance.
+        nearest.curvature = matched.curvature
         nearest.broadening_scale = matched.broadening_scale
         nearest.profile_match = matched.profile_match
-        nearest.local_snr = matched.local_snr
         nearest.confidence = matched.confidence
         nearest.overlap_flag = matched.overlap_flag
         nearest.delta_chi2 = matched.delta_chi2
         nearest.width_persistence = matched.width_persistence
         nearest.evidence_class = matched.evidence_class
-        nearest.fit_quality = max(nearest.fit_quality, matched.fit_quality)
     records.sort(key=lambda item: item.height, reverse=True)
-    return records[:limit]
+    if residual:
+        records = _instrument_resolved_records(x_values, records, instrument_profile,
+            seed_widths=seed_widths, fit_attempts=fit_attempts)
+    return _associate_radiation_peaks(x_values, y, records, instrument_profile,
+        sigma_threshold=sigma_threshold, global_zero_shift=global_zero_shift)[:limit]
+
+
+def _associate_radiation_peaks(
+    x: np.ndarray, signal: np.ndarray, records: list[ObservedLineRecord],
+    instrument: InstrumentProfile | None, *, sigma_threshold: float, global_zero_shift: float = 0.0,
+) -> list[ObservedLineRecord]:
+    """Count a resolved, locally verified spectrum as one powder line.
+
+    Position alone never removes a maximum. Fit the parent lobe while excluding
+    the possible satellite, then check that the signed satellite data agree with
+    the prediction. A significant excess or an ambiguous parent is retained.
+    This measures one local line; no accepted-phase intensities are optimized.
+    """
+    if (instrument is None or instrument.radiation.mode != 'kalpha_doublet'
+            or not math.isfinite(global_zero_shift)):
+        return records
+    removed: set[int] = set()
+    step = _median_step(x)
+    # Process in primary-angle order so an already associated satellite cannot
+    # become the parent of a spurious chain of further satellites.
+    for parent_index in sorted(range(len(records)), key=lambda i: records[i].two_theta):
+        if parent_index in removed:
+            continue
+        parent = records[parent_index]
+        width = max(parent.fwhm, instrument_fwhm_at(instrument, parent.two_theta-global_zero_shift), 2.5*step)
+        for offset, weight in radiation_satellites_at(instrument, parent.two_theta, zero_shift=global_zero_shift):
+            if weight <= 0.0 or abs(offset) < width:
+                continue
+            expected = parent.two_theta+offset
+            allowance = max(2*step, min(width*.25, .06))
+            for satellite_index, satellite in enumerate(records):
+                if satellite_index == parent_index or satellite_index in removed:
+                    continue
+                observed_satellite = satellite.seed_two_theta if satellite.seed_two_theta is not None else satellite.two_theta
+                if abs(observed_satellite-expected) > allowance:
+                    continue
+                # Other resolved maxima make the parent-only prediction
+                # ambiguous. Never reinterpret their structured residual as
+                # increased noise to justify removing the possible satellite.
+                left, right = sorted((parent.two_theta, observed_satellite))
+                if any(left-3*width <= (r.seed_two_theta if r.seed_two_theta is not None else r.two_theta) <= right+3*width
+                       for i,r in enumerate(records) if i not in (parent_index, satellite_index) and i not in removed):
+                    continue
+                if _radiation_pair_explained(x, signal, parent, replace(satellite, two_theta=observed_satellite), instrument,
+                        sigma_threshold=max(float(sigma_threshold), 3.0), global_zero_shift=global_zero_shift):
+                    removed.add(satellite_index)
+    return [record for i, record in enumerate(records) if i not in removed]
+
+
+def _radiation_pair_explained(
+    x: np.ndarray, signal: np.ndarray, parent: ObservedLineRecord,
+    satellite: ObservedLineRecord, instrument: InstrumentProfile, *, sigma_threshold: float,
+    global_zero_shift: float = 0.0,
+) -> bool:
+    step = _median_step(x)
+    floor = max(instrument_fwhm_at(instrument, parent.two_theta-global_zero_shift), 2.5*step)
+    width = max(parent.fwhm, floor)
+    separation = abs(satellite.two_theta-parent.two_theta)
+    left = min(parent.two_theta, satellite.two_theta)-3*width
+    right = max(parent.two_theta, satellite.two_theta)+3*width
+    region = (x >= left) & (x <= right) & np.isfinite(signal)
+    local_x, local_y = x[region], signal[region]
+    # Require measured support on both sides of the parent. A cropped-out
+    # parent cannot justify removing its visible satellite.
+    if len(local_x) < 20 or local_x[0] > parent.two_theta-width or local_x[-1] < parent.two_theta+width:
+        return False
+    training = np.abs(local_x-satellite.two_theta) > max(1.3*width, separation*.35)
+    if np.count_nonzero(training) < 16:
+        return False
+    pivot = parent.two_theta
+    baseline = float(np.percentile(local_y, 15))
+    amplitude = max(parent.height, float(np.max(local_y[training]))-baseline, 1.)
+    center_radius = max(2*step, min(.25*width, .04))
+    resolution = (cristma_tch_profile(instrument.resolution)
+                  if instrument.resolution.model == 'tch' else None)
+
+    def instrument_width(angle):
+        return (float(resolution.fwhm_deg_at(angle)) if resolution is not None
+                else float(instrument.resolution.constant_fwhm_deg))
+
+    def area_factor(w, e):
+        return w*((1-e)*math.sqrt(math.pi)/(2*math.sqrt(math.log(2)))+e*math.pi/2)
+
+    def component_shape(center, fwhm, eta):
+        shape = pseudo_voigt_unit_height(local_x, center, fwhm, eta)
+        bragg = center-global_zero_shift
+        base_width = instrument_width(bragg)
+        base_eta = resolution._width_and_mixing_at(bragg)[1] if resolution is not None else 0.
+        for offset, weight in radiation_satellites_at(instrument, center, zero_shift=global_zero_shift):
+            satellite_width = fwhm*instrument_width(bragg+offset)/max(base_width, 1.e-12)
+            satellite_eta = float(np.clip(eta+(resolution._width_and_mixing_at(bragg+offset)[1]-base_eta
+                                             if resolution is not None else 0.), 0., 1.))
+            # Spectrum and LP specify integrated weights. With angle-dependent
+            # widths, the two component heights have a different ratio.
+            height_ratio = weight*area_factor(fwhm, eta)/area_factor(satellite_width, satellite_eta)
+            shape += height_ratio*pseudo_voigt_unit_height(local_x, center+offset, satellite_width, satellite_eta)
+        return shape
+
+    def model(parameters):
+        center, fwhm, eta, height, offset, slope = parameters
+        return offset+slope*(local_x-pivot)+height*component_shape(center, fwhm, eta)
+
+    lower = [pivot-center_radius, floor, 0., 0., -np.inf, -np.inf]
+    upper = [pivot+center_radius, max(width*1.8, floor*1.1), 1., np.inf, np.inf, np.inf]
+    initial = [pivot, max(width, floor*1.001), .35, amplitude, baseline, 0.]
+    try:
+        fit = least_squares(lambda parameters: (model(parameters)-local_y)[training], initial,
+                            bounds=(lower, upper), x_scale='jac', max_nfev=80)
+    except (ValueError, np.linalg.LinAlgError):
+        return False
+    if not fit.success or not np.all(np.isfinite(fit.x)):
+        return False
+    prediction = model(fit.x)
+    residual = local_y-prediction
+    noise = _robust_noise(residual[training])
+    if float(np.sqrt(np.mean(residual[training]**2))) > 2*noise:
+        return False
+    # Compare the signed excess over several widths. A broad or narrow extra
+    # component must not disappear just because its center matches K-alpha2.
+    components = radiation_satellites_at(instrument, fit.x[0], zero_shift=global_zero_shift)
+    if not components:
+        return False
+    satellite_center = fit.x[0]+min(components, key=lambda pair: abs(fit.x[0]+pair[0]-satellite.two_theta))[0]
+    for scale in (.5, 1., 1.5):
+        kernel = pseudo_voigt_unit_height(local_x, satellite_center, fit.x[1]*scale, fit.x[2])
+        kernel[np.abs(local_x-satellite_center) > 2*fit.x[1]*scale] = 0.
+        norm = float(np.linalg.norm(kernel))
+        if norm <= 0. or abs(float(kernel @ residual)) > sigma_threshold*noise*norm:
+            return False
+    return True
+
+
+def _matching_measured_peak(
+    record: ObservedLineRecord, records: list[ObservedLineRecord],
+) -> ObservedLineRecord | None:
+    nearest = min(records, key=lambda item: abs(item.two_theta - record.two_theta), default=None)
+    if nearest is None:
+        return None
+    tolerance = max(0.025, min(nearest.fwhm, record.fwhm) * 0.45)
+    return nearest if abs(nearest.two_theta - record.two_theta) <= tolerance else None
+
+
+def _unique_measured_peaks(records: list[ObservedLineRecord]) -> list[ObservedLineRecord]:
+    unique: list[ObservedLineRecord] = []
+    for record in sorted(records, key=lambda item: item.height, reverse=True):
+        if _matching_measured_peak(record, unique) is None:
+            unique.append(record)
+    return unique
+
+
+def _refine_measured_peak(
+    x: np.ndarray,
+    signal: np.ndarray,
+    record: ObservedLineRecord,
+    instrument_profile: InstrumentProfile | None,
+    *, seed_fwhm: float | None = None,
+) -> ObservedLineRecord:
+    instrument_width = instrument_fwhm_at(instrument_profile, record.two_theta)
+    raw_width = record.fwhm if seed_fwhm is None else seed_fwhm
+    below_resolution = raw_width + 2*_median_step(x) < instrument_width
+    fitted = refine_residual_peak(
+        x, signal, record.two_theta,
+        expected_fwhm=max(record.fwhm, instrument_width),
+        instrument_fwhm=instrument_width,
+        satellite_offsets_weights=radiation_satellites_at(instrument_profile, record.two_theta),
+        peak_only_quality=below_resolution,
+    )
+    if fitted is None or fitted.fit_quality < 0.20 or fitted.height <= 0.0:
+        return record
+    return replace(
+        record, two_theta=fitted.two_theta, area=fitted.area,
+        fwhm=fitted.fwhm_observed, height=fitted.height, prominence=fitted.prominence,
+        fwhm_observed=fitted.fwhm_observed, fwhm_sample=fitted.fwhm_sample,
+        instrument_limited=fitted.instrument_limited,
+        fit_quality=fitted.fit_quality, asymmetry=fitted.asymmetry,
+    )
+
+
+def _instrument_resolved_records(x, records, instrument_profile, *, seed_widths=None, fit_attempts=None):
+    if instrument_profile is None:
+        return records
+    # Allow two sample intervals for the measured half-height crossings.
+    # A successful physical fit already satisfies the floor; a failed fit
+    # must not leave a clearly sub-instrument spike as residual evidence.
+    allowance = 2*_median_step(x)
+    def width(record):
+        if record.fit_quality >= .20 or not seed_widths:
+            return record.fwhm
+        return seed_widths.get(record.seed_two_theta, record.fwhm)
+    return [record for record in records
+            if (fit_attempts is not None and record.seed_two_theta not in fit_attempts)
+            or width(record) + allowance >= instrument_fwhm_at(instrument_profile, record.two_theta)]
+
+
+def _rescue_profile_peak(
+    x: np.ndarray,
+    signal: np.ndarray,
+    record: ObservedLineRecord,
+    instrument_profile: InstrumentProfile | None,
+    *,
+    residual: bool,
+    sigma_threshold: float,
+) -> ObservedLineRecord | None:
+    if is_broad_rescue_candidate(record):
+        return (_refine_measured_peak(x, signal, record, instrument_profile)
+            if residual else record)
+    if not is_narrow_rescue_candidate(record, sigma_threshold=sigma_threshold):
+        return None
+    # Re-measure from the bank seed, rather than borrowing a neighbouring
+    # maximum found by the optional input-profile fit. Instrument width is a
+    # hard floor here, even for the bank's 0.7x exploratory kernel.
+    center = record.seed_two_theta
+    floor = instrument_fwhm_at(instrument_profile, center)
+    seed = replace(record, two_theta=center, fwhm=max(floor * record.broadening_scale, floor),
+        fit_quality=0.0)
+    measured = _refine_measured_peak(x, signal, seed, instrument_profile)
+    if measured.fit_quality < 0.20 or measured.height <= 0.0:
+        return None
+    return measured
 
 
 def _peak_exceeds_local_noise(
@@ -342,6 +608,8 @@ def _refine_peak_indices_on_raw(
     x: np.ndarray,
     y: np.ndarray,
     detected_indices: np.ndarray,
+    *,
+    preserve_seed_order: bool = False,
 ) -> np.ndarray:
     step = _median_step(x)
     radius = max(1, int(round(0.06 / max(step, 1.0e-6))))
@@ -352,7 +620,7 @@ def _refine_peak_indices_on_raw(
         if right <= left:
             continue
         refined.append(left + int(np.nanargmax(y[left:right])))
-    return np.asarray(sorted(set(refined)), dtype=int)
+    return np.asarray(refined if preserve_seed_order else sorted(set(refined)), dtype=int)
 
 
 def _peak_area(y: np.ndarray, prominence: float, left_ip: float, right_ip: float, step: float) -> float:
@@ -381,6 +649,7 @@ def instrument_fwhm_at(profile: InstrumentProfile | None, two_theta: float) -> f
 def radiation_satellites_at(
     profile: InstrumentProfile | None,
     two_theta: float,
+    *, zero_shift: float = 0.0,
 ) -> tuple[tuple[float, float], ...]:
     if profile is None or profile.radiation.mode != "kalpha_doublet":
         return ()
@@ -388,12 +657,13 @@ def radiation_satellites_at(
     if len(components) < 2:
         return ()
     primary = components[0]
-    theta = math.radians(float(two_theta) * 0.5)
+    bragg_angle = float(two_theta)-float(zero_shift)
+    theta = math.radians(bragg_angle * 0.5)
     sine = math.sin(theta)
     if sine <= 0.0:
         return ()
     d_spacing = float(primary.wavelength_angstrom) / (2.0 * sine)
-    primary_lp = _local_lp_factor(profile, float(two_theta))
+    primary_lp = _local_lp_factor(profile, bragg_angle)
     satellites = []
     for component in components[1:]:
         argument = float(component.wavelength_angstrom) / (2.0 * d_spacing)
@@ -402,7 +672,7 @@ def radiation_satellites_at(
         component_two_theta = 2.0 * math.degrees(math.asin(argument))
         relative_weight = float(component.weight) / max(float(primary.weight), 1.0e-12)
         relative_weight *= _local_lp_factor(profile, component_two_theta) / max(primary_lp, 1.0e-12)
-        satellites.append((component_two_theta - float(two_theta), relative_weight))
+        satellites.append((component_two_theta - bragg_angle, relative_weight))
     return tuple(satellites)
 
 
@@ -563,6 +833,12 @@ def peak_probability_from_alignment(alignment: PhaseAlignmentEstimate) -> float:
 
 
 def peak_presence_probability(peaks, observed_x: np.ndarray, corrected_y: np.ndarray, structure) -> float:
+    finite_x = np.asarray(observed_x, dtype=float)
+    finite_x = finite_x[np.isfinite(finite_x)]
+    if not finite_x.size:
+        return 0.0
+    low, high = float(finite_x.min()), float(finite_x.max())
+    peaks = [peak for peak in peaks if low <= float(peak.two_theta) <= high]
     return peak_presence_probability_from_records(
         peaks,
         observed_peak_records(observed_x, corrected_y, limit=80),

@@ -64,7 +64,7 @@ class PhaseFinderProjectStateActionsMixin:
         if hasattr(self, "_save_active_profile_state"):
             self._save_active_profile_state()
         current = self.tree.current_object()
-        right_tab = self.right_tabs.tabText(self.right_tabs.currentIndex()) if self.right_tabs.count() else "Elements"
+        right_tab = (self.right_tabs.tabBar().tabData(self.right_tabs.currentIndex()) or self.right_tabs.tabText(self.right_tabs.currentIndex())) if self.right_tabs.count() else "Elements"
         try:
             view_range = [list(axis_range) for axis_range in self._plot_view_range()]
         except Exception:
@@ -181,8 +181,9 @@ class PhaseFinderProjectStateActionsMixin:
                 finally:
                     self.candidate_table.blockSignals(previous_block_state)
         self._restore_match_state(state)
+        self._sync_zero_shift_controls()
         for index in range(self.right_tabs.count()):
-            if self.right_tabs.tabText(index) == state.right_tab:
+            if state.right_tab in {self.right_tabs.tabText(index),self.right_tabs.tabBar().tabData(index)}:
                 self.right_tabs.setCurrentIndex(index)
                 break
         self._set_grid_visible(self.grid_visible)
@@ -281,8 +282,12 @@ class PhaseFinderProjectStateActionsMixin:
     def _restore_match_state(self, state: FinderProjectState) -> None:
         self.match_candidates = [dict(candidate) for candidate in state.match_candidates]
         self.match_structures.clear()
-        self.match_quantities = {str(key): float(value) for key, value in state.match_quantities.items()}
-        self.match_iic = {str(key): float(value) for key, value in state.match_iic.items()}
+        # Quant is derived: older projects used a different scale convention.
+        # Recompute from physical profiles before showing percentages.
+        self.match_quantities = {}
+        reference_keys = {self._candidate_key(candidate) for candidate in self.match_candidates
+                          if str(candidate.get("Source", "")).upper()=="PDF2"}
+        self.match_iic = {str(key):float(value) for key,value in state.match_iic.items() if str(key) in reference_keys}
         self.match_zero_shifts = {str(key): float(value) for key, value in state.match_zero_shifts.items()}
         self.match_cell_scales = {str(key): float(value) for key, value in state.match_cell_scales.items()}
         self.match_alignment_scores = {str(key): str(value) for key, value in state.match_alignment_scores.items()}

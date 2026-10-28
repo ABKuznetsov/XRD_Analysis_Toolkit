@@ -21,6 +21,12 @@ def draw_rruff_reference(
 ) -> None:
     style = style or PlotStyle()
     reference_color = style.reference.color or "#1a73e8"
+    data = np.asarray(data, dtype=float)
+    if observed is not None and len(observed):
+        low, high = float(np.nanmin(observed[:, 0])), float(np.nanmax(observed[:, 0]))
+        data = data[(data[:, 0] >= low) & (data[:, 0] <= high)]
+    if not len(data):
+        return
     y = np.asarray(data[:, 1], dtype=float)
     if observed is not None and len(observed):
         observed_max = max(float(np.nanmax(observed[:, 1])), 1.0)
@@ -60,6 +66,8 @@ def draw_pdf2_reference(
     reference_color = style.reference.color or "#1a73e8"
     if observed is not None and len(observed):
         x_grid = np.asarray(observed[:, 0], dtype=float)
+        low, high = float(np.nanmin(x_grid)), float(np.nanmax(x_grid))
+        peaks = [peak for peak in peaks if low <= float(peak.two_theta) <= high]
         active_plot_offset = float(active_plot_context.get("offset", 0.0))
         baseline_value = float(np.nanmin(observed[:, 1])) + active_plot_offset
         top_value = float(np.nanmax(observed[:, 1])) + active_plot_offset

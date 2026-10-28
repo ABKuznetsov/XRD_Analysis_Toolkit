@@ -115,7 +115,16 @@ def _local_background_sigma(
     return local_sigma if np.isfinite(local_sigma) and local_sigma > 0.0 else 0.0
 
 
-def _is_significant_peak(x: np.ndarray, corrected_y: np.ndarray, y_index: int, sigma: float) -> bool:
+def _positive_grid_step(x: np.ndarray) -> float:
+    steps = np.diff(np.asarray(x, dtype=float))
+    steps = steps[np.isfinite(steps) & (steps > 0.0)]
+    return float(np.median(steps)) if steps.size else 0.0
+
+
+def _is_significant_peak(
+    x: np.ndarray, corrected_y: np.ndarray, y_index: int, sigma: float,
+    *, grid_step: float | None = None,
+) -> bool:
     if sigma <= 0.0 or corrected_y.size == 0:
         return True
     y_index = max(0, min(int(y_index), corrected_y.size - 1))
@@ -133,9 +142,8 @@ def _is_significant_peak(x: np.ndarray, corrected_y: np.ndarray, y_index: int, s
     # a point or two. Snap only inside a narrow neighbourhood, then require a
     # real local maximum. The wider +/-0.45 degree interval is used solely for
     # measuring its prominence against the surrounding trace.
-    steps = np.diff(np.asarray(x, dtype=float))
-    steps = steps[np.isfinite(steps) & (steps > 0.0)]
-    step = float(np.nanmedian(steps)) if steps.size else 0.03
+    step = _positive_grid_step(x) if grid_step is None else grid_step
+    step = step if step > 0.0 else 0.03
     snap_radius = max(1, int(round(0.06 / max(step, 1.0e-6))))
     local_index = y_index - local_start
     snap_left = max(0, local_index - snap_radius)
@@ -173,6 +181,8 @@ def _local_observed_peak_y(
     obs_x: float,
     y_index: int,
     fwhm: float = 0.0,
+    *,
+    grid_step: float | None = None,
 ) -> float:
     """Place a marker on the nearby experimental maximum, not above it."""
     if observed_y.size == 0:
@@ -181,9 +191,8 @@ def _local_observed_peak_y(
     if x.size < 2:
         return float(observed_y[y_index])
 
-    steps = np.diff(x)
-    steps = steps[np.isfinite(steps) & (steps > 0.0)]
-    step = float(np.median(steps)) if steps.size else 0.01
+    step = _positive_grid_step(x) if grid_step is None else grid_step
+    step = step if step > 0.0 else 0.01
     half_width = max(step * 2.0, min(0.12, max(float(fwhm or 0.0), 0.0) * 0.30))
     left = int(np.searchsorted(x, obs_x - half_width, side="left"))
     right = int(np.searchsorted(x, obs_x + half_width, side="right"))
@@ -240,14 +249,11 @@ def _has_nearby_phase_peak(
     )
 
 
-def _marker_merge_tolerance(x: np.ndarray, fwhm: float = 0.0) -> float:
-    x_values = np.asarray(x, dtype=float)
-    if x_values.size >= 2:
-        steps = np.diff(x_values)
-        steps = steps[np.isfinite(steps) & (steps > 0.0)]
-        grid_tolerance = float(np.nanmedian(steps)) * 3.0 if steps.size else 0.0
-    else:
-        grid_tolerance = 0.0
+def _marker_merge_tolerance(
+    x: np.ndarray, fwhm: float = 0.0, *, grid_step: float | None = None,
+) -> float:
+    step = _positive_grid_step(x) if grid_step is None else grid_step
+    grid_tolerance = step * 3.0
     # Collapse duplicate detections only, not independently resolved maxima.
     return max(0.01, grid_tolerance, min(max(float(fwhm or 0.0), 0.0) * 0.15, 0.04))
 
@@ -258,8 +264,9 @@ def _marker_position_available(
     *,
     x: np.ndarray,
     fwhm: float = 0.0,
+    grid_step: float | None = None,
 ) -> bool:
-    tolerance = _marker_merge_tolerance(x, fwhm)
+    tolerance = _marker_merge_tolerance(x, fwhm, grid_step=grid_step)
     return all(abs(float(existing) - float(position)) > tolerance for existing in used_positions)
 
 
@@ -296,6 +303,7 @@ def add_peak_coverage_markers(
     peak_positions = observed_peak_positions(x, corrected_y)
     if len(peak_positions) == 0:
         return 0, 0
+    grid_step = _positive_grid_step(x)
     corrected_strength = np.asarray(corrected_y, dtype=float)
     finite_strength = corrected_strength[np.isfinite(corrected_strength) & (corrected_strength > 0)]
     if len(finite_strength):
@@ -322,7 +330,7 @@ def add_peak_coverage_markers(
             considered_positions.append(float(obs_x))
     for obs_x in considered_positions:
         y_index = int(np.argmin(np.abs(x - obs_x)))
-        marker_y = _local_observed_peak_y(x, observed_y, obs_x, y_index)
+        marker_y = _local_observed_peak_y(x, observed_y, obs_x, y_index, grid_step=grid_step)
         matching_colors = []
         for color, _label, phase_positions in phase_peak_sets:
             if len(phase_positions) == 0:
@@ -332,7 +340,7 @@ def add_peak_coverage_markers(
                 matching_colors.append(color)
         if matching_colors:
             explained += 1
-            if not _is_significant_peak(x, corrected_strength, y_index, noise_sigma):
+            if not _is_significant_peak(x, corrected_strength, y_index, noise_sigma, grid_step=grid_step):
                 continue
             _add_colored_phase_marker(
                 plot=plot,
@@ -383,6 +391,7 @@ def add_assignment_markers(
     phase_marker_size = max(int(round(style.marker.size * 1.4)), style.marker.size + 3)
     corrected_strength = np.asarray(corrected_y, dtype=float)
     noise_sigma = _robust_noise_sigma(corrected_strength)
+    grid_step = _positive_grid_step(x)
     peak_strengths = [
         max(float(getattr(observed_peak, "intensity", 0.0)), 0.0)
         for observed_peak in observed_peaks
@@ -414,12 +423,13 @@ def add_assignment_markers(
             obs_x,
             y_index,
             float(getattr(observed_peak, "fwhm", 0.0) or 0.0),
+            grid_step=grid_step,
         )
         assignments = list(getattr(observed_peak, "assignments", []) or [])
         status = getattr(getattr(observed_peak, "status", ""), "value", getattr(observed_peak, "status", ""))
         if assignments:
             explained += 1
-            if not _is_significant_peak(x, corrected_strength, y_index, noise_sigma):
+            if not _is_significant_peak(x, corrected_strength, y_index, noise_sigma, grid_step=grid_step):
                 continue
             peak_fwhm = float(getattr(observed_peak, "fwhm", 0.0) or 0.0)
             if not _marker_position_available(
@@ -427,6 +437,7 @@ def add_assignment_markers(
                 obs_x,
                 x=x,
                 fwhm=peak_fwhm,
+                grid_step=grid_step,
             ):
                 continue
             if len(coverage_marker_positions) >= coverage_marker_limit:
@@ -475,6 +486,7 @@ def add_assignment_markers(
                 obs_x,
                 x=x,
                 fwhm=float(getattr(observed_peak, "fwhm", 0.0) or 0.0),
+                grid_step=grid_step,
             ):
                 continue
             item = pg.ScatterPlotItem(

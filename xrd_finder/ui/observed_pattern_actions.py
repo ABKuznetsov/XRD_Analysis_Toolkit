@@ -4,9 +4,10 @@ from html import escape
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QRectF, QTimer, Qt
 
 from xrd_finder.core.pattern import Pattern
+from xrd_finder.finder.profile_calculator import array_fingerprint
 from xrd_finder.services.preprocessing_service import auto_preprocess_for_scoring
 from xrd_finder.services.runtime_diagnostics import traced_operation
 from xrd_finder.ui.observed_patterns import apply_pattern_offsets, load_observed_patterns, normalize_intensity, observed_pattern_data, processed_pattern_data
@@ -19,6 +20,7 @@ from xrd_finder.ui.pattern_plot_helpers import (
 )
 from xrd_finder.plot_export.metadata import CanvasLayer
 from xrd_finder.ui.plot_layer_items import tag_xrd_plot_item
+from xrd_finder.ui.formula_display import formula_html
 
 
 def _processed_amorphous_fill_values(
@@ -103,6 +105,7 @@ class DraggableLegendTextItem(pg.TextItem):
         super().__init__(*args, **kwargs)
         self._moved_callback = moved_callback
         self._drag_offset = None
+        self.textItem.document().setDocumentMargin(1.0)
         self.setAcceptHoverEvents(True)
 
     def mouseDragEvent(self, event) -> None:
@@ -122,67 +125,168 @@ class DraggableLegendTextItem(pg.TextItem):
 
 
 class PhaseFinderObservedPatternActionsMixin:
+    def _phase_legend_entries(self, pattern: Pattern) -> list[tuple[str, str, str]]:
+        """Use accepted cards and their actual per-pattern marker colours."""
+        candidates = self._profile_candidates_for_pattern(pattern) if hasattr(self, "_profile_candidates_for_pattern") else []
+        entries = []
+        seen = set()
+        for index, candidate in enumerate(candidates):
+            key = self._candidate_key(candidate) if hasattr(self, "_candidate_key") else str(index)
+            color = self._phase_color(candidate, index) if hasattr(self, "_phase_color") else candidate.get("_Color", "#d93025")
+            name = self._phase_legend_label(candidate) if hasattr(self, "_phase_legend_label") else candidate.get("Phase", "")
+            entry = (key, str(color), str(name))
+            if name and entry not in seen:
+                seen.add(entry)
+                entries.append(entry)
+        return entries
+
+    def _phase_legend_labels(self, entries) -> str:
+        font_size = max(int(getattr(self.plot_view_settings, "legend_font_size", 10) or 10), 7)
+        return " &nbsp; ".join(
+            f'<span style="white-space:nowrap;"><span style="color:{escape(color)}; '
+            f'font-size:{font_size + 2}pt;">&#9679;</span>'
+            f'&nbsp;<span style="color:#111111;">{formula_html(name)}</span></span>'
+            for _key, color, name in entries
+        )
+
     def _multi_pattern_legend_html(self, pattern: Pattern, observed_color: str) -> str:
         settings = getattr(self, "plot_view_settings", None)
         font_size = max(int(getattr(settings, "legend_font_size", 10) or 10), 7)
         lines = [
             f'<span style="color:{escape(observed_color)}; font-weight:600;">'
             f'{escape(str(pattern.name))}</span>'
-        ]
-        if _pattern_has_amorphous_fill(pattern):
+        ] if bool(getattr(settings, "legend_visible", True)) else []
+        if bool(getattr(settings, "legend_visible", True)) and _pattern_has_amorphous_fill(pattern):
             lines.append(
                 '<span style="color:#1a73e8; font-size:'
                 f'{font_size + 2}pt;">&#9632;</span>'
                 '&nbsp;<span style="color:#111111;">Amorphous phase</span>'
             )
-        if not bool(getattr(settings, "multi_legend_phase_names_visible", True)):
-            return (
-                f'<div style="font-family:Segoe UI; font-size:{font_size}pt; white-space:nowrap;">'
-                + "<br>".join(lines)
-                + "</div>"
-            )
-        candidates = self._profile_candidates_for_pattern(pattern) if hasattr(self, "_profile_candidates_for_pattern") else []
-        seen: set[str] = set()
-        phase_labels: list[str] = []
-        for index, candidate in enumerate(candidates):
-            key = self._candidate_key(candidate) if hasattr(self, "_candidate_key") else str(index)
-            if key in seen:
-                continue
-            seen.add(key)
-            color = self._phase_color(candidate, index) if hasattr(self, "_phase_color") else candidate.get("_Color", "#d93025")
-            phase_name = self._phase_legend_label(candidate) if hasattr(self, "_phase_legend_label") else candidate.get("Phase", "")
-            if not phase_name:
-                continue
-            phase_labels.append(
-                f'<span style="color:{escape(color)}; font-size:{font_size + 2}pt;">&#9679;</span>'
-                f'&nbsp;<span style="color:#111111;">{escape(str(phase_name))}</span>'
-            )
-        if phase_labels:
-            lines.append("&nbsp;&nbsp;&nbsp;".join(phase_labels))
+        if (bool(getattr(settings, "multi_legend_phase_names_visible", True))
+                and getattr(settings, "multi_phase_legend_mode", "individual") == "individual"):
+            phases = self._phase_legend_labels(self._phase_legend_entries(pattern))
+            if phases:
+                lines.append(phases)
         return (
-            f'<div style="font-family:Segoe UI; font-size:{font_size}pt; white-space:nowrap;">'
+            f'<div style="font-family:Segoe UI; font-size:{font_size}pt;">'
             + "<br>".join(lines)
             + "</div>"
         )
 
     def _refresh_multi_pattern_legends(self) -> None:
         if not getattr(self, "show_all_selected_patterns", False):
+            for item in self.plot_layers.get("phase_legend", []):
+                item.hide()
             return
         patterns = {pattern.id: pattern for pattern in getattr(self.project, "patterns", [])}
-        visible = bool(getattr(getattr(self, "plot_view_settings", None), "legend_visible", True))
+        displayed = []
         for item in self.plot_layers.get("pattern_legends", []):
             pattern_id = getattr(item, "_xrd_pattern_id", "")
             pattern = patterns.get(pattern_id)
             if pattern is None:
                 continue
+            displayed.append(pattern)
             color = self._observed_pattern_color(pattern_id)
-            item.setHtml(self._multi_pattern_legend_html(pattern, color))
-            item.setVisible(visible)
-        QTimer.singleShot(0, self._fit_multi_pattern_legends_to_canvas)
+            html = self._multi_pattern_legend_html(pattern, color)
+            if html != getattr(item, "_xrd_legend_html", None):
+                item.setHtml(html)
+                item._xrd_legend_html = html
+            item.setVisible(bool(item.textItem.toPlainText().strip()))
+        self._refresh_common_phase_legend(displayed)
+        self._schedule_multi_pattern_legend_layout()
+
+    def _refresh_common_phase_legend(self, patterns) -> None:
+        settings = self.plot_view_settings
+        items = self.plot_layers.setdefault("phase_legend", [])
+        if not settings.multi_legend_phase_names_visible or settings.multi_phase_legend_mode != "common":
+            for item in items:
+                item.hide()
+            return
+        entries = []
+        seen = set()
+        for pattern in patterns:
+            for entry in self._phase_legend_entries(pattern):
+                if entry not in seen:
+                    seen.add(entry)
+                    entries.append(entry)
+        visible = bool(entries)
+        if not items and visible:
+            item = pg.TextItem(anchor=(0, 0), fill=pg.mkBrush(255, 255, 255, 230),
+                               border=pg.mkPen("#c5c5c5", width=0.6))
+            item.textItem.document().setDocumentMargin(4.0)
+            item.setZValue(100)
+            tag_xrd_plot_item(item, layer=CanvasLayer.LEGENDS, object_id="common-phase-legend")
+            self.match_plot.addItem(item, ignoreBounds=True)
+            items.append(item)
+        if items:
+            font_size = max(int(settings.legend_font_size or 10), 7)
+            html = (f'<div style="font-family:Segoe UI; font-size:{font_size}pt;">'
+                    + self._phase_legend_labels(entries) + "</div>")
+            if html != getattr(items[0], "_xrd_legend_html", None):
+                items[0].setHtml(html)
+                items[0]._xrd_legend_html = html
+            items[0].setVisible(visible)
+
+    def _layout_common_phase_legend(self) -> float:
+        """Reserve room above the data for a wrapping strip inside the frame."""
+        view = self.match_plot.getViewBox()
+        visible = [item for item in self.plot_layers.get("phase_legend", []) if item.isVisible()]
+        for item in visible:
+            width = max(float(view.width()) - 8.0, 1.0)
+            if abs(item.textItem.textWidth() - width) > 0.1:
+                item.setTextWidth(width)
+        header_pixels = max((item.boundingRect().height() + 16.0 for item in visible), default=0.0)
+        self._reserve_common_phase_legend_space(header_pixels)
+        (x_min, x_max), (y_min, y_max) = view.viewRange()
+        x_per_pixel = (x_max - x_min) / max(float(view.width()), 1.0)
+        y_per_pixel = (y_max - y_min) / max(float(view.height()), 1.0)
+        reserved = 0.0
+        for item in visible:
+            item.setPos(x_min + 4.0*x_per_pixel, y_max - 4.0*y_per_pixel)
+            reserved = header_pixels*y_per_pixel
+        return reserved
+
+    def _reserve_common_phase_legend_space(self, header_pixels: float) -> None:
+        """Add reversible screen-space headroom, leaving all measured data intact."""
+        view = self.match_plot.getViewBox()
+        current = tuple(view.viewRange()[1])
+        previous = getattr(self, "_common_phase_legend_range", None)
+        # Resize/reflow must start from the unpadded range. A new range from
+        # fitting, panning or zooming instead becomes the new display baseline.
+        baseline = previous[0] if previous and np.allclose(current, previous[1], rtol=1e-10, atol=1e-10) else current
+        fraction = min(max(float(header_pixels), 0.0) / max(float(view.height()), 1.0), 0.8)
+        padded = (baseline[0], baseline[0] + (baseline[1] - baseline[0]) / (1.0 - fraction))
+        self._common_phase_legend_range = (baseline, padded) if fraction else None
+        if not np.allclose(current, padded, rtol=1e-10, atol=1e-10):
+            view.setYRange(*padded, padding=0.0)
+
+    def _remember_common_legend_manual_range(self, axes) -> None:
+        previous = getattr(self, "_common_phase_legend_range", None)
+        if not previous or not axes[1]:
+            return
+        baseline, padded = previous
+        # Mouse navigation already transforms the padded viewport. Keep that
+        # fraction instead of adding another header at every drag/wheel event.
+        fraction = (baseline[1] - baseline[0]) / max(padded[1] - padded[0], np.finfo(float).eps)
+        current = tuple(self.match_plot.getViewBox().viewRange()[1])
+        baseline = (current[0], current[0] + (current[1] - current[0])*fraction)
+        self._common_phase_legend_range = (baseline, current)
+
+    def _schedule_multi_pattern_legend_layout(self, *_args) -> None:
+        if not getattr(self, 'show_all_selected_patterns', False) or getattr(self, '_multi_legend_layout_pending', False):
+            return
+        self._multi_legend_layout_pending = True
+
+        def finish() -> None:
+            self._multi_legend_layout_pending = False
+            self._fit_multi_pattern_legends_to_canvas()
+
+        QTimer.singleShot(0, finish)
 
     def _fit_multi_pattern_legends_to_canvas(self) -> None:
         if not getattr(self, "show_all_selected_patterns", False):
             return
+        common_height = self._layout_common_phase_legend()
         labels = [
             item
             for item in self.plot_layers.get("pattern_legends", [])
@@ -191,26 +295,29 @@ class PhaseFinderObservedPatternActionsMixin:
         if not labels:
             return
         manual_positions = getattr(self, "_multi_legend_manual_positions", {})
-        automatic_labels = [
-            item for item in labels if getattr(item, "_xrd_pattern_id", "") not in manual_positions
-        ]
-        if not automatic_labels:
-            return
-        y_min, y_max = self.match_plot.getViewBox().viewRange()[1]
-        span = max(float(y_max) - float(y_min), 1.0)
-        pixel_span = max(float(self.match_plot.height()) - 80.0, 1.0)
-        data_per_pixel = span / pixel_span
-        available_height = max(float(self.match_plot.height()) - 70.0, 1.0)
-        natural_height = sum(float(item.boundingRect().height()) for item in automatic_labels)
-        natural_height += max(len(automatic_labels) - 1, 0) * 2.0
-        scale = min(1.0, available_height / max(natural_height, 1.0))
-
+        view = self.match_plot.getViewBox()
+        (x_min, x_max), (y_min, y_max) = view.viewRange()
+        span = max(float(y_max) - float(y_min), np.finfo(float).eps)
+        x_span = max(float(x_max) - float(x_min), np.finfo(float).eps)
+        data_per_pixel = span / max(float(view.height()), 1.0)
+        x_per_pixel = x_span / max(float(view.width()), 1.0)
+        y_max -= common_height
+        clearance = 3.0 * data_per_pixel
+        x_clearance = 3.0 * x_per_pixel
         entries = []
-        for item in automatic_labels:
+        for item in labels:
+            item.setScale(1.0)
+            item._xrd_screen_scale = 1.0
+            item.setTextWidth(-1)
+            available_width = max(float(view.width()) - 6.0, 1.0)
+            if item.boundingRect().width() > available_width:
+                item.setTextWidth(available_width)
             pattern_id = getattr(item, "_xrd_pattern_id", "")
             context = self.observed_pattern_plot_context.get(pattern_id, {})
             x = np.asarray(context.get("display_x", []), dtype=float)
             y = np.asarray(context.get("display_y", []), dtype=float)
+            if self.profile_states.get(pattern_id, {}).get("correct_zero", False):
+                x = x - self._pattern_display_zero_shift_deg(pattern_id)
             finite = np.isfinite(x) & np.isfinite(y) if x.size == y.size else np.zeros(0, dtype=bool)
             x = x[finite]
             y = y[finite]
@@ -218,68 +325,86 @@ class PhaseFinderObservedPatternActionsMixin:
             entries.append({"item": item, "x": x, "y": y, "baseline": baseline})
         entries.sort(key=lambda entry: float(entry["baseline"]), reverse=True)
 
-        clearance = 3.0 * data_per_pixel
+        occupied = []
         placements = []
         alignment = str(
-            getattr(getattr(self, "plot_view_settings", None), "multi_legend_alignment", "Auto")
-            or "Auto"
+            getattr(getattr(self, "plot_view_settings", None), "multi_legend_alignment", "Right")
+            or "Right"
         )
         for index, entry in enumerate(entries):
             item = entry["item"]
             previous_entry = entries[index - 1] if index > 0 else None
-            upper = (
+            upper = min(float(y_max) - clearance, (
                 float(previous_entry["baseline"]) - clearance
                 if previous_entry is not None
                 else float(y_max) - clearance
-            )
+            ))
             current_x = entry["x"]
-            if current_x.size:
-                x_min = float(np.nanmin(current_x))
-                x_max = float(np.nanmax(current_x))
-            else:
-                x_min, x_max = self.match_plot.getViewBox().viewRange()[0]
-            x_span = max(float(x_max) - float(x_min), 1.0)
-            plot_width = max(float(self.match_plot.width()) - 100.0, 1.0)
-            label_width = float(item.boundingRect().width()) * scale / plot_width * x_span
-            minimum_anchor = x_min + min(label_width, x_span * 0.9)
-            if alignment == "Left":
+            label_width = float(item.boundingRect().width()) * x_per_pixel
+            label_height = float(item.boundingRect().height()) * data_per_pixel
+            half_height = label_height * 0.5
+            minimum_anchor = min(float(x_min) + label_width + x_clearance, float(x_max) - x_clearance)
+            maximum_anchor = float(x_max) - x_clearance
+            minimum_center = float(y_min) + clearance + half_height
+            maximum_center = float(y_max) - clearance - half_height
+            manual = manual_positions.get(getattr(item, '_xrd_pattern_id', ''))
+            if manual is not None:
+                anchors = np.asarray([np.clip(float(manual[0]), minimum_anchor, maximum_anchor)])
+            elif alignment == "Left":
                 anchors = np.asarray([minimum_anchor])
             elif alignment == "Center":
-                anchors = np.asarray([(minimum_anchor + x_max) * 0.5])
+                anchors = np.asarray([(minimum_anchor + maximum_anchor) * 0.5])
             elif alignment == "Right":
-                anchors = np.asarray([x_max])
+                anchors = np.asarray([maximum_anchor])
             else:
-                anchors = np.linspace(minimum_anchor, x_max, 28)
-            best_anchor = float(x_max)
-            best_lower = float(entry["baseline"]) + clearance
-            best_score = -float("inf")
+                anchors = np.linspace(minimum_anchor, maximum_anchor, 28)
+            best = None
             for anchor in anchors:
-                lower = float(entry["baseline"]) + clearance
+                lower = max(float(entry["baseline"]), float(y_min)) + clearance
                 if current_x.size:
                     current_y = entry["y"]
                     mask = (current_x >= float(anchor) - label_width) & (current_x <= float(anchor))
                     if np.any(mask):
-                        lower = float(np.nanmax(current_y[mask])) + clearance
+                        lower = max(lower, float(np.nanmax(current_y[mask])) + clearance)
                 free_height = upper - lower
-                right_preference = 0.01 * span * (float(anchor) - x_min) / x_span
-                score = free_height + right_preference
-                if score > best_score:
-                    best_score = score
-                    best_anchor = float(anchor)
-                    best_lower = lower
-            label_height_at_full_scale = float(item.boundingRect().height()) * data_per_pixel
-            safe_height = max(upper - best_lower, data_per_pixel)
-            scale = min(scale, safe_height / max(label_height_at_full_scale, data_per_pixel))
-            placements.append((item, best_anchor, best_lower, upper))
+                if manual is not None:
+                    center = float(manual[1])
+                    if free_height >= label_height:
+                        center = float(np.clip(center, lower + half_height, upper - half_height))
+                else:
+                    band_bottom = max(float(entry['baseline']), float(y_min)) + clearance
+                    center = ((lower if free_height >= label_height else band_bottom) + upper) * 0.5
+                    if index == 0 and alignment == 'Right':
+                        center = maximum_center
+                if minimum_center <= maximum_center:
+                    center = float(np.clip(center, minimum_center, maximum_center))
+                else:
+                    center = (float(y_min) + float(y_max)) * 0.5
+                box = QRectF(float(anchor) - label_width, center - half_height, label_width, label_height)
+                collisions = sum(box.intersects(previous) for previous in occupied)
+                score = (-collisions, free_height >= label_height, free_height, float(anchor))
+                if best is None or score > best[0]:
+                    best = (score, float(anchor), center, box)
+            if best is not None:
+                item.setPos(best[1], best[2])
+                occupied.append(best[3])
+                placements.append([item, best[1], best[2], half_height])
 
-        scale = max(min(scale, 1.0), 0.35)
-        for item, x_position, lower, upper in placements:
-            half_height = float(item.boundingRect().height()) * scale * data_per_pixel * 0.5
-            center = (float(lower) + float(upper)) * 0.5
-            center = min(max(center, float(lower) + half_height), float(upper) - half_height)
-            item.setScale(scale)
-            item.setPos(float(x_position), float(center))
-            item._xrd_screen_scale = scale
+        # Keep the fixed-size right column readable even when stacked curves
+        # are closer together than the text height.
+        needed_height = sum(2.0 * placement[3] for placement in placements)
+        needed_height += max(len(placements) - 1, 0) * clearance
+        if alignment == 'Right' and placements and needed_height <= span - 2.0 * clearance:
+            for index in range(1, len(placements)):
+                previous, current = placements[index - 1], placements[index]
+                current[2] = min(current[2], previous[2] - previous[3] - clearance - current[3])
+            placements[-1][2] = max(placements[-1][2], float(y_min) + clearance + placements[-1][3])
+            for index in range(len(placements) - 2, -1, -1):
+                current, following = placements[index], placements[index + 1]
+                current[2] = max(current[2], following[2] + following[3] + clearance + current[3])
+            overflow = max(0.0, placements[0][2] + placements[0][3] + clearance - float(y_max))
+            for item, anchor, center, _half_height in placements:
+                item.setPos(anchor, center - overflow)
 
     def _remember_multi_legend_position(self, item) -> None:
         pattern_id = getattr(item, "_xrd_pattern_id", "")
@@ -402,14 +527,10 @@ class PhaseFinderObservedPatternActionsMixin:
         return (
             pattern.id,
             str(getattr(pattern, "source_path", "")),
-            int(len(raw)),
-            round(float(x[0]), 6),
-            round(float(x[-1]), 6),
-            round(float(np.nanpercentile(y, 1)), 5),
-            round(float(np.nanpercentile(y, 50)), 5),
-            round(float(np.nanpercentile(y, 99)), 5),
+            array_fingerprint(x),
+            array_fingerprint(y),
             bool(self.normalize_observed_patterns),
-            "auto-scoring-components-v2",
+            "auto-scoring-components-v3",
         )
 
     def _trim_auto_scoring_cache(self, limit: int = 32) -> None:
@@ -464,6 +585,16 @@ class PhaseFinderObservedPatternActionsMixin:
 
     @traced_operation("plot.observed")
     def _draw_observed_patterns(self, active_override=None) -> None:
+        self._close_manual_calibration()
+        if getattr(self, '_manual_peak_input_armed', False) and (
+            getattr(self._active_pattern(), 'id', None) != self._manual_peak_pattern_id
+            or self.show_all_selected_patterns
+        ):
+            self._close_manual_peak_editor()
+        if getattr(self, '_find_peaks_busy', False):
+            self._cancel_find_peaks()
+        if getattr(self, '_peak_info_armed', False):
+            self._cancel_peak_information(close_card=True)
         if hasattr(self, "_clear_profile_plot_layers"):
             self._clear_profile_plot_layers(include_observed=True, rebuild_legend=False)
         else:
@@ -476,7 +607,20 @@ class PhaseFinderObservedPatternActionsMixin:
         self.observed_pattern_plot_context = {}
 
         patterns = self._patterns_to_display()
+        signature = (self.show_all_selected_patterns, tuple(pattern.id for pattern in patterns),
+                     self.pattern_stack_offset_percent if self.show_all_selected_patterns else None)
+        previous_signature = getattr(self, '_plot_display_signature', None)
+        if signature != previous_signature and (
+            self.show_all_selected_patterns or previous_signature is not None and previous_signature[0]
+        ):
+            self.match_plot_view_initialized = False
+        self._plot_display_signature = signature
         active_pattern = self._active_pattern()
+        kind = getattr(active_pattern, 'input_kind', 'profile')
+        previous_kind = getattr(self, '_plot_input_kind', None)
+        if previous_kind is not None and previous_kind != kind:
+            self.match_plot_view_initialized = False
+        self._plot_input_kind = kind
         active_id = active_pattern.id if active_pattern is not None else ""
         x_values = []
         y_values = []
@@ -491,8 +635,11 @@ class PhaseFinderObservedPatternActionsMixin:
                 self._ensure_multi_profile_layer_defaults(item.pattern.id)
             crop_ranges = self._valid_crop_ranges(item.pattern)
             x_plot, y = self._crop_curve_to_ranges(item.x, item.plotted_y, crop_ranges)
-            if len(x_plot) == 0:
+            manual = getattr(item.pattern, 'input_kind', '') == 'peak_list'
+            if len(x_plot) == 0 and not manual:
                 continue
+            from xrd_finder.ui.xrd_range_warning import warn_outside_xrd_range
+            warn_outside_xrd_range(self, item.pattern, item.x)
             plot_style = getattr(self, "plot_style", None)
             active = item.pattern.id == active_id
             color = self._observed_pattern_color(item.pattern.id)
@@ -503,9 +650,15 @@ class PhaseFinderObservedPatternActionsMixin:
             show_line = draw_mode in {"Line", "Line + scatter"}
             show_scatter = draw_mode in {"Scatter", "Line + scatter"}
             marker_size = int(getattr(getattr(plot_style, "marker", None), "size", 7)) + (2 if active else 0)
+            curve_x, curve_y = x_plot, y
+            if manual:
+                curve_x = np.repeat(x_plot, 3)
+                curve_y = np.column_stack([np.full(len(y), item.offset), y, np.full(len(y), np.nan)]).ravel()
+                show_line = True
             curve_item = self.match_plot.plot(
-                x_plot,
-                y,
+                curve_x,
+                curve_y,
+                connect='finite' if manual else 'auto',
                 pen=pg.mkPen(color, width=width) if show_line else None,
                 symbol="o" if show_scatter else None,
                 symbolSize=marker_size if show_scatter else None,
@@ -536,6 +689,11 @@ class PhaseFinderObservedPatternActionsMixin:
                 object_id="observed-legend-proxy",
             )
             self.plot_layers["observed"].extend([curve_item, legend_proxy])
+            if manual:
+                dots = self.match_plot.plot(x_plot, y, pen=None, symbol='o', symbolSize=6,
+                    symbolBrush=color, symbolPen=color)
+                tag_xrd_plot_item(dots, layer=CanvasLayer.OBSERVED, pattern_id=item.pattern.id, object_id='manual-peak-tops')
+                self.plot_layers['observed'].append(dots)
             if self.show_all_selected_patterns:
                 finite_x = np.asarray(x_plot, dtype=float)
                 curve_y = np.asarray(y, dtype=float)
@@ -585,26 +743,33 @@ class PhaseFinderObservedPatternActionsMixin:
                         pattern_id=item.pattern.id,
                         object_id="pattern-legend",
                     )
-                    self.match_plot.addItem(label)
+                    self.match_plot.addItem(label, ignoreBounds=True)
                     self.plot_layers.setdefault("pattern_legends", []).append(label)
             plot_context = item.context
             # Marker placement must use the curve exactly as it is displayed,
             # after normalization, cropping, and multi-pattern stacking.
             plot_context["display_x"] = np.asarray(x_plot, dtype=float)
             plot_context["display_y"] = np.asarray(y, dtype=float)
+            plot_context['peak_list'] = manual
             self.observed_pattern_plot_context[item.pattern.id] = plot_context
             x_values.append(x_plot)
             y_values.append(y)
 
+        manual_active = getattr(active_pattern, 'input_kind', '') == 'peak_list'
+        self.finder_plot_control_bar.normalize_patterns_checkbox.setEnabled(not manual_active)
+        label = 'Intensity (0–100)' if manual_active else getattr(self.plot_view_settings, 'left_axis_label', 'I rel.')
+        self.match_plot.setLabel('left', label)
         self._draw_estimated_background_components(loaded_patterns)
         self._draw_checked_phase_profiles(loaded_patterns)
+        if hasattr(self, "_redraw_selected_search_peaks"):
+            self._redraw_selected_search_peaks()
         if hasattr(self, "_apply_plot_layer_visibility_settings"):
             self._apply_plot_layer_visibility_settings(self.plot_view_settings)
 
         if x_values and y_values and not self.match_plot_view_initialized:
             self._reset_match_plot_view()
         if self.show_all_selected_patterns:
-            QTimer.singleShot(0, self._fit_multi_pattern_legends_to_canvas)
+            self._refresh_multi_pattern_legends()
 
     def _redraw_estimated_background_components_for_current_view(
         self,
@@ -660,6 +825,7 @@ class PhaseFinderObservedPatternActionsMixin:
                     pattern_id=pattern.id,
                     object_id=f"background-{label.replace(' ', '-')}",
                 )
+                curve._xrd_profile_render_stage = 0
                 self.plot_layers["background"].append(curve)
 
     def _background_component_plot_values(self, item, points) -> tuple[np.ndarray, np.ndarray] | None:
@@ -735,6 +901,7 @@ class PhaseFinderObservedPatternActionsMixin:
                 pattern_id=pattern_id,
                 object_id=f"amorphous-background-{index}",
             )
+            item._xrd_profile_render_stage = 0
             self.match_plot.addItem(item)
             self.plot_layers.setdefault(layer_key, []).append(item)
 
@@ -780,6 +947,10 @@ class PhaseFinderObservedPatternActionsMixin:
             pass
 
     def _queue_active_pattern_from_plot(self, pattern_id: str) -> None:
+        if getattr(self, '_peak_info_armed', False):
+            return
+        if getattr(self, "_search_mode", "search") == "peaks":
+            return
         if not pattern_id:
             return
         # Selecting a tree item redraws the plot. Wait until pyqtgraph has
@@ -801,6 +972,10 @@ class PhaseFinderObservedPatternActionsMixin:
             for item in self.plot_layers.get(layer, []):
                 self.match_plot.removeItem(item)
             self.plot_layers[layer] = []
+        profiles = [item for item in loaded_patterns if getattr(item.pattern, 'input_kind', '') != 'peak_list']
+        if loaded_patterns and not profiles:
+            return
+        loaded_patterns = profiles
         checked = set(self.tree.checked_phase_ids())
         if not checked:
             return
@@ -948,7 +1123,8 @@ class PhaseFinderObservedPatternActionsMixin:
         finite = np.isfinite(x_values) & np.isfinite(y_values)
         if not np.any(finite):
             return None
-        return x_values[finite], y_values[finite]
+        shift = float(getattr(item, "_finder_zero_display_shift", 0.))
+        return x_values[finite] - shift, y_values[finite]
 
     def _plot_data_bounds(self, x_range: tuple[float, float] | None = None) -> tuple[float, float, float, float] | None:
         xmin_values = []
@@ -985,7 +1161,18 @@ class PhaseFinderObservedPatternActionsMixin:
         xmin, xmax, _ymin, _ymax = full_bounds
         ranges = []
         for pattern in self._patterns_to_display():
-            ranges.extend(self._valid_crop_ranges(pattern))
+            state = self.profile_states.get(pattern.id, {})
+            shift = self._pattern_display_zero_shift_deg(pattern.id) if state.get("correct_zero", False) else 0.
+            context = self.observed_pattern_plot_context.get(pattern.id, {})
+            x = np.asarray(context.get('display_x', []), dtype=float)
+            finite_x = x[np.isfinite(x)]
+            if finite_x.size:
+                ranges.append((float(np.min(finite_x)) - shift, float(np.max(finite_x)) - shift))
+            else:
+                crop_ranges = self._valid_crop_ranges(pattern)
+                ranges.extend((start - shift, end - shift) for start, end in crop_ranges)
+                if not crop_ranges:
+                    ranges.append((xmin, xmax))
         if ranges:
             crop_min = min(start for start, _end in ranges)
             crop_max = max(end for _start, end in ranges)
@@ -993,6 +1180,10 @@ class PhaseFinderObservedPatternActionsMixin:
         return xmin, xmax
 
     def _reset_match_plot_view(self) -> None:
+        if getattr(self._active_pattern(), 'input_kind', '') == 'peak_list' and not self.show_all_selected_patterns:
+            self.match_plot.setRange(xRange=(0., 125.), yRange=(0., 100.), padding=0)
+            self.match_plot_view_initialized = True
+            return
         full_bounds = self._plot_data_bounds()
         if full_bounds is None:
             self.match_plot.autoRange(padding=0.0)

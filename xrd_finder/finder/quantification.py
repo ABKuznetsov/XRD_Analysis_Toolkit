@@ -1,20 +1,21 @@
 """Joint structural phase model for quantities and accepted-phase curves."""
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from functools import lru_cache
+import hashlib
 import math
 from pathlib import Path
 
 import numpy as np
 from scipy.optimize import nnls
 import cristma
-from cristma.symmetry.orbit import expand_structure
 
 from xrd_finder.io.cif_loader import create_phase_from_cif
-from xrd_finder.services.element_masses import atomic_weight
 from xrd_finder.services.cristma_powder_adapter import CristmaPowderAdapter
 from xrd_finder.services.calculated_pattern_service import HKLPeak
+from xrd_finder.finder.sample_broadening import broaden_profile, fit_sample_broadening
+from xrd_finder.finder.composition_validation import CifCompositionError, validate_composition, occupied_cell as _occupied_cell
 
 
 def quantification_source_signature(path, structure) -> tuple:
@@ -75,20 +76,7 @@ def unit_cell_volume(cell) -> float:
 
 def unit_cell_mass(structure) -> float:
     """Use exactly the native diffraction engine's occupied symmetry orbits."""
-    atoms=expand_structure(structure).atoms
-    if not atoms:
-        raise ValueError('No occupied structural model')
-    total=0.
-    for atom in atoms:
-        for component in atom.components:
-            weight=atomic_weight(component.species.symbol)
-            occupancy=float(component.occupancy.value)
-            if not math.isfinite(weight) or weight<=0 or not math.isfinite(occupancy) or not 0<=occupancy<=1:
-                raise ValueError('Invalid atom or occupancy')
-            total+=weight*occupancy
-    if not math.isfinite(total) or total<=0:
-        raise ValueError('Unknown cell mass')
-    return total
+    return _occupied_cell(structure)[0]
 
 
 @lru_cache(maxsize=256)
@@ -96,10 +84,23 @@ def _cif_metadata(path: str, modified_ns: int, size: int) -> tuple[float,float]:
     # Resolve exactly the native setting used for diffraction; a CIF can omit
     # the explicit symmetry-operation loop and still have a nontrivial group.
     read_result=cristma.read(path)
-    if any(getattr(diagnostic.severity,'value','') in ('warning','error') for diagnostic in read_result.diagnostics):
+    # Collapsing explicitly repeated symmetry mates preserves the occupied
+    # structure; it is not parser recovery or a loss of physical metadata.
+    if any(
+        getattr(diagnostic.severity, 'value', '') == 'error'
+        or getattr(diagnostic, 'recovery', None) is not None
+        or (getattr(diagnostic.severity, 'value', '') == 'warning'
+            and diagnostic.code != 'cif.map.symmetry_expanded_sites_collapsed')
+        for diagnostic in read_result.diagnostics
+    ):
         raise ValueError('CIF physical metadata required parser recovery')
-    native,_setting=CristmaPowderAdapter._structure_and_setting(path)
-    return unit_cell_mass(native),unit_cell_volume(native.cell)
+    native,_setting=CristmaPowderAdapter._structure_and_setting(path,read_result=read_result)
+    mass,composition=_occupied_cell(native)
+    try:
+        validate_composition(native.formula,composition)
+    except CifCompositionError as exc:
+        raise CifCompositionError(f'{Path(path).name}: {exc}') from exc
+    return mass,unit_cell_volume(native.cell)
 
 
 @dataclass(frozen=True)
@@ -109,27 +110,62 @@ class AcceptedPhaseFit:
     profiles: np.ndarray
     scales: np.ndarray
     peaks: tuple[tuple[HKLPeak, ...], ...]
+    sample_broadening: tuple[dict, ...] = ()
+    mass_factors: tuple[float, ...] = ()
 
 
-def fit_accepted_phases(items, x, target, context, instrument, calculator) -> AcceptedPhaseFit | None:
+@lru_cache(maxsize=256)
+def _cif_source_hash(path: str, modified_ns: int, size: int) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def fit_accepted_phases(items, x, target, context, instrument, calculator, *,
+                        refine_sample_broadening=False, observed_peaks=(), diagnostics=None) -> AcceptedPhaseFit | None:
     """Fit accepted structural phases once in physical units.
 
     Keep the fitted columns and coefficients alongside Hill--Howard fractions
     so plotted phase contributions cannot describe a different mixture.
     Cached reference cards require their local CIF for this physical model.
     """
-    if not items or instrument is None:
+    def unavailable(reason):
+        if diagnostics is not None:
+            diagnostics.append(reason)
         return None
-    profiles=[];masses=[];volumes=[];peak_sets=[]
+
+    if not items:
+        return unavailable('No selected phases for quantitative analysis')
+    if instrument is None:
+        return unavailable('An instrument profile is required for quantitative analysis')
+    profiles=[];masses=[];volumes=[];peak_sets=[];broadening_fits=[]
+    phase_label='selected phases'
+    seen_sources=set()
     try:
-        for item in items:
+        target=np.asarray(target,dtype=float)
+        if not np.all(np.isfinite(target)):
+            return unavailable('Observed signal contains non-finite intensities')
+        if not np.any(target>0):
+            return unavailable('No positive diffraction signal (zero or nonpositive intensity) for quantitative analysis')
+        for phase_index,item in enumerate(items):
             candidate,_structure,_reference,_adjusted,_display,cell_scale,width,eta,estimate=item
+            phase_label=candidate.name or candidate.entry_id or candidate.cif_path or 'selected phase'
             cif_path=candidate.cif_path or candidate.quantification_cif_path
             if not cif_path:
-                return None
+                return unavailable(f'{phase_label}: no local CIF structure for quantitative analysis')
             path=Path(cif_path).resolve()
+            phase_label=path.name
             stat=path.stat()
             mass,volume=_cif_metadata(str(path),stat.st_mtime_ns,stat.st_size)
+            source_hash=_cif_source_hash(str(path),stat.st_mtime_ns,stat.st_size)
+            input_cell=candidate.initial_cell or getattr(candidate.structure,'cell',None)
+            input_metric=(None if input_cell is None else tuple(getattr(input_cell,name)
+                for name in ('a','b','c','alpha','beta','gamma')))
+            # Identical inputs cannot become distinct phases merely through
+            # separate heuristic refinements. Explicitly different cell models
+            # still reach the independent profile-rank check below.
+            source_identity=(source_hash,input_metric)
+            if source_identity in seen_sources:
+                return unavailable(f'{path.name}: identical CIF structures cannot be separated into individual phase fractions')
+            seen_sources.add(source_identity)
             override=estimate.cell if estimate is not None else None
             if candidate.structure is not None and not candidate.cif_path:
                 # Preserve the sample-linked display model. A CIF supplies
@@ -138,39 +174,68 @@ def fit_accepted_phases(items, x, target, context, instrument, calculator) -> Ac
                 active=candidate.structure
                 if any(getattr(active,name)!=getattr(source,name) for name in
                        ('atoms','symops','space_group','space_group_number')):
-                    return None
+                    return unavailable(f'{path.name}: selected atomic sites or symmetry differ from the physical CIF model')
                 if override is None:
                     override=active.cell
             phase_context=context.with_alignment(context.global_zero_shift,cell_scale)
-            phase_context=replace(phase_context,fwhm=width,profile_eta=eta)
+            phase_context=replace(phase_context,fwhm=width,profile_eta=float(eta or 0.0))
             _structure,lines=calculator.line_calculator.candidate_structure_and_lines(
                 str(path),phase_context,use_lp=True,instrument_profile=instrument,cell_override=override)
-            profile=calculator.profile_from_lines(lines,x,phase_context,
-                instrument_profile=instrument,normalize=False)
+            profile=None
+            broadening={}
+            if refine_sample_broadening:
+                adapter=calculator.line_calculator.cristma_adapter
+                base=adapter.profile_from_lines(
+                    lines.cristma_lines,x_grid=x,instrument_profile=instrument,
+                    zero_shift_deg=context.global_zero_shift,d_spacing_scale=cell_scale,
+                    normalize=False,include_boundary_wings=True).profile_y
+                def native_profile(sample_fwhm):
+                    return broaden_profile(x,base,sample_fwhm)
+                phase_positions=[]
+                for peak in lines.peaks:
+                    if float(peak.intensity)<3.:
+                        continue
+                    angle=2*math.degrees(math.asin(context.primary_wavelength/(2*peak.d*cell_scale)))
+                    phase_positions.append(angle+context.global_zero_shift)
+                other_positions=[peak.two_theta for index,other in enumerate(items)
+                                 if index!=phase_index for peak in other[3] if peak.intensity>=3.]
+                fitted=fit_sample_broadening(
+                    x=x,target=target,phase_positions=phase_positions,observed_peaks=observed_peaks,
+                    other_phase_positions=other_positions,profile_factory=native_profile)
+                broadening=asdict(fitted)
+                broadening['profile_model']='effective_gaussian_convolution' if fitted.available else 'legacy_width_floor'
+                if fitted.available:
+                    profile=native_profile(fitted.sample_fwhm_deg)
+            if profile is None:
+                profile=calculator.profile_from_lines(lines,x,phase_context,
+                    instrument_profile=instrument,normalize=False)
+            broadening_fits.append(broadening)
             profiles.append(np.asarray(profile,dtype=float))
             peak_sets.append(tuple(lines.peaks))
             masses.append(mass)
             volumes.append(unit_cell_volume(override) if override is not None else volume*float(cell_scale)**3)
         matrix=np.column_stack(profiles)
-        target=np.asarray(target,dtype=float)
         if not np.all(np.isfinite(matrix)) or not np.all(np.isfinite(target)):
-            return None
+            return unavailable('Calculated profiles or observed signal contain non-finite intensities')
         weights=1./np.sqrt(np.maximum(np.abs(target),1.))
         weighted=matrix*weights[:,None]
         norms=np.linalg.norm(weighted,axis=0)
         if not np.all(norms>0):
-            return None
+            return unavailable('A selected phase has no usable calculated intensity within the scan range')
         normalized=weighted/norms
         if np.linalg.matrix_rank(normalized)<len(items):
-            return None
+            return unavailable('Selected phase profiles are linearly dependent; individual mass fractions cannot be separated')
         scales,_=nnls(normalized,target*weights)
         scales=scales/norms
         fractions=mass_fractions(scales,masses,volumes)
         if not np.all(np.isfinite(fractions)):
-            return None
-        return AcceptedPhaseFit(fractions,matrix,scales,tuple(peak_sets))
-    except (OSError,ValueError,TypeError,AttributeError,RuntimeError,np.linalg.LinAlgError):
-        return None
+            return unavailable('No identifiable positive phase contribution; mass fractions cannot be normalized')
+        return AcceptedPhaseFit(fractions,matrix,scales,tuple(peak_sets),tuple(broadening_fits),
+                                tuple(float(m*v) for m,v in zip(masses,volumes)))
+    except CifCompositionError as exc:
+        return unavailable(str(exc))
+    except (OSError,ValueError,TypeError,AttributeError,RuntimeError,np.linalg.LinAlgError) as exc:
+        return unavailable(f'Quant calculation failed for {phase_label}: {type(exc).__name__}: {exc}')
 
 
 def accepted_phase_quantities(items, x, target, context, instrument, calculator) -> np.ndarray:

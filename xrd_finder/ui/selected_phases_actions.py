@@ -1,8 +1,9 @@
 from __future__ import annotations
+from dataclasses import asdict
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication, QColorDialog, QMenu, QMessageBox, QProgressDialog
+from PySide6.QtWidgets import QColorDialog, QMenu, QMessageBox
 
 from xrd_finder.io.cif_loader import create_phase_from_cif
 
@@ -55,15 +56,16 @@ class PhaseFinderSelectedPhasesActionsMixin:
 
         candidate["_DisplayName"] = clean_name
         key = self._candidate_key(candidate)
-        # A phase keeps one display name across all observed patterns, just as
-        # it keeps one project-wide color. This updates inactive profile states
-        # so their local legends change immediately in multi-pattern mode.
+        local_appearance = bool(candidate.get("_LocalAppearance"))
+        # Ordinary samples share phase labels; figure-set copies keep local ones.
         for state in getattr(self, "profile_states", {}).values():
             state_candidates = state.get("candidates", []) if isinstance(state, dict) else []
             if not isinstance(state_candidates, list):
                 continue
             for state_candidate in state_candidates:
-                if isinstance(state_candidate, dict) and self._candidate_key(state_candidate) == key:
+                if (not local_appearance and isinstance(state_candidate, dict)
+                        and not state_candidate.get("_LocalAppearance")
+                        and self._candidate_key(state_candidate) == key):
                     state_candidate["_DisplayName"] = clean_name
         structure = self.match_structures.get(key)
         if structure is not None:
@@ -74,9 +76,16 @@ class PhaseFinderSelectedPhasesActionsMixin:
         except Exception:
             source_path = ""
         project_changed = False
+        pattern = self._active_pattern()
+        linked_phase_ids = set(getattr(pattern, "linked_phase_ids", []))
         if source_path:
             for phase in self.project.phases:
                 if phase.source_path != source_path:
+                    continue
+                if local_appearance:
+                    if phase.id not in linked_phase_ids:
+                        continue
+                elif phase.metadata.get("copied_for_pattern_id"):
                     continue
                 phase.name = clean_name
                 project_structure = next(
@@ -133,22 +142,42 @@ class PhaseFinderSelectedPhasesActionsMixin:
         candidate: dict[str, str],
         show_errors: bool,
         recalculate: bool = True,
+        *, _prepared_structure=None,
     ) -> bool:
+        timer = getattr(self, "_candidate_activation_timer", None)
+        if timer is not None:
+            timer.stop()
+            self._pending_candidate_row = -1
+        self._candidate_preview_token = int(getattr(self, '_candidate_preview_token', 0)) + 1
         key = self._candidate_key(candidate)
         if any(self._candidate_key(item) == key for item in self.match_candidates):
             if recalculate:
                 self.post_match_pipeline.candidate_added()
+                self._warn_large_zero_shift()
             return True
+        # Stop the broad initial Match before starting the accepted-phase work.
+        prepared_evidence = (self.gain_job_controller.cached_indexed_evidence(candidate)
+                             if recalculate and _prepared_structure is None and self.match_candidates else None)
+        gain_enabled = self._candidate_gain_auto_enabled
+        self._cancel_candidate_search_jobs()
+        self._candidate_gain_auto_enabled = gain_enabled
         try:
-            self._capture_candidate_gain_indexed_evidence(candidate)
-            cif_path = self._candidate_cif_path(candidate)
-            _phase, structure = create_phase_from_cif(cif_path)
+            if recalculate and _prepared_structure is None:
+                from xrd_finder.ui.candidate_acceptance_job import queue_candidate_acceptance
+                return queue_candidate_acceptance(self, candidate, show_errors=show_errors, prepared_evidence=prepared_evidence)
+            if _prepared_structure is None:
+                self._capture_candidate_gain_indexed_evidence(candidate)
+                cif_path = self._candidate_cif_path(candidate)
+                _phase, structure = create_phase_from_cif(cif_path)
+            else:
+                structure = _prepared_structure
             phase_name = self._candidate_phase_name(candidate)
             if phase_name:
                 structure.name = phase_name
             if not structure.formula and candidate.get("Formula"):
                 structure.formula = candidate["Formula"]
             candidate_copy = candidate.copy()
+            candidate_copy["_ReferenceCell"] = asdict(structure.cell)
             self.match_candidates.append(candidate_copy)
             self.match_structures[key] = structure
             if hasattr(self, "_save_active_profile_state"):
@@ -157,6 +186,7 @@ class PhaseFinderSelectedPhasesActionsMixin:
                 self._invalidate_match_profile_cache(getattr(self, "active_profile_pattern_id", None))
             if recalculate:
                 self.post_match_pipeline.candidate_added()
+                self._warn_large_zero_shift()
             return True
         except Exception as exc:
             if show_errors:
@@ -287,7 +317,8 @@ class PhaseFinderSelectedPhasesActionsMixin:
             return
         candidate["_Color"] = color.name()
         phase_key = self._candidate_key(candidate)
-        self.phase_colors[phase_key] = color.name()
+        if not candidate.get("_LocalAppearance"):
+            self.phase_colors[phase_key] = color.name()
         if hasattr(self, "_save_active_profile_state"):
             self._save_active_profile_state()
         self._recalculate_match_profile()
@@ -317,11 +348,13 @@ class PhaseFinderSelectedPhasesActionsMixin:
     def _update_match_table(self) -> None:
         if hasattr(self.candidate_table, "set_scoring_stage"):
             self.candidate_table.set_scoring_stage(bool(self.match_candidates))
+        if hasattr(self, '_refresh_candidate_score_labels'):
+            self._refresh_candidate_score_labels()
         rows = []
         for row, candidate in enumerate(self.match_candidates):
             key = self._candidate_key(candidate)
             iic = self.match_iic.get(key, 0.0)
-            iic_text = f"{iic:.3g}" if iic > 0 else ""
+            iic_text = candidate.get("I/Ic*", "") if iic > 0 else ""
             rows.append([
                 self._phase_color(candidate, row),
                 self._phase_legend_label(candidate),
@@ -330,6 +363,12 @@ class PhaseFinderSelectedPhasesActionsMixin:
                 iic_text,
             ])
         self.match_table.set_rows(rows)
+        for row, candidate in enumerate(self.match_candidates):
+            reason = candidate.get('_QuantificationError', '')
+            if reason:
+                item = self.match_table.item(row, 3)
+                if item is not None:
+                    item.setToolTip(f'Quant unavailable: {reason}')
         self._update_candidate_project_colors()
         if hasattr(self, "_update_compound_card_sample"):
             self._update_compound_card_sample()
@@ -349,10 +388,16 @@ class PhaseFinderSelectedPhasesActionsMixin:
         self.candidate_table.set_selected_phase_colors(colors)
 
     def _schedule_candidate_gain_ranking(self) -> None:
-        if not getattr(self, "_candidate_gain_auto_enabled", False):
+        queue = getattr(self, '_accepted_profile_queue', None)
+        pattern_id = getattr(self._active_pattern(), 'id', None)
+        if queue is not None and (queue.waiting_for(pattern_id) or pattern_id in queue.failures):
+            self.gain_job_controller.invalidate()
             return
-        if getattr(self, "_candidate_gain_ranking_running", False):
-            self._candidate_gain_refresh_requested = True
+        if not getattr(self, "_candidate_gain_auto_enabled", False):
+            self.gain_job_controller.invalidate()
+            return
+        if self.gain_job_controller.running:
+            self.gain_job_controller.request()
             return
         if getattr(self, "_candidate_gain_ranking_pending", False):
             return
@@ -361,73 +406,14 @@ class PhaseFinderSelectedPhasesActionsMixin:
 
     def _run_scheduled_candidate_gain_ranking(self) -> None:
         self._candidate_gain_ranking_pending = False
-        if not getattr(self, "_candidate_gain_auto_enabled", False):
-            return
-        if getattr(self, "_candidate_gain_ranking_running", False):
-            self._candidate_gain_refresh_requested = True
-            return
-        self._candidate_gain_ranking_running = True
-        try:
-            self._refresh_candidate_gain_ranking()
-        finally:
-            self._candidate_gain_ranking_running = False
-            if getattr(self, "_candidate_gain_refresh_requested", False):
-                self._candidate_gain_refresh_requested = False
-                self._schedule_candidate_gain_ranking()
+        self.gain_job_controller.request()
 
     def _refresh_candidate_gain_ranking(self) -> None:
-        if not getattr(self, "_candidate_gain_auto_enabled", False) or not self.match_candidates:
+        if not self.match_candidates:
             return
-        search_token = getattr(self, "_candidate_search_request_token", 0)
-        existing_rows = self._candidate_state_rows(self.candidate_table.ranking_row_values())
-        rows: list[list[str]] = []
-        gain_context = None
-        if hasattr(self, "_gain_sql_candidate_rows"):
-            gain_context = self._candidate_gain_context()
-            if gain_context is not None:
-                rows.extend(self._gain_sql_candidate_rows(stage="combined", context=gain_context))
-        # The indexed residual lookup is an accelerator, not a hard gate.
-        # Keep already loaded candidates available when the narrow SQL query
-        # misses a shifted or overlapping phase.
-        # The residual fingerprint query searches the complete local index.
-        # Keep a bounded Match-ranked fallback for shifted or sparse patterns
-        # instead of rescoring the whole previous table with full Gain logic.
-        rows.extend(existing_rows[:120])
-        rows = self.candidate_search_service.dedupe_candidate_rows(
-            self._candidate_rows_without_gain(rows)
-        )
-        dialog = QProgressDialog("Updating Gain...", "", 0, max(len(rows), 1), self)
-        dialog.setWindowTitle("Gain ranking")
-        dialog.setCancelButton(None)
-        dialog.setMinimumDuration(0)
-        dialog.setWindowModality(Qt.WindowModality.WindowModal)
-        dialog.show()
-        QApplication.processEvents()
-
-        def rank_progress(value: int, maximum: int) -> None:
-            maximum = max(int(maximum), 1)
-            value = max(0, min(int(value), maximum))
-            dialog.setMaximum(maximum)
-            dialog.setValue(value)
-            dialog.setLabelText(f"Updating Gain... {value}/{maximum}")
-            QApplication.processEvents()
-
-        try:
-            if (not getattr(self, "_candidate_gain_auto_enabled", False)
-                    or search_token != getattr(self, "_candidate_search_request_token", 0)):
-                return
-            self._set_candidate_rows(
-                rows,
-                force_rank=True,
-                rank_progress=rank_progress,
-                gain_context=gain_context,
-            )
-            if (not getattr(self, "_candidate_gain_auto_enabled", False)
-                    or search_token != getattr(self, "_candidate_search_request_token", 0)):
-                return
-            self.candidate_table.ensure_visible_selection()
-        finally:
-            dialog.close()
+        if hasattr(self, "_prepare_gain_reference_range") and not self._prepare_gain_reference_range():
+            return
+        self.gain_job_controller.request()
 
     def _candidate_rows_without_gain(self, rows: list[list[str]]) -> list[list[str]]:
         cleaned = []
@@ -440,9 +426,12 @@ class PhaseFinderSelectedPhasesActionsMixin:
     def _phase_color(self, candidate: dict[str, str], index: int) -> str:
         palette = ["#d93025", "#1a73e8", "#188038", "#f9ab00", "#8e24aa", "#7b1fa2"]
         phase_key = self._candidate_key(candidate)
-        color = self.phase_colors.get(phase_key, "") or candidate.get("_Color", "")
+        local_appearance = bool(candidate.get("_LocalAppearance"))
+        color = (candidate.get("_Color", "") if local_appearance else self.phase_colors.get(phase_key, ""))
+        color = color or self.phase_colors.get(phase_key, "") or candidate.get("_Color", "")
         if not QColor(color).isValid():
             color = palette[len(self.phase_colors) % len(palette)]
-        self.phase_colors[phase_key] = color
+        if not local_appearance:
+            self.phase_colors[phase_key] = color
         candidate["_Color"] = color
         return color

@@ -447,6 +447,31 @@ def is_broad_rescue_candidate(hypothesis: object) -> bool:
     )
 
 
+def is_narrow_rescue_candidate(hypothesis: object, *, sigma_threshold: float = 3.0) -> bool:
+    """Require independent profile evidence for a missing narrow maximum.
+
+    Reuse the broad-rescue shape, area and curvature requirements, with a
+    stronger height requirement and explicit persistence/local-fit evidence.
+    A broadening label alone cannot decide whether a bank peak is usable.
+    """
+    def value(name: str) -> float:
+        try:
+            result = float(getattr(hypothesis, name))
+        except (AttributeError, TypeError, ValueError):
+            return 0.0
+        return result if math.isfinite(result) else 0.0
+
+    return bool(
+        0.0 < value("broadening_scale") < 2.5
+        and value("profile_match") >= 0.62
+        and value("local_snr") >= max(3.0, float(sigma_threshold))
+        and value("area_snr") >= 6.0
+        and value("curvature") >= 2.0
+        and value("width_persistence") >= 2
+        and value("delta_chi2") >= max(9.0, float(sigma_threshold) ** 2)
+    )
+
+
 def _local_prominence(
     x: np.ndarray,
     detrended: np.ndarray,
@@ -537,5 +562,6 @@ def _local_noise(
 __all__ = [
     "ProfileMatchedPeakHypothesis",
     "is_broad_rescue_candidate",
+    "is_narrow_rescue_candidate",
     "profile_matched_peak_hypotheses",
 ]

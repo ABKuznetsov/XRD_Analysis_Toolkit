@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import math
+import hashlib
+import json
 import re
 import shutil
 from pathlib import Path
@@ -23,10 +25,13 @@ from xrd_finder.ui.candidate_enrichment import (
 
 class PhaseFinderCandidateInfoActionsMixin:
     def _queue_candidate_row_activation(self, row: int) -> None:
+        self._candidate_preview_token = int(getattr(self, '_candidate_preview_token', 0)) + 1
         self._pending_candidate_row = row
         self._candidate_activation_timer.start()
 
     def _activate_pending_candidate_row(self) -> None:
+        if getattr(self, '_preparation_close_confirmed', False):
+            return
         # Loading or manual sorting may have moved the selected card since the click.
         row = self.candidate_table.currentRow()
         self._pending_candidate_row = -1
@@ -92,20 +97,10 @@ class PhaseFinderCandidateInfoActionsMixin:
                 else 0.0
             )
         if gain_context is not None:
-            candidate_key = self._candidate_key(candidate)
-            profile_evaluated, profile_gain = gain_context.get(
-                "_gain_profile_support_by_key", {}
-            ).get(candidate_key, (False, None))
-            gain = DEFAULT_GAIN_POLICY.reportable_gain(
-                gain,
-                dominant_evidence=gain_context.get(
-                    "_gain_dominant_evidence_by_key", {}
-                ).get(candidate_key),
-                profile_gain=profile_gain,
-                profile_evaluated=profile_evaluated,
-            )
+            gain = self._candidate_reportable_gain(candidate, gain, gain_context)
         if gain > 0:
-            candidate["Gain (%)"] = f"{gain:.1f}%" if gain < 10.0 else f"{gain:.0f}%"
+            candidate["Gain (%)"] = ((f"{gain:.3g}%" if gain < .1 else f"{gain:.1f}%")
+                                      if gain < 10.0 else f"{gain:.0f}%")
         else:
             candidate.pop("Gain (%)", None)
 
@@ -205,12 +200,12 @@ class PhaseFinderCandidateInfoActionsMixin:
                 )
             if not phase_id:
                 continue
-            quantity = float(self.match_quantities.get(key, 0.0) or 0.0)
-            iic = float(self.match_iic.get(key, 0.0) or 0.0)
+            quantity = self.match_quantities.get(key)
+            iic = float(self.match_iic.get(key, 0.0) or 0.0) if str(candidate.get("Source", "")).upper()=="PDF2" else 0.0
             cell_scale = float(self.match_cell_scales.get(key, 0.0) or 0.0)
             metrics[phase_id] = {
-                "quantity": f"{quantity:.1f}" if quantity else "",
-                "iic": f"{iic:.3g}" if iic > 0 else "",
+                "quantity": f"{quantity:.1f}" if quantity is not None else "—",
+                "iic": candidate.get("I/Ic*", "") if iic > 0 else "",
                 "cell_scale": f"{cell_scale:.5g}" if cell_scale else "",
                 "fwhm": self._compound_card_number(getattr(self, "_last_match_profile_fwhm", None), precision=4),
                 "eta": self._compound_card_number(getattr(self, "_last_match_profile_eta", None), precision=3),
@@ -226,6 +221,9 @@ class PhaseFinderCandidateInfoActionsMixin:
             return str(path).lower()
 
     def _enrich_candidate_with_structure_info(self, candidate: dict[str, str]) -> None:
+        if self._candidate_source(candidate) != "PDF2":
+            candidate.pop("I/Ic*", None)
+            candidate.pop("I/Ic", None)
         if self._candidate_source(candidate) == "PDF2" and candidate.get("Entry"):
             self._enrich_candidate_with_pdf2_info(candidate)
             return
@@ -256,9 +254,10 @@ class PhaseFinderCandidateInfoActionsMixin:
             self.candidate_search_service.display_formula,
             lambda item: cached_rows or self._diffraction_rows_for_structure(item),
         )
-        probability = self._structure_peak_probability(structure)
-        if probability > 0:
-            candidate["Match (%)"] = f"{probability:.0f}%"
+        if not self.match_candidates:
+            probability = self._structure_peak_probability(structure)
+            if probability > 0:
+                candidate["Match (%)"] = f"{probability:.0f}%"
 
     def _enrich_candidate_from_local_cache(self, candidate: dict[str, str]) -> bool:
         if self._candidate_embedded_cif_path(candidate) is not None:
@@ -282,6 +281,8 @@ class PhaseFinderCandidateInfoActionsMixin:
             candidate["Formula"] = self.candidate_search_service.display_formula(entry.formula)
         if entry.spacegroup:
             candidate["Space group"] = entry.spacegroup
+        candidate["I/Ic*"] = self.candidate_search_service.display_iic(entry.iic, entry.derived_version, entry.iic_method)
+        candidate["_IicMethod"] = entry.iic_method
         cell = CellParameters(
             a=entry.a,
             b=entry.b,
@@ -308,10 +309,43 @@ class PhaseFinderCandidateInfoActionsMixin:
             candidate["_DiffractionRows"] = diffraction_rows
         if entry.source_text and not candidate.get("Notes"):
             candidate["Notes"] = entry.source_text
-        probability = self._candidate_peak_probability_from_cache(candidate)
-        if probability > 0:
-            candidate["Match (%)"] = f"{probability:.0f}%"
+        if not self.match_candidates:
+            probability = self._candidate_peak_probability_from_cache(candidate)
+            if probability > 0:
+                candidate["Match (%)"] = f"{probability:.0f}%"
         return True
+
+    def _apply_cached_iic(self, candidate, entry=None, *, lookup_cache: bool = True) -> bool:
+        if candidate.get("_IicProvenance") == "reference":
+            return False
+        if entry is None and lookup_cache:
+            entry = self.local_phase_cache.get(self._candidate_source(candidate), candidate.get("Entry", ""))
+        if entry is None:
+            # A portable project can retain a current, traceable snapshot even
+            # when its original database card is not present on this computer.
+            method = candidate.get("_IicMethod", "")
+            if self.local_phase_cache.calculated_iic.current(method):
+                record = json.loads(method)
+                text = self.candidate_search_service.display_iic(record.get("value"), method=method)
+            else:
+                text, method = "", ""
+        else:
+            method = entry.iic_method
+            text = self.candidate_search_service.display_iic(entry.iic, entry.derived_version, method)
+        embedded = self._candidate_embedded_cif_path(candidate)
+        if embedded is not None and text:
+            try:
+                same_structure = (json.loads(method).get("structure") ==
+                                  hashlib.sha256(embedded.read_bytes()).hexdigest())
+            except (OSError, ValueError):
+                same_structure = False
+            if not same_structure:
+                text, method = "", ""
+        changed = candidate.get("I/Ic*", "") != text or candidate.get("_IicMethod", "") != method
+        candidate["I/Ic*"] = text
+        candidate["_IicMethod"] = method
+        self.match_iic[self._candidate_key(candidate)] = float(text[1:]) if text.startswith("~") else 0.
+        return changed
 
     def _cached_atom_rows(self, atoms_json: str) -> list[list[str]]:
         if not atoms_json:
@@ -350,6 +384,10 @@ class PhaseFinderCandidateInfoActionsMixin:
             return str(value)
 
     def _candidate_peak_probability_from_cache(self, candidate: dict[str, str]) -> float:
+        # A click may arrive while background observation preparation is still
+        # running. The table's Match job supplies the value when it completes.
+        if getattr(self, '_observed_probability_cache', None) is None:
+            return 0.0
         probability_data = self._probability_observed_data()
         if probability_data is None:
             return 0.0
@@ -372,26 +410,6 @@ class PhaseFinderCandidateInfoActionsMixin:
         peaks = self._pdf2_peaks_for_candidate(candidate)
         enrich_candidate_from_pdf2_details(candidate, details, peaks)
 
-    def _pdf2_peaks_for_candidate(self, candidate: dict[str, str]):
-        wavelength = self._active_wavelength()
-        peaks = []
-        for peak in self.match_pdf2.diffraction_peaks(candidate.get("Entry", "")):
-            ratio = wavelength / (2.0 * peak.d_spacing)
-            if ratio <= 0.0 or ratio > 1.0:
-                continue
-            two_theta = math.degrees(2.0 * math.asin(ratio))
-            peaks.append(
-                SimpleNamespace(
-                    two_theta=two_theta,
-                    reference_two_theta=two_theta,
-                    d_spacing=peak.d_spacing,
-                    intensity=peak.intensity,
-                    h=peak.h,
-                    k=peak.k,
-                    l=peak.l,
-                )
-            )
-        return peaks
 
     def _cached_diffraction_rows_for_candidate(self, candidate: dict[str, str]) -> list[list[str]]:
         if self._candidate_embedded_cif_path(candidate) is not None:
@@ -401,7 +419,10 @@ class PhaseFinderCandidateInfoActionsMixin:
         if not source or not entry_id:
             return []
         try:
-            rows = self.local_phase_cache.diffraction_rows(source, entry_id)
+            instrument = self._instrument_profile_for_pattern(self._active_pattern())
+            rows = self.local_phase_cache.diffraction_rows(source, entry_id,
+                wavelength=float(instrument.radiation.components[0].wavelength_angstrom),
+                instrument_profile=instrument)
         except Exception:
             return []
         return rows
@@ -450,7 +471,11 @@ class PhaseFinderCandidateInfoActionsMixin:
                     column = index
                     break
             if column >= 0 and (value or header == "Match (%)"):
-                self.candidate_table.setItem(row, column, QTableWidgetItem(value))
+                item = self.candidate_table.item(row, column)
+                if item is None:
+                    self.candidate_table.setItem(row, column, QTableWidgetItem(value))
+                else:
+                    item.setText(self.candidate_table._score_display_text(column, value))
         self.candidate_table._schedule_user_sort()
 
     def _show_candidate_context_menu(self, global_point) -> None:

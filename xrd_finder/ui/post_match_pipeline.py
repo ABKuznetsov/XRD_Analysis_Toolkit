@@ -14,9 +14,13 @@ class PostMatchPipeline:
     should_autozoom: Callable[[], bool]
 
     def candidate_added(self) -> None:
-        """Refine first, then render the final profile once and refresh Gain."""
+        """Estimate the accepted cell while rendering, then refresh Gain.
 
-        self.run_cell_stage()
+        FinderService performs the fast indexed-position estimate. The separate
+        full cell-fit action remains explicit rather than running a second fit
+        automatically for every acceptance.
+        """
+
         self.run_profile_stage()
         self.run_gain_stage()
 

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from xrd_finder.services.candidate_rows import CandidateRowFormatter, normalize_candidate_row
+
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import CancelledError, ThreadPoolExecutor
 from dataclasses import dataclass, field
+from pathlib import Path
+import math
 import re
 import threading
 import time
@@ -16,7 +20,10 @@ from xrd_finder.services.candidate_preparation_queue import (
 from xrd_finder.services.ccdc_service import CcdcService, extract_doi
 from xrd_finder.services.cod_online_service import CodEntry, CodOnlineService, formula_elements
 from xrd_finder.services.computational_database_service import AflowService, OqmdService
-from xrd_finder.services.local_phase_cache import DERIVED_CACHE_VERSION, LocalPhaseCache
+from xrd_finder.services.calculated_pattern_service import CU_KA1_WAVELENGTH
+from xrd_finder.services.local_phase_cache import (
+    CachedPreparationState, DERIVED_CACHE_VERSION, REINDEXABLE_CACHE_VERSIONS, LocalPhaseCache,
+)
 from xrd_finder.services.match_pdf2_service import MatchPdf2Service
 from xrd_finder.services.materials_project_service import MaterialsProjectService
 from xrd_finder.services.rruff_service import RruffService
@@ -44,9 +51,10 @@ class CandidateSearchOptions:
     observed_peak_positions: list[float] = field(default_factory=list)
     restrict_to_selected_elements: bool = True
     defer_candidate_preparation: bool = False
+    wavelength: float = CU_KA1_WAVELENGTH
 
 
-class CandidateSearchService:
+class CandidateSearchService(CandidateRowFormatter):
     STRUCTURAL_RESULT_LIMIT = 500
     LOCAL_INDEXED_RESULT_LIMIT = 5000
     LOCAL_FINGERPRINT_RESULT_LIMIT = 500
@@ -154,7 +162,13 @@ class CandidateSearchService:
         progress: SearchProgressCallback | None = None,
         partial_results: SearchPartialResultsCallback | None = None,
         session_token: int | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> list[list[str]]:
+        def check_cancelled():
+            if cancelled is not None and cancelled():
+                raise CancelledError('Manual phase search cancelled')
+
+        check_cancelled()
         query = query.strip()
         if not query:
             return []
@@ -166,11 +180,15 @@ class CandidateSearchService:
         if doi and options.structural_data_enabled:
             try:
                 entry = self.download_ccdc_doi_to_cache(doi)
+                check_cancelled()
                 rows.extend(self.cache_rows([entry]))
+            except CancelledError:
+                raise
             except Exception as exc:
                 rows.append(["CCDC", doi, "", "CCDC CIF not available", "", str(exc)])
         self._emit_search_progress(progress, "Checking local cache...", len(rows), 0, 1)
 
+        check_cancelled()
         if options.local_sources and options.structural_data_enabled:
             rows.extend(
                 self.cache_rows(
@@ -178,11 +196,13 @@ class CandidateSearchService:
                         options,
                         formula_query or ("" if query_elements else query),
                         query_elements or None,
+                        cancelled=cancelled,
                     )
                 )
             )
             self._emit_search_progress(progress, f"Local cache: found {len(rows)} candidates", len(rows), 0, 4)
 
+        check_cancelled()
         if options.rruff_enabled and options.reference_patterns_enabled:
             rows.extend(
                 self.rruff_rows(
@@ -199,12 +219,14 @@ class CandidateSearchService:
             )
             self._emit_search_progress(progress, f"RRUFF: found {len(rows)} candidates total", len(rows), 0, 5)
 
+        check_cancelled()
         if options.match_pdf2_enabled and options.reference_patterns_enabled:
             pdf2_rows = self.match_pdf2_rows(
                 self._timed_search_match_pdf2(
                     "" if query_elements else query,
                     query_elements or None,
                     options.excluded_elements,
+                    **({"cancelled": cancelled} if cancelled is not None else {}),
                 )
             )
             rows = pdf2_rows + rows
@@ -212,7 +234,9 @@ class CandidateSearchService:
 
         rows = self._emit_partial_candidate_rows(partial_results, rows, options)
 
+        check_cancelled()
         ccdc_key = self.search_cache_key("text", query)
+        check_cancelled()
         if options.structural_data_enabled and not self.local_phase_cache.search_is_fresh("CCDC", ccdc_key):
             try:
                 self._emit_search_progress(progress, "Searching CCDC/CSD...", len(rows), 0, 2)
@@ -224,6 +248,7 @@ class CandidateSearchService:
                         limit=self.CCDC_RESULT_LIMIT,
                     ),
                 )
+                check_cancelled()
                 self.index_ccdc_entries(ccdc_entries)
                 self.local_phase_cache.mark_search("CCDC", ccdc_key)
                 rows = self.dedupe_candidate_rows(
@@ -233,14 +258,18 @@ class CandidateSearchService:
                             options,
                             text=formula_query or ("" if query_elements else query),
                             elements=query_elements or None,
+                            cancelled=cancelled,
                         )
                     )
                 )
                 self._emit_search_progress(progress, f"CCDC/CSD: found {len(ccdc_entries)} entries", len(rows), 0, 3)
+            except CancelledError:
+                raise
             except Exception as exc:
                 if not rows and self.ccdc.status().installed:
                     rows.append(["CCDC", "", "", "CSD search failed", "", str(exc)])
 
+        check_cancelled()
         if options.cod_online_enabled and options.structural_data_enabled:
             cod_key = self.search_cache_key("text", query, options.excluded_elements)
             cod_cache_has_rows = self._candidate_rows_have_source(rows, "COD")
@@ -248,6 +277,7 @@ class CandidateSearchService:
             if (
                 cod_cache_has_rows
                 and not cod_search_is_fresh
+                and partial_results is None
                 and not bool(getattr(options, "defer_candidate_preparation", False))
             ):
                 self._queue_background_cod_text_refresh(
@@ -265,7 +295,7 @@ class CandidateSearchService:
                     0,
                     8,
                 )
-            elif not cod_cache_has_rows:
+            elif not cod_cache_has_rows or not cod_search_is_fresh:
                 try:
                     self._emit_search_progress(progress, "Connecting to online databases...", len(rows), 0, 7)
                     cod_entries = self._timed_source_call(
@@ -281,8 +311,11 @@ class CandidateSearchService:
                                 result_limit=limit,
                             ),
                             session_token=session_token,
+                            queue_downloads=not bool(getattr(options, 'defer_candidate_preparation', False)),
+                            cancelled=cancelled,
                         ),
                     )
+                    check_cancelled()
                     rows = self.dedupe_candidate_rows(
                         rows + self.cod_rows(cod_entries)
                     )
@@ -294,9 +327,12 @@ class CandidateSearchService:
                         len(cod_entries),
                         8,
                     )
+                except CancelledError:
+                    raise
                 except Exception:
                     pass
 
+        check_cancelled()
         if options.materials_project_enabled and options.structural_data_enabled:
             mp_key = self.search_cache_key("text", query)
             if not self.local_phase_cache.search_is_fresh("MP", mp_key):
@@ -316,19 +352,25 @@ class CandidateSearchService:
                             "mp",
                             lambda: self.materials_project.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT),
                         )
+                        check_cancelled()
                         self.local_phase_cache.upsert_materials_project_entries(mp_entries)
+                        rows = self._emit_partial_candidate_rows(partial_results, rows + self.mp_rows(mp_entries), options)
+                        check_cancelled()
                         self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
                         queued = 0
                         if not bool(getattr(options, "defer_candidate_preparation", False)):
                             queued = self.queue_background_mp_downloads(
-                                mp_entries,
+                                [entry for entry in mp_entries if self.candidate_formula_allowed(entry.formula, options)],
                                 session_token=session_token,
                             )
                         self._emit_search_progress(progress, f"Materials Project: found {len(mp_entries)}, queued {queued} CIF downloads", len(rows), queued, 9)
+                    except CancelledError:
+                        raise
                     except Exception as exc:
                         if not rows:
                             rows.append(["MP", "", "", "Materials Project search failed", "", str(exc)])
 
+        check_cancelled()
         if options.aflow_enabled and options.structural_data_enabled:
             aflow_key = self.search_cache_key("text", query)
             if not self.local_phase_cache.search_is_fresh("AFLOW", aflow_key):
@@ -342,19 +384,25 @@ class CandidateSearchService:
                             "aflow",
                             lambda: self.aflow.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT),
                         )
+                        check_cancelled()
                         self.local_phase_cache.upsert_computational_entries(aflow_entries)
+                        rows = self._emit_partial_candidate_rows(partial_results, rows + self.computational_rows(aflow_entries), options)
+                        check_cancelled()
                         self._mark_search_if_complete("AFLOW", aflow_key, len(aflow_entries), self.COMPUTATIONAL_RESULT_LIMIT)
                         queued = 0
                         if not bool(getattr(options, "defer_candidate_preparation", False)):
                             queued = self.queue_background_aflow_downloads(
-                                aflow_entries,
+                                [entry for entry in aflow_entries if self.candidate_formula_allowed(entry.formula, options)],
                                 session_token=session_token,
                             )
                         self._emit_search_progress(progress, f"AFLOW: found {len(aflow_entries)}, queued {queued} CIF downloads", len(rows), queued, 10)
+                    except CancelledError:
+                        raise
                     except Exception as exc:
                         if not rows:
                             rows.append(["AFLOW", "", "", "AFLOW search failed", "", str(exc)])
 
+        check_cancelled()
         if options.oqmd_enabled and options.structural_data_enabled:
             oqmd_key = self.search_cache_key("text", query)
             if not self.local_phase_cache.search_is_fresh("OQMD", oqmd_key):
@@ -368,19 +416,25 @@ class CandidateSearchService:
                             "oqmd",
                             lambda: self.oqmd.search_text(query=query, limit=self.COMPUTATIONAL_RESULT_LIMIT),
                         )
+                        check_cancelled()
                         self.local_phase_cache.upsert_computational_entries(oqmd_entries)
+                        rows = self._emit_partial_candidate_rows(partial_results, rows + self.computational_rows(oqmd_entries), options)
+                        check_cancelled()
                         self._mark_search_if_complete("OQMD", oqmd_key, len(oqmd_entries), self.COMPUTATIONAL_RESULT_LIMIT)
                         queued = 0
                         if not bool(getattr(options, "defer_candidate_preparation", False)):
                             queued = self.queue_background_oqmd_downloads(
-                                oqmd_entries,
+                                [entry for entry in oqmd_entries if self.candidate_formula_allowed(entry.formula, options)],
                                 session_token=session_token,
                             )
                         self._emit_search_progress(progress, f"OQMD: found {len(oqmd_entries)}, queued {queued} CIF downloads", len(rows), queued, 11)
+                    except CancelledError:
+                        raise
                     except Exception as exc:
                         if not rows:
                             rows.append(["OQMD", "", "", "OQMD search failed", "", str(exc)])
 
+        check_cancelled()
         rows = self.dedupe_candidate_rows(self.filter_candidate_rows_by_excluded_elements(rows, options))
         self._emit_search_progress(progress, f"Done: found {len(rows)} candidates", len(rows), 0, 12)
         return rows
@@ -392,8 +446,11 @@ class CandidateSearchService:
         progress: SearchProgressCallback | None = None,
         partial_results: SearchPartialResultsCallback | None = None,
         session_token: int | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> list[list[str]]:
         rows = []
+        if cancelled is not None and cancelled():
+            return rows
         self._emit_search_progress(progress, "Checking local cache...", 0, 0, 1)
         local_enabled = bool(options.local_sources and options.structural_data_enabled)
         pdf2_enabled = bool(options.match_pdf2_enabled and options.reference_patterns_enabled)
@@ -409,18 +466,20 @@ class CandidateSearchService:
                     options,
                     "",
                     elements,
+                    cancelled=cancelled,
                 )
                 pdf2_future = executor.submit(
                     self._timed_search_match_pdf2,
                     "",
                     elements,
                     options.excluded_elements,
+                    **({"cancelled": cancelled} if cancelled is not None else {}),
                 )
                 local_entries = local_future.result()
                 pdf2_entries = pdf2_future.result()
         if local_enabled:
             if local_entries is None:
-                local_entries = self._timed_search_local_cache(options, "", elements)
+                local_entries = self._timed_search_local_cache(options, "", elements, cancelled=cancelled)
             rows.extend(self.cache_rows(local_entries))
             self._emit_search_progress(progress, f"Local cache: found {len(rows)} candidates", len(rows), 0, 2)
         if options.rruff_enabled and options.reference_patterns_enabled:
@@ -443,11 +502,14 @@ class CandidateSearchService:
                     "",
                     elements,
                     options.excluded_elements,
+                    **({"cancelled": cancelled} if cancelled is not None else {}),
                 )
             pdf2_rows = self.match_pdf2_rows(pdf2_entries)
             rows = pdf2_rows + rows
             self._emit_search_progress(progress, f"PDF-2: found {len(rows)} candidates total", len(rows), 0, 4)
         rows = self._emit_partial_candidate_rows(partial_results, rows, options)
+        if cancelled is not None and cancelled():
+            return rows
         if options.cod_online_enabled and options.structural_data_enabled:
             cod_key = self.search_cache_key("elements", elements, options.excluded_elements)
             cod_cache_has_rows = self._candidate_rows_have_source(rows, "COD")
@@ -455,6 +517,7 @@ class CandidateSearchService:
             if (
                 cod_cache_has_rows
                 and not cod_search_is_fresh
+                and partial_results is None
                 and not bool(getattr(options, "defer_candidate_preparation", False))
             ):
                 self._queue_background_cod_elements_refresh(
@@ -470,7 +533,7 @@ class CandidateSearchService:
                     0,
                     6,
                 )
-            elif not cod_cache_has_rows:
+            elif not cod_cache_has_rows or not cod_search_is_fresh:
                 try:
                     self._emit_search_progress(progress, "Connecting to online databases...", len(rows), 0, 5)
                     cod_entries = self._timed_source_call(
@@ -481,6 +544,7 @@ class CandidateSearchService:
                             options,
                             session_token=session_token,
                             result_limit=self.ONLINE_RESULT_LIMIT,
+                            cancelled=cancelled,
                         ),
                     )
                     rows = self.dedupe_candidate_rows(
@@ -496,6 +560,8 @@ class CandidateSearchService:
                     )
                 except Exception as exc:
                     rows.append(["", "COD", "", "", f"COD search failed: {exc}", "", "", "", "", ""])
+        if cancelled is not None and cancelled():
+            return rows
         if options.materials_project_enabled and options.structural_data_enabled:
             mp_key = self.search_cache_key("elements", elements, options.excluded_elements)
             if not self.local_phase_cache.search_is_fresh("MP", mp_key):
@@ -519,17 +585,22 @@ class CandidateSearchService:
                                 limit=self.COMPUTATIONAL_RESULT_LIMIT,
                             ),
                         )
+                        if cancelled is not None and cancelled():
+                            return rows
                         self.local_phase_cache.upsert_materials_project_entries(mp_entries)
+                        rows = self._emit_partial_candidate_rows(partial_results, rows + self.mp_rows(mp_entries), options)
                         self._mark_search_if_complete("MP", mp_key, len(mp_entries), self.COMPUTATIONAL_RESULT_LIMIT)
                         queued = 0
                         if not bool(getattr(options, "defer_candidate_preparation", False)):
                             queued = self.queue_background_mp_downloads(
-                                mp_entries,
+                                [entry for entry in mp_entries if self.candidate_formula_allowed(entry.formula, options)],
                                 session_token=session_token,
                             )
                         self._emit_search_progress(progress, f"Materials Project: found {len(mp_entries)}, queued {queued} CIF downloads", len(rows), queued, 8)
                     except Exception as exc:
                         rows.append(["MP", "", "", "Materials Project search failed", "", str(exc)])
+        if cancelled is not None and cancelled():
+            return rows
         if options.aflow_enabled and options.structural_data_enabled:
             aflow_key = self.search_cache_key("elements", elements, options.excluded_elements)
             if not self.local_phase_cache.search_is_fresh("AFLOW", aflow_key):
@@ -552,17 +623,22 @@ class CandidateSearchService:
                                 options.optional_elements,
                             ),
                         )
+                        if cancelled is not None and cancelled():
+                            return rows
                         self.local_phase_cache.upsert_computational_entries(aflow_entries)
+                        rows = self._emit_partial_candidate_rows(partial_results, rows + self.computational_rows(aflow_entries), options)
                         self._mark_search_if_complete("AFLOW", aflow_key, len(aflow_entries), self.COMPUTATIONAL_RESULT_LIMIT)
                         queued = 0
                         if not bool(getattr(options, "defer_candidate_preparation", False)):
                             queued = self.queue_background_aflow_downloads(
-                                aflow_entries,
+                                [entry for entry in aflow_entries if self.candidate_formula_allowed(entry.formula, options)],
                                 session_token=session_token,
                             )
                         self._emit_search_progress(progress, f"AFLOW: found {len(aflow_entries)}, queued {queued} CIF downloads", len(rows), queued, 10)
                     except Exception as exc:
                         rows.append(["AFLOW", "", "", "AFLOW search failed", "", str(exc)])
+        if cancelled is not None and cancelled():
+            return rows
         if options.oqmd_enabled and options.structural_data_enabled:
             oqmd_key = self.search_cache_key("elements", elements, options.excluded_elements)
             if not self.local_phase_cache.search_is_fresh("OQMD", oqmd_key):
@@ -585,12 +661,15 @@ class CandidateSearchService:
                                 options.optional_elements,
                             ),
                         )
+                        if cancelled is not None and cancelled():
+                            return rows
                         self.local_phase_cache.upsert_computational_entries(oqmd_entries)
+                        rows = self._emit_partial_candidate_rows(partial_results, rows + self.computational_rows(oqmd_entries), options)
                         self._mark_search_if_complete("OQMD", oqmd_key, len(oqmd_entries), self.COMPUTATIONAL_RESULT_LIMIT)
                         queued = 0
                         if not bool(getattr(options, "defer_candidate_preparation", False)):
                             queued = self.queue_background_oqmd_downloads(
-                                oqmd_entries,
+                                [entry for entry in oqmd_entries if self.candidate_formula_allowed(entry.formula, options)],
                                 session_token=session_token,
                             )
                         self._emit_search_progress(progress, f"OQMD: found {len(oqmd_entries)}, queued {queued} CIF downloads", len(rows), queued, 11)
@@ -605,8 +684,43 @@ class CandidateSearchService:
         options: CandidateSearchOptions,
         text: str = "",
         elements: list[str] | None = None,
+        *, cancelled: Callable[[], bool] | None = None,
     ):
+        if cancelled is not None and cancelled():
+            raise CancelledError('Local phase search cancelled')
+        cancel_options = {'cancelled': cancelled, 'strict': True} if cancelled is not None else {}
         if options.observed_peak_positions:
+            prepare_index=getattr(self.local_phase_cache,'ensure_peak_search_index',None)
+            if prepare_index is not None:
+                prepare_index(cancelled=cancelled,progress=lambda message,_value,_maximum:
+                              self._emit_background_status(message))
+            # This method runs in the search worker. Expand only the filtered
+            # local structural population before any SQL peak preselection.
+            # Otherwise missing high-q lines can exclude a card before scoring.
+            local_entries = self.local_phase_cache.search(text=text, elements=elements,
+                    excluded_elements=options.excluded_elements, sources=options.local_sources,
+                    limit=2_147_483_647, strict=True, deduplicate=False, summary_only=True, **({'cancelled': cancelled} if cancelled is not None else {}))
+            if options.defer_candidate_preparation:
+                return local_entries  # Count first; preparation follows manual confirmation.
+            # Retrieval needs support around the queried peaks, not the entire
+            # plotting range. Even slightly different Cu wavelengths otherwise
+            # expand the 5° boundary and force a full-library CIF recalculation.
+            positions = [float(value) for value in options.observed_peak_positions
+                         if math.isfinite(float(value)) and 0.0 < float(value) < 180.0]
+            search_min = max(0.001, min(positions, default=5.35) - 0.35)
+            search_max = min(179.999, max(positions, default=119.65) + 0.35)
+            coverage = self.local_phase_cache.reference_range_coverage(
+                ((entry.source, entry.entry_id) for entry in local_entries),
+                wavelength=options.wavelength, two_theta_min=search_min,
+                two_theta_max=search_max, for_search=True, cancelled=cancelled) if local_entries else {}
+            for entry in local_entries:
+                if cancelled is not None and cancelled():
+                    return []
+                if coverage[(entry.source, entry.entry_id)]:
+                    continue
+                self.local_phase_cache.ensure_reference_range(entry.source, entry.entry_id,
+                    wavelength=options.wavelength, two_theta_min=search_min,
+                    two_theta_max=search_max, for_search=True)
             fingerprint_entries = []
             if not text:
                 fingerprint_entries = self.local_phase_cache.search_by_geometric_fingerprint(
@@ -615,9 +729,10 @@ class CandidateSearchService:
                     excluded_elements=options.excluded_elements,
                     sources=options.local_sources,
                     limit=self.LOCAL_FINGERPRINT_RESULT_LIMIT,
+                    summary_only=True,
+                    cancelled=cancelled,
+                    progress=lambda message,_value,_maximum: self._emit_background_status(message),
                 )
-            if fingerprint_entries:
-                return fingerprint_entries
             peak_entries = []
             positions = options.observed_peak_positions
             for count in [len(positions), *[size for size in (32, 16) if size < len(positions)]]:
@@ -627,7 +742,11 @@ class CandidateSearchService:
                     elements=elements,
                     excluded_elements=options.excluded_elements,
                     sources=options.local_sources,
+                    wavelength=options.wavelength,
                     limit=self.LOCAL_INDEXED_RESULT_LIMIT,
+                        summary_only=True,
+                    strict=True,
+                    cancelled=cancelled,
                 )
                 if peak_entries:
                     break
@@ -639,9 +758,11 @@ class CandidateSearchService:
                     excluded_elements=options.excluded_elements,
                     sources=options.local_sources,
                     limit=self.LOCAL_INDEXED_RESULT_LIMIT,
+                        summary_only=True,
+                    **cancel_options,
                 )
-            if peak_entries:
-                return self._dedupe_cached_entries(peak_entries + text_entries)
+            if fingerprint_entries or peak_entries:
+                return self._dedupe_cached_entries(fingerprint_entries + peak_entries + text_entries)
             return text_entries
         return self.local_phase_cache.search(
             text=text,
@@ -649,6 +770,8 @@ class CandidateSearchService:
             excluded_elements=options.excluded_elements,
             sources=options.local_sources,
             limit=self.LOCAL_INDEXED_RESULT_LIMIT,
+            summary_only=True,
+            **cancel_options,
         )
 
     def _timed_search_local_cache(
@@ -656,15 +779,17 @@ class CandidateSearchService:
         options: CandidateSearchOptions,
         text: str,
         elements: list[str] | None,
+        *, cancelled: Callable[[], bool] | None = None,
     ):
         with trace_operation("match.search.local_cache", slow_ms=0):
-            return self.search_local_cache(options, text=text, elements=elements)
+            return self.search_local_cache(options, text=text, elements=elements, cancelled=cancelled)
 
     def _timed_search_match_pdf2(
         self,
         text: str,
         elements: list[str] | None,
         excluded_elements: list[str],
+        *, cancelled: Callable[[], bool] | None = None,
     ):
         with trace_operation("match.search.pdf2", slow_ms=0):
             return self.match_pdf2.search(
@@ -672,6 +797,7 @@ class CandidateSearchService:
                 elements=elements,
                 excluded_elements=excluded_elements,
                 limit=self.STRUCTURAL_RESULT_LIMIT,
+                **({"cancelled": cancelled} if cancelled is not None else {}),
             )
 
     @staticmethod
@@ -872,6 +998,7 @@ class CandidateSearchService:
         *,
         session_token: int | None = None,
         result_limit: int | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> list[CodEntry]:
         def fetch(limit: int) -> tuple[list[CodEntry], int]:
             entries = self._search_cod_element_systems(
@@ -889,6 +1016,7 @@ class CandidateSearchService:
             fetch=fetch,
             session_token=session_token,
             queue_downloads=not bool(getattr(options, "defer_candidate_preparation", False)),
+            cancelled=cancelled,
         )
 
     def _refresh_cod_batches(
@@ -899,11 +1027,16 @@ class CandidateSearchService:
         fetch: Callable[[int], tuple[list[CodEntry], int]],
         session_token: int | None,
         queue_downloads: bool = True,
+        cancelled: Callable[[], bool] | None = None,
     ) -> list[CodEntry]:
         limit = max(1, int(result_limit or self.ONLINE_RESULT_LIMIT))
         collected: list[CodEntry] = []
         while True:
+            if cancelled is not None and cancelled():
+                return self._dedupe_cod_entries(collected)
             cod_entries, result_count = fetch(limit)
+            if cancelled is not None and cancelled():
+                return self._dedupe_cod_entries(collected)
             collected.extend(cod_entries)
             self.local_phase_cache.upsert_cod_entries(cod_entries)
             self._mark_search_if_complete("COD", cod_key, result_count, limit)
@@ -1088,20 +1221,45 @@ class CandidateSearchService:
         rows: list[list[str]],
         *,
         session_token: int | None = None,
+        cancelled: Callable[[], bool] | None = None,
+        wavelength: float = CU_KA1_WAVELENGTH,
     ) -> int:
         """Queue CIF preparation only after a broad manual search is accepted."""
 
         queued = 0
         seen: set[tuple[str, str]] = set()
-        for row in rows:
-            normalized = normalize_candidate_row(row)
+        normalized_rows = [normalize_candidate_row(row) for row in rows]
+        supported = {"COD"}
+        supported.update(source for source, service in (
+            ("MP", getattr(self, "materials_project", None)), ("AFLOW", getattr(self, "aflow", None)), ("OQMD", getattr(self, "oqmd", None)),
+        ) if service is not None)
+        states = self.local_phase_cache.preparation_states(
+            (row[0], row[1]) for row in normalized_rows
+            if row[0].strip().upper() in supported
+        )
+        for normalized in normalized_rows:
+            if cancelled is not None and cancelled():
+                break
             source = normalized[0].strip().upper()
             entry_id = normalized[1].strip()
             key = source, entry_id
-            if not source or not entry_id or key in seen:
+            if source not in supported or not entry_id or key in seen:
                 continue
             seen.add(key)
-            cached = self.local_phase_cache.get(source, entry_id)
+            cached = states.get(key)
+            if cached is not None and cached.ready and self.local_phase_cache.reference_range_covered(
+                    source, entry_id, wavelength=wavelength):
+                continue
+            cached_path = Path(cached.cif_path) if cached is not None and cached.cif_path else None
+            existing_path = cached_path if cached_path is not None and cached_path.exists() else None
+            if cached is not None and not self.local_phase_cache.reference_range_covered(
+                    source, entry_id, wavelength=wavelength):
+                existing = self.local_phase_cache.cif_path(source,entry_id)
+                if existing is not None:
+                    queued += int(self._queue_candidate_preparation(source=source,entry_id=entry_id,
+                        fetch=lambda: None,existing_path=existing,session_token=session_token,
+                        reference_wavelength=wavelength))
+                    continue
             formula = normalized[2].strip()
             name = normalized[3].strip()
             spacegroup = normalized[4].strip()
@@ -1119,9 +1277,11 @@ class CandidateSearchService:
                     fetch=lambda entry_id=entry_id: self.cod_online.download_cif(
                         entry_id, self.local_phase_cache.cif_dir
                     ),
-                    existing_path=target if target.is_file() else None,
+                    existing_path=target if target.is_file() else existing_path,
                     fallback=fallback,
                     session_token=session_token,
+                    cached_states=states,
+                    reference_wavelength=wavelength,
                 ))
             elif source == "MP" and self.materials_project is not None:
                 target_dir = self.local_phase_cache.root / "materials_project_cif"
@@ -1132,8 +1292,10 @@ class CandidateSearchService:
                     fetch=lambda entry_id=entry_id: self.materials_project.download_cif(
                         entry_id, target_dir
                     ),
-                    existing_path=target if target.is_file() else None,
+                    existing_path=target if target.is_file() else existing_path,
                     session_token=session_token,
+                    cached_states=states,
+                    reference_wavelength=wavelength,
                 ))
             elif source in {"AFLOW", "OQMD"}:
                 service = self.aflow if source == "AFLOW" else self.oqmd
@@ -1151,9 +1313,28 @@ class CandidateSearchService:
                         url_hint=url_hint,
                         formula_hint=formula,
                     ),
-                    existing_path=self.local_phase_cache.cif_path(source, entry_id),
+                    existing_path=existing_path,
                     session_token=session_token,
+                    cached_states=states,
+                    reference_wavelength=wavelength,
                 ))
+        return queued
+
+    def queue_iic_updates(self, rows=None, *, session_token: int | None = None) -> int:
+        """Refresh legacy RIR values locally, without reindexing search peaks."""
+        keys = None if rows is None else {tuple(normalize_candidate_row(row)[:2]) for row in rows}
+        queued = 0
+        for entry in self.local_phase_cache.outdated_iic_entries():
+            if keys is not None and (entry.source, entry.entry_id) not in keys:
+                continue
+            path = Path(entry.cif_path)
+            if not path.is_file():
+                continue
+            queued += int(self.preparation_queue.submit(CandidatePreparationJob(
+                source=entry.source, entry_id=entry.entry_id, existing_payload=path, priority=200,
+                index=lambda payload, source=entry.source, entry_id=entry.entry_id:
+                    self.local_phase_cache.update_calculated_iic(source, entry_id, payload),
+            ), session_token=session_token))
         return queued
 
     def queue_background_mp_downloads(self, entries, *, session_token: int | None = None) -> int:
@@ -1243,16 +1424,20 @@ class CandidateSearchService:
         existing_path=None,
         fallback: CodEntry | None = None,
         session_token: int | None = None,
+        cached_states: dict[tuple[str, str], CachedPreparationState] | None = None,
+        reference_wavelength: float = CU_KA1_WAVELENGTH,
     ) -> bool:
         cached = self.local_phase_cache.get(source, entry_id)
         if (
             cached is not None
             and int(getattr(cached, "derived_version", 0)) == DERIVED_CACHE_VERSION
             and self.local_phase_cache.peak_records(source, entry_id)
+            and self.local_phase_cache.reference_range_covered(source, entry_id, wavelength=reference_wavelength)
         ):
             return False
-        if existing_path is None:
-            existing_path = self.local_phase_cache.cif_path(source, entry_id)
+        if existing_path is None and cached is not None and cached.cif_path:
+            path = Path(cached.cif_path)
+            existing_path = path if path.exists() else None
         return self.preparation_queue.submit(
             CandidatePreparationJob(
                 source=source,
@@ -1264,6 +1449,7 @@ class CandidateSearchService:
                     source=source,
                     entry_id=entry_id,
                     fallback=fallback,
+                    reference_wavelength=reference_wavelength,
                 ),
             ),
             session_token=session_token,
@@ -1276,12 +1462,14 @@ class CandidateSearchService:
         source: str,
         entry_id: str,
         fallback: CodEntry | None = None,
+        reference_wavelength: float = CU_KA1_WAVELENGTH,
     ):
         self.local_phase_cache.index_cif(
             path,
             source=source,
             entry_id=entry_id,
             fallback=fallback,
+            reference_range=(reference_wavelength, 5., 120.),
         )
         cached = self.local_phase_cache.get(source, entry_id)
         if (
@@ -1348,23 +1536,6 @@ class CandidateSearchService:
             if cif_path.exists():
                 self.local_phase_cache.index_cif(cif_path, source="CCDC", entry_id=entry.identifier)
 
-    def cache_rows(self, entries) -> list[list[str]]:
-        return [
-            [
-                entry.source,
-                entry.entry_id,
-                self.display_formula(entry.formula),
-                entry.name or self.display_formula(entry.formula),
-                getattr(entry, "spacegroup", ""),
-                "",
-                self.display_iic(getattr(entry, "iic", None), getattr(entry, "derived_version", 0)),
-            ]
-            for entry in entries
-            if (
-                str(getattr(entry, "source", "")).upper() == "USER"
-                or int(getattr(entry, "derived_version", 0)) == DERIVED_CACHE_VERSION
-            )
-        ]
 
     def rruff_rows(self, entries) -> list[list[str]]:
         return [
@@ -1403,7 +1574,7 @@ class CandidateSearchService:
                 entry.name or self.display_formula(entry.formula),
                 getattr(entry, "spacegroup", ""),
                 "",
-                self.display_iic(getattr(entry, "iic", None), getattr(entry, "derived_version", 0)),
+                self.display_iic(getattr(entry, "iic", None), getattr(entry, "derived_version", 0), getattr(entry, "iic_method", "")),
             ]
             for entry in entries
         ]
@@ -1417,7 +1588,7 @@ class CandidateSearchService:
                 entry.name or self.display_formula(entry.formula),
                 getattr(entry, "spacegroup", ""),
                 "",
-                self.display_iic(getattr(entry, "iic", None), getattr(entry, "derived_version", 0)),
+                self.display_iic(getattr(entry, "iic", None), getattr(entry, "derived_version", 0), getattr(entry, "iic_method", "")),
             ]
             for entry in entries
         ]
@@ -1436,62 +1607,12 @@ class CandidateSearchService:
             for entry in entries
         ]
 
-    def dedupe_candidate_rows(self, rows: list[list[str]]) -> list[list[str]]:
-        unique = []
-        seen = set()
-        for row in rows:
-            normalized = normalize_candidate_row(row)
-            key = tuple(value.strip().lower() for value in normalized[:4])
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(normalized)
-        return unique
 
-    def filter_candidate_rows_by_excluded_elements(
-        self,
-        rows: list[list[str]],
-        options: CandidateSearchOptions,
-    ) -> list[list[str]]:
-        excluded = set(options.excluded_elements)
-        required = {element.strip() for element in options.required_elements if element.strip()}
-        allowed = required | {element.strip() for element in options.optional_elements if element.strip()}
-        filtered = []
-        for row in rows:
-            normalized = normalize_candidate_row(row)
-            formula = normalized[2] if len(normalized) > 2 else ""
-            if formula:
-                row_elements = formula_elements(formula)
-                if required and not required.issubset(row_elements):
-                    continue
-                if getattr(options, "restrict_to_selected_elements", True) and allowed and not row_elements.issubset(allowed):
-                    continue
-                if excluded and row_elements & excluded:
-                    continue
-            if formula and not options.material_class_allowed(formula):
-                continue
-            filtered.append(row)
-        return filtered
 
     def filter_cod_entries(self, entries: list[CodEntry], options: CandidateSearchOptions) -> list[CodEntry]:
-        return [entry for entry in entries if options.material_class_allowed(entry.formula)]
+        return [entry for entry in entries if self.candidate_formula_allowed(entry.formula, options)]
 
-    def display_formula(self, formula: str) -> str:
-        parts = re.findall(r"[A-Z][a-z]?[0-9.]*", formula or "")
-        return " ".join(parts) if parts else formula
 
-    def display_iic(self, value, derived_version: int = DERIVED_CACHE_VERSION) -> str:
-        if int(derived_version or 0) != DERIVED_CACHE_VERSION:
-            return ""
-        if value is None or value == "":
-            return ""
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            return ""
-        if number <= 0:
-            return ""
-        return f"{number:.3g}"
 
     def display_rruff_id(self, rruff_id: str) -> str:
         match = re.search(r"(?:^|[^A-Za-z0-9])(R[0-9]{5,7}(?:-[0-9]+)?)(?=$|[^A-Za-z0-9])", rruff_id or "")
@@ -1606,27 +1727,3 @@ class CandidateSearchService:
             query_text = re.sub(r"\s+", " ", str(query or "").strip().lower())
         excluded_text = " ".join(sorted(str(item).strip() for item in excluded or [] if str(item).strip()))
         return f"{mode}|{query_text}|exclude:{excluded_text}"
-
-
-def normalize_candidate_row(row: list[str]) -> list[str]:
-    if len(row) >= 10:
-        return [
-            row[1],
-            row[2],
-            row[3],
-            row[4],
-            "",
-            row[8],
-            "",
-            row[9],
-        ]
-    if len(row) >= 8:
-        return row[:8]
-    if len(row) == 7:
-        return [row[0], row[1], row[2], row[3], row[4], row[5], "", row[6]]
-    if len(row) == 6:
-        return [row[0], row[1], row[2], row[3], "", row[4], "", row[5]]
-    if len(row) >= 5:
-        return ["", "", "", row[4], "", "", "", ""]
-    padded = list(row) + [""] * 8
-    return padded[:8]

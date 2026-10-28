@@ -22,6 +22,8 @@ PHASE_FINDER_HELP_TEXT = (
     "- Single click: preview candidate peaks and show the card.\n"
     "- Double click: add the candidate to Selected candidates.\n"
     "- Right click: add, calculate overlay, or export candidate CIF.\n\n"
+    "- Gain ranks additional peak evidence after you accept a phase. It does not give a phase percentage or probability.\n"
+    "- Shared peak positions remain available for checking other phases; shared positions alone do not give a positive Gain.\n\n"
     "Selected candidates\n"
     "- Single click: show that selected phase on the plot and card.\n"
     "- Double click the Phase cell to rename the phase in tables and figures.\n"

@@ -18,10 +18,11 @@ class ProjectControlsWidget(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(8, 10, 8, 4)
         layout.setSpacing(6)
 
-        add_series_button = QPushButton("Add series")
+        add_series_button = QPushButton('+  Add series')
+        add_series_button.setAccessibleName('Add series')
         add_series_button.setAutoDefault(False)
         add_series_button.setMinimumHeight(26)
         add_series_button.setToolTip("Add a named series to the project tree. Select it before importing related XRD/CIF files.")

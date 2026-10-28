@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 
 from PySide6.QtWidgets import QInputDialog, QMessageBox
 
 from xrd_finder.core.series import SeriesAnalysis
+from xrd_finder.core.base import new_id, utc_now
 from xrd_finder.io.cif_loader import create_phase_from_cif
 
 
@@ -38,6 +40,103 @@ class PhaseFinderProjectTreeActionsMixin:
 
     def _series_id_for_new_project_object(self) -> str | None:
         return self.tree.current_series_id()
+
+    def _copy_pattern_to_series(self, pattern_id: str, series_id: str) -> None:
+        source = next((pattern for pattern in self.project.patterns if pattern.id == pattern_id), None)
+        if source is None:
+            return
+        new_series = None
+        if series_id == "__new__":
+            name, accepted = QInputDialog.getText(
+                self, "Copy to new series", "Name:", text=f"Series {len(self.project.series) + 1}",
+            )
+            if not accepted or not name.strip():
+                return
+            new_series = SeriesAnalysis.create(name.strip(), kind="collection")
+            series_id = new_series.id
+        elif series_id and not any(series.id == series_id for series in self.project.series):
+            return
+
+        self._save_active_profile_state()
+        copied = deepcopy(source)
+        copied.id = new_id("pattern")
+        copied.created_at = copied.updated_at = utc_now()
+        copied.metadata["copied_from_pattern_id"] = source.id
+        names = {pattern.name for pattern in self.project.patterns
+                 if getattr(self.project.series_for_object("pattern", pattern.id), "id", "") == series_id}
+        number = 1
+        while copied.name in names:
+            suffix = "copy" if number == 1 else f"copy {number}"
+            copied.name = f"{source.name} ({suffix})"
+            number += 1
+
+        # Sample-linked models must not be shared: later cell refinement on a
+        # figure-set copy must leave the original sample's model untouched.
+        phase_ids = {}
+        phases, structures = [], []
+        for phase_id in source.linked_phase_ids:
+            if phase_id in phase_ids:
+                continue
+            phase = next((item for item in self.project.phases if item.id == phase_id), None)
+            if phase is None:
+                continue
+            clone = deepcopy(phase)
+            clone.id = new_id("phase")
+            clone.created_at = clone.updated_at = copied.created_at
+            clone.metadata["copied_for_pattern_id"] = copied.id
+            structure = self._structure_for_phase(phase_id)
+            clone.structure_id = None
+            if structure is not None:
+                model = deepcopy(structure)
+                model.id = new_id("structure")
+                model.phase_id = clone.id
+                model.created_at = model.updated_at = copied.created_at
+                clone.structure_id = model.id
+                structures.append(model)
+            phase_ids[phase_id] = clone.id
+            phases.append(clone)
+        copied.linked_phase_ids = [phase_ids[phase_id] for phase_id in source.linked_phase_ids if phase_id in phase_ids]
+        state = deepcopy(self.profile_states.get(source.id, {}))
+        state.pop("result_snapshot", None)
+        for candidate in state.get("candidates", []):
+            old_key = self._candidate_key(candidate)
+            color = candidate.get("_Color") or self.phase_colors.get(old_key)
+            if color:
+                candidate["_Color"] = color
+            candidate["_LocalAppearance"] = True
+            if self._candidate_source(candidate) == "USER" and candidate.get("Entry") in phase_ids:
+                candidate["Entry"] = phase_ids[candidate["Entry"]]
+                paths = self.project.finder_state.candidate_cif_paths
+                if old_key in paths:
+                    paths[self._candidate_key(candidate)] = paths[old_key]
+        self.profile_states[copied.id] = state
+        if source.id in self.observed_pattern_colors:
+            self.observed_pattern_colors[copied.id] = self.observed_pattern_colors[source.id]
+        sample_refs = self.project.finder_state.pattern_sample_refs
+        if source.id in sample_refs:
+            sample_refs[copied.id] = deepcopy(sample_refs[source.id])
+        checked_patterns = self.tree.checked_pattern_ids()
+        checked_phases = self.tree.checked_phase_ids()
+        self.project.patterns.append(copied)
+        self.project.phases.extend(phases)
+        self.project.structures.extend(structures)
+        if new_series is not None:
+            self.project.series.append(new_series)
+        self.project.assign_object_to_series("pattern", copied.id, series_id or None)
+        for phase in phases:
+            self.project.assign_object_to_series("phase", phase.id, series_id or None)
+        self._normalized_pattern_display_order()
+        self.project.touch()
+        blocked = self.tree.blockSignals(True)
+        try:
+            self.tree.set_project(self.project)
+            self.tree.set_checked_pattern_ids([*checked_patterns, copied.id])
+            self.tree.set_checked_phase_ids(checked_phases)
+            self.tree.select_object("pattern", copied.id)
+        finally:
+            self.tree.blockSignals(blocked)
+        self._on_project_tree_selection_changed()
+        self.project_changed.emit()
 
     def _after_cif_import(self, path: Path, phase, structure) -> None:
         try:
@@ -262,6 +361,7 @@ class PhaseFinderProjectTreeActionsMixin:
             self._activate_current_profile_state()
         self._clear_probability_caches()
         view_range = self._plot_view_range() if self.show_all_selected_patterns else None
+        display_signature = getattr(self, '_plot_display_signature', None)
         try:
             self._refresh_observed_pattern_plot()
             if hasattr(self, "_update_compound_card_sample"):
@@ -276,6 +376,9 @@ class PhaseFinderProjectTreeActionsMixin:
                     self.active_overlay_entry_id = None
                     self._calculate_candidate_overlay(candidate, show_errors=False)
         finally:
-            self._restore_plot_view_range(view_range)
+            if self.show_all_selected_patterns and display_signature != getattr(self, '_plot_display_signature', None):
+                self._reset_match_plot_view()
+            else:
+                self._restore_plot_view_range(view_range)
             if hasattr(self, "_update_profile_view_context"):
                 self._update_profile_view_context()

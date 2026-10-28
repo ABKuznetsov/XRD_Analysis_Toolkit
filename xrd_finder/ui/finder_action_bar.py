@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
+    QDoubleSpinBox,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -14,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from xrd_finder.ui.plot_view_settings import CollapsibleSection
+from xrd_finder.ui.theme import is_dark_theme, settings_panel_style
 
 
 class FinderActionBar(QWidget):
@@ -23,12 +26,40 @@ class FinderActionBar(QWidget):
     searchRequested = Signal()
     instrumentProfileSelected = Signal(str)
     instrumentProfileEditRequested = Signal()
+    manualZeroShiftChanged = Signal(float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.search_input = QLineEdit()
         self.instrument_profile_combo = QComboBox()
         self.instrument_profile_edit_button = QToolButton()
+        self.zero_shift_refined_value = QLabel("0.000000")
+        self.zero_shift_refined_value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.zero_shift_refined_value.setToolTip("Scan-zero displacement from the current refinement")
+        self.zero_shift_warning_label = QLabel("")
+        self.zero_shift_warning_label.setWordWrap(True)
+        self.zero_shift_warning_label.hide()
+        self.zero_shift_value = QDoubleSpinBox()
+        self.zero_shift_value.setDecimals(6)
+        self.zero_shift_value.setRange(-180., 180.)
+        self.zero_shift_value.setSingleStep(.01)
+        self.zero_shift_value.setToolTip(
+            "Additional visual correction to the experimental pattern: "
+            "2theta minus refined zero minus visual correction. Zero means no additional correction. "
+            "Requires Correct zero. Does not change calculations or peak assignments."
+        )
+        self.peak_search_tolerance = QDoubleSpinBox()
+        self.peak_search_tolerance.setDecimals(4)
+        self.peak_search_tolerance.setRange(.0001, 179.)
+        self.peak_search_tolerance.setSingleStep(.01)
+        # Same starting window as the existing local peak index, not a
+        # calibrated instrument uncertainty or a statistical confidence limit.
+        self.peak_search_tolerance.setValue(.35)
+        self.peak_search_tolerance.setToolTip(
+            "Maximum absolute position difference for selected-peak search, in degrees 2theta. "
+            "Converted to exact d-spacing intervals using the active wavelength. "
+            "Uses refined zero, never the visual correction. This is a search window, not calibration uncertainty."
+        )
         self._preprocessing_hosts: dict[str, QWidget] = {}
         self._preprocessing_host_layouts: dict[str, QVBoxLayout] = {}
         self._preprocessing_placeholders: dict[str, QLabel] = {}
@@ -53,40 +84,11 @@ class FinderActionBar(QWidget):
         body = QWidget()
         body.setObjectName("processingBody")
         layout = QVBoxLayout(body)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
         self.processing_scroll.setWidget(body)
         root_layout.addWidget(self.processing_scroll)
-        self.setStyleSheet(
-            """
-            QWidget#processingBody {
-                background: #24282d;
-            }
-            QWidget#viewSection {
-                background: #20252b;
-                border: 1px solid #3d4651;
-                border-radius: 4px;
-            }
-            QToolButton#viewSectionHeader {
-                background: #4a4f55;
-                color: #eef2f7;
-                border: 0;
-                border-top-left-radius: 3px;
-                border-top-right-radius: 3px;
-                padding: 5px 8px;
-                font-weight: 700;
-                text-align: left;
-            }
-            QWidget#viewSectionContent {
-                background: #20252b;
-                padding: 6px;
-            }
-            QLabel#processingPlaceholder {
-                color: #9aa4af;
-                padding: 8px;
-            }
-            """
-        )
+        self.setStyleSheet(settings_panel_style(is_dark_theme(self)))
 
         self.instrument_profile_combo.setMinimumContentsLength(12)
         self.instrument_profile_combo.setMinimumWidth(120)
@@ -99,12 +101,14 @@ class FinderActionBar(QWidget):
         self.instrument_profile_edit_button.setToolTip("Edit instrument profile")
         self.instrument_profile_edit_button.clicked.connect(self.instrumentProfileEditRequested)
 
-        instrument_row = QHBoxLayout()
+        instrument_row = QVBoxLayout()
         instrument_row.setContentsMargins(0, 0, 0, 0)
         instrument_row.setSpacing(6)
         instrument_row.addWidget(QLabel("Active instrument profile"))
-        instrument_row.addWidget(self.instrument_profile_combo, 1)
-        instrument_row.addWidget(self.instrument_profile_edit_button)
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(self.instrument_profile_combo, 1)
+        profile_row.addWidget(self.instrument_profile_edit_button)
+        instrument_row.addLayout(profile_row)
 
         self.smooth_button = self._add_preprocessing_section(
             layout,
@@ -124,6 +128,22 @@ class FinderActionBar(QWidget):
             "Crop XRD",
             "Select imported XRD patterns, then expand this section to edit crop ranges.",
         )
+        zero_body = QWidget()
+        zero_layout = QFormLayout(zero_body)
+        zero_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        zero_layout.addRow("Refined zero [deg]", self.zero_shift_refined_value)
+        zero_layout.addRow("Visual correction [deg]", self.zero_shift_value)
+        zero_layout.addRow(self.zero_shift_warning_label)
+        self.zero_shift_section = CollapsibleSection("Zero shift", zero_body, expanded=False)
+        self.zero_shift_value.editingFinished.connect(
+            lambda: self.manualZeroShiftChanged.emit(self.zero_shift_value.value())
+        )
+        layout.addWidget(self.zero_shift_section)
+        peak_search_body = QWidget()
+        peak_search_layout = QFormLayout(peak_search_body)
+        peak_search_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        peak_search_layout.addRow("Tolerance [deg 2theta]", self.peak_search_tolerance)
+        layout.addWidget(CollapsibleSection("Peak search", peak_search_body, expanded=False))
         layout.addWidget(self._section_from_layout("Instrument and radiation", instrument_row))
         layout.addStretch(1)
 

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from xrd_finder.ui.theme import glass_button_style
+from xrd_finder.ui.theme import glass_button_style, is_dark_theme, theme_colors
 
 
 class DatabasePanelWidget(QWidget):
@@ -25,6 +25,7 @@ class DatabasePanelWidget(QWidget):
     manageUserLibraryRequested = Signal()
     rebuildUserIndexRequested = Signal()
     rebuildLocalPeakIndexRequested = Signal()
+    auditLocalCompositionRequested = Signal()
     clearUserLibraryRequested = Signal()
     indexCodFolderRequested = Signal()
     indexCodZipRequested = Signal()
@@ -184,6 +185,7 @@ class DatabasePanelWidget(QWidget):
             self._management_row(
                 "Local diffraction index",
                 [
+                    ("Check CIF composition", self.auditLocalCompositionRequested),
                     ("Recalculate CIF patterns", self.rebuildLocalPeakIndexRequested),
                 ],
             )
@@ -257,7 +259,7 @@ class DatabasePanelWidget(QWidget):
 
     def _section_title(self, text: str) -> QLabel:
         label = QLabel(text)
-        label.setStyleSheet("color: #f1f3f4; font-weight: 700; margin-top: 6px;")
+        label.setProperty('uiRole', 'sectionTitle')
         return label
 
     def _management_row(self, label_text: str, actions) -> QWidget:
@@ -294,19 +296,16 @@ class DatabasePanelWidget(QWidget):
                     item.setToolTip(location)
                 table.setItem(row_index, col_index, item)
         table.resizeColumnsToContents()
-        table.setStyleSheet(
-            "QTableWidget { gridline-color: #2b2f34; }"
-            "QHeaderView::section { background: #33383e; color: #f1f3f4; padding: 4px; }"
-        )
+        table.setShowGrid(False)
+        table.verticalHeader().setDefaultSectionSize(32)
         return table
 
     def _button_style(self, text: str) -> str:
+        colors = theme_colors(is_dark_theme(self))
         if "Clear" in text:
-            background, border = "#8a2d35", "#bc5963"
-        elif "Download" in text:
-            background, border = "#0b8043", "#35a96c"
-        elif "Save" in text or "settings" in text:
-            background, border = "#6f45a3", "#9972ca"
+            background, border, foreground = '#87394b', '#b65d72', '#ffffff'
+        elif "Download" in text or "Save" in text:
+            background, border, foreground = '#087f69', '#119b7f', '#ffffff'
         else:
-            background, border = "#2367a5", "#5a9bd8"
-        return glass_button_style(background, border, padding="5px 10px", pressed_padding="6px 10px 4px 10px")
+            background, border, foreground = colors['alt'], colors['border'], colors['text']
+        return glass_button_style(background, border, foreground, padding='6px 10px')

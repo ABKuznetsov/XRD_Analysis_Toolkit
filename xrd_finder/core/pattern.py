@@ -20,6 +20,10 @@ class Pattern(ProjectObject):
     estimated_background_points: list[list[float]] = field(default_factory=list)
     estimated_background_with_halo_points: list[list[float]] = field(default_factory=list)
     crop_ranges: list[list[float]] = field(default_factory=list)
+    preprocessing_history: list[dict[str, Any]] = field(default_factory=list)
+    angle_calibration_deg: float = 0.0
+    input_kind: str = 'profile'
+    peak_points: list[list[float]] = field(default_factory=list)
 
     @classmethod
     def create(cls, name: str, source_path: str = "") -> "Pattern":

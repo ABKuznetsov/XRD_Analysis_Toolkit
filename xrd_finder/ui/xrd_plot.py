@@ -9,6 +9,8 @@ class XrdViewBox(pg.ViewBox):
         super().__init__(enableMenu=False)
         self.setMouseMode(pg.ViewBox.RectMode)
         self.setMouseEnabled(x=True, y=True)
+        self.setLimits(xMin=0., xMax=125., maxXRange=125.)
+        self.full_range_callback = None
 
     def wheelEvent(self, event, axis=None) -> None:
         delta = event.delta() if hasattr(event, "delta") else event.angleDelta().y()
@@ -18,7 +20,10 @@ class XrdViewBox(pg.ViewBox):
         event.accept()
 
     def mouseDoubleClickEvent(self, event) -> None:
-        self.autoRange(padding=0.0)
+        if self.full_range_callback is not None:
+            self.full_range_callback()
+        else:
+            self.autoRange(padding=0.0)
         event.accept()
 
 

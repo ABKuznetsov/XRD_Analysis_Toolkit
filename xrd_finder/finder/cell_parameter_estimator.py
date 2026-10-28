@@ -126,8 +126,10 @@ class FastCellParameterEstimator:
     def _crystal_system(cell: CellParameters) -> str:
         a, b, c = float(cell.a), float(cell.b), float(cell.c)
         alpha, beta, gamma = float(cell.alpha), float(cell.beta), float(cell.gamma)
-        length_tolerance = 0.015
-        angle_tolerance = 0.35
+        # Recognize metric identities, not approximate pseudosymmetry. Percent-
+        # level similarity can force independent orthorhombic axes to be equal.
+        length_tolerance = 1.0e-5
+        angle_tolerance = 0.001
 
         def close_length(left: float, right: float) -> bool:
             return abs(left - right) <= length_tolerance * max(left, right)
@@ -135,7 +137,7 @@ class FastCellParameterEstimator:
         def close_angle(value: float, target: float) -> bool:
             return abs(value - target) <= angle_tolerance
 
-        if close_angle(alpha, 90.0) and close_angle(beta, 90.0) and close_angle(gamma, 120.0):
+        if close_length(a, b) and close_angle(alpha, 90.0) and close_angle(beta, 90.0) and close_angle(gamma, 120.0):
             return "hexagonal"
         all_right = all(close_angle(value, 90.0) for value in (alpha, beta, gamma))
         if all_right and close_length(a, b) and close_length(a, c):

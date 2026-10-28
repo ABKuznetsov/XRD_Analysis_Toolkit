@@ -48,6 +48,7 @@ class BackgroundTaskHandle(QObject):
     failed = Signal(str, str)
     progress = Signal(str, int, int)
     partial = Signal(object)
+    stopped = Signal()
 
     def __init__(
         self,
@@ -74,6 +75,7 @@ class BackgroundTaskHandle(QObject):
         self._worker.finished.connect(self._thread.quit)
         self._worker.failed.connect(self._thread.quit)
         self._thread.finished.connect(self._worker.deleteLater)
+        self._thread.finished.connect(self.stopped.emit)
         self._thread.finished.connect(self.deleteLater)
 
     def start(self) -> None:

@@ -3,16 +3,14 @@ from __future__ import annotations
 from collections import OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass
-import math
 from pathlib import Path
 
 from xrd_finder.core.structure import CellParameters
 from xrd_finder.finder.context import CalculationContext
-from xrd_finder.finder.reference_lines import ReferenceLineSet
+from xrd_finder.finder.reference_lines import ReferenceLineSet, reference_peaks_for_context
 from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.instrument.models import InstrumentProfile
 from xrd_finder.services.calculated_pattern_service import (
-    CU_KA1_WAVELENGTH,
     HKLPeak,
 )
 
@@ -172,47 +170,9 @@ class CachedLineCalculator:
         self,
         lines: ReferenceLineSet,
         context: CalculationContext,
+        *, instrument_profile: InstrumentProfile | None = None,
     ) -> list[HKLPeak]:
-        peaks = []
-        relative_intensities = [
-            max(float(line.normalized_intensity or line.intensity), 0.0)
-            for line in lines.lines
-        ]
-        maximum_intensity = max(
-            (value for value in relative_intensities if math.isfinite(value)),
-            default=0.0,
-        )
-        intensity_scale = 100.0 / maximum_intensity if maximum_intensity > 0.0 else 1.0
-        use_cached_angles = math.isclose(
-            float(context.primary_wavelength),
-            CU_KA1_WAVELENGTH,
-            rel_tol=0.0,
-            abs_tol=1.0e-4,
-        )
-        for line, relative_intensity in zip(lines.lines, relative_intensities):
-            two_theta = float(line.two_theta)
-            if not use_cached_angles:
-                argument = float(context.primary_wavelength) / (2.0 * float(line.d))
-                if not 0.0 < argument <= 1.0:
-                    continue
-                two_theta = math.degrees(2.0 * math.asin(argument))
-            if not context.two_theta_min <= two_theta <= context.two_theta_max:
-                continue
-            intensity = relative_intensity * intensity_scale
-            raw_intensity = max(float(line.raw_intensity or line.intensity), 0.0)
-            peaks.append(
-                HKLPeak(
-                    h=int(line.h),
-                    k=int(line.k),
-                    l=int(line.l),
-                    d=float(line.d),
-                    two_theta=two_theta,
-                    intensity=intensity,
-                    multiplicity=max(int(line.multiplicity), 1),
-                    raw_intensity=raw_intensity,
-                )
-            )
-        return peaks
+        return reference_peaks_for_context(lines, context, instrument_profile)
 
     def _cache_structure(self, key: tuple[str, int], structure: object) -> None:
         if self._cache_limit <= 0:

@@ -9,6 +9,7 @@ from PySide6.QtGui import QImage, QImageWriter, QPageLayout, QPageSize, QPainter
 
 from .options import PlotExportFormat, PlotExportOptions
 from .snapshot import FrozenCanvas
+from .paint_state import export_paint_state
 
 
 _FORMAT_SUFFIXES = {
@@ -33,18 +34,25 @@ def _paint_scene(snapshot: FrozenCanvas, painter: QPainter, target: QRectF) -> N
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
     painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-    snapshot.scene.render(
-        painter,
-        target,
-        snapshot.source_rect,
-        Qt.AspectRatioMode.IgnoreAspectRatio,
-    )
+    scale = target.width() / snapshot.source_rect.width()
+    with export_paint_state(snapshot, painter, scale):
+        snapshot.scene.render(
+            painter,
+            target,
+            snapshot.source_rect,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+        )
 
 
 def _render_image(snapshot: FrozenCanvas, width: int, height: int) -> QImage:
     image = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
     if image.isNull():
         raise MemoryError(f"Could not allocate {width}x{height} export image")
+    # Increase the paint device's density instead of the scene transform.
+    # Qt legends and pyqtgraph pixel-mode symbols then share the same scale
+    # as axis labels, curves and data-coordinate text.
+    density = float(width) / snapshot.source_rect.width()
+    image.setDevicePixelRatio(density)
     image.setDotsPerMeterX(round(float(snapshot.logical_dpi_x) / 0.0254))
     image.setDotsPerMeterY(round(float(snapshot.logical_dpi_y) / 0.0254))
     image.fill(snapshot.background.color())
@@ -52,9 +60,11 @@ def _render_image(snapshot: FrozenCanvas, width: int, height: int) -> QImage:
     if not painter.isActive():
         raise RuntimeError("Could not start raster painter")
     try:
-        _paint_scene(snapshot, painter, QRectF(0.0, 0.0, float(width), float(height)))
+        _paint_scene(snapshot, painter, QRectF(0.0, 0.0, float(width)/density, float(height)/density))
     finally:
         painter.end()
+        # File dimensions/DPI are explicit; do not return a high-DPR UI image.
+        image.setDevicePixelRatio(1.)
     return image
 
 

@@ -9,6 +9,8 @@ import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
 from xrd_finder.finder import FinderCandidateInput
+from xrd_finder.core.structure import CellParameters
+from xrd_finder.finder.cell_parameter_estimator import FastCellParameterEstimator
 from xrd_finder.io.analysis_summary_builder import result_snapshot
 from xrd_finder.ui.pattern_plot_helpers import add_hkl_labels, plot_peak_intensity_sticks, plot_phase_marker_lane, plot_profile
 from xrd_finder.ui.plot_style import PlotStyle
@@ -24,6 +26,7 @@ def _tag_plot_item(
     object_id: str | None = None,
 ):
     try:
+        item._xrd_profile_render_stage = 1
         if pattern_id is not None:
             item._xrd_pattern_id = str(pattern_id)
         if phase_id is not None:
@@ -61,8 +64,16 @@ def _tag_new_layer_items(plot_layers: dict[str, list], before_counts: dict[str, 
         _tag_plot_items(plot_layers.get(layer, [])[count:], pattern_id)
 
 def _candidate_iic_value(candidate: dict[str, str], estimate_candidate_iic: Callable[[dict[str, str]], float]) -> float:
+    # PDF2 values come from the reference database. A numeric structural-cache
+    # field (including old project rows) is not a traceable RIR.
+    if str(candidate.get("Source") or "").upper() != "PDF2":
+        return 0.0
     raw_value = candidate.get("I/Ic*", "") or candidate.get("I/Ic", "")
     text = str(raw_value).replace(",", ".").strip()
+    if text.startswith("~"):
+        text = text[1:]
+    elif candidate.get("_IicProvenance") != "reference":
+        return 0.0
     if text:
         try:
             value = float(text)
@@ -70,8 +81,7 @@ def _candidate_iic_value(candidate: dict[str, str], estimate_candidate_iic: Call
             value = 0.0
         if np.isfinite(value) and value > 0.0:
             return value
-    # Do not synthesize an RIR/I/Ic value from a calculated structure. Only a
-    # value supplied by the reference source is scientifically traceable.
+    # No synchronous calculation or unlabelled legacy estimate during drawing.
     return 0.0
 
 
@@ -123,6 +133,32 @@ def _store_estimated_cell_state(candidate: dict[str, object], candidate_result) 
     )
 
 
+def resolve_candidate_initial_cell(candidate, structure=None) -> CellParameters | None:
+    """Use the accepted CIF cell even when the working structure was unloaded."""
+    cell = getattr(structure, "cell", None)
+    if cell is not None and FastCellParameterEstimator._valid_cell(cell):
+        return cell
+    saved = candidate.get("_ReferenceCell")
+    if not isinstance(saved, dict):
+        return None
+    try:
+        cell = CellParameters(**{name: float(saved[name])
+                                for name in ("a", "b", "c", "alpha", "beta", "gamma")})
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    return cell if FastCellParameterEstimator._valid_cell(cell) else None
+
+
+def store_accepted_cell_results(result, candidates, candidate_key) -> None:
+    """Persist per-pattern cells on working cards, not transient render copies."""
+    by_key = {item.entry_id: item for item in result.candidates}
+    for candidate in candidates:
+        candidate['_QuantificationError'] = getattr(result, 'quantification_error', '')
+        item = by_key.get(candidate_key(candidate))
+        if item is not None:
+            _store_estimated_cell_state(candidate, item)
+
+
 @dataclass(slots=True)
 class FinderCandidateBuildResult:
     ready: list[FinderCandidateInput]
@@ -138,6 +174,7 @@ def build_finder_candidate_inputs(
     candidate_source: Callable[[dict[str, str]], str],
     *,
     line_resolver: Callable[[dict[str, str]], object] | None = None,
+    cell_resolver: Callable[[dict[str, str]], object] | None = None,
     quantification_cif_path: Callable[[dict[str, str]], Path | None] | None = None,
 ) -> FinderCandidateBuildResult:
     finder_candidates = []
@@ -157,20 +194,30 @@ def build_finder_candidate_inputs(
                 local_cif=''
             finder_candidates.append(
                 FinderCandidateInput(
+                    reference_lines=line_set,
                     entry_id=key,
                     name=candidate_phase_name(candidate) or candidate.get("Entry", ""),
                     formula=candidate.get("Formula", ""),
                     source=source,
-                    reference_lines=line_set,
                     quantification_cif_path=local_cif,
+                    initial_cell=cell_resolver(candidate) if cell_resolver is not None else None,
                 )
             )
             continue
-        if bool(getattr(resolution, "needs_index", False)) and source != "USER":
+        incomplete_range = getattr(resolution, 'status', None) == 'incomplete'
+        if bool(getattr(resolution, "needs_index", False)) and source != "USER" and not incomplete_range:
             needs_index.append(candidate)
             continue
         try:
-            cif_path = candidate_cif_path(candidate)
+            if incomplete_range:
+                # A valid local structure can be calculated at the requested
+                # radiation directly; do not hide accepted phases or download
+                # another CIF because only the cached d range is too short.
+                cif_path = quantification_cif_path(candidate) if quantification_cif_path is not None else None
+                if cif_path is None:
+                    raise ValueError('No local structure for the requested reference range')
+            else:
+                cif_path = candidate_cif_path(candidate)
         except Exception:
             if bool(getattr(resolution, "needs_index", False)):
                 needs_index.append(candidate)
@@ -242,6 +289,7 @@ def draw_match_profile_result(
     observed_y = result_observed_y * intensity_scale + intensity_intercept
     observed_ymax = float(np.nanmax(observed_y)) if observed_y.size else 100.0
     observed_ymin = float(np.nanmin(observed_y)) if observed_y.size else 0.0
+    y_span = max(observed_ymax - observed_ymin, observed_ymax, float(active_plot_context.get("height", 0.0)), 1.0)
     active_plot_offset = float(active_plot_context.get("offset", 0.0))
     observed_y_plot = observed_y + active_plot_offset
     observed_ymin_plot = observed_ymin + active_plot_offset
@@ -282,14 +330,18 @@ def draw_match_profile_result(
         if candidate is None:
             continue
         _store_estimated_cell_state(candidate, candidate_result)
+        candidate['_QuantificationError'] = getattr(result, 'quantification_error', '')
         key = candidate_key(candidate)
         color = phase_color(candidate, index)
         phase_label = phase_legend_label(candidate)
         phase_assignment_styles[str(candidate_result.candidate_key)] = (color, phase_label)
         profile = np.asarray(candidate_result.profile, dtype=float) * intensity_scale
         match_scales[key] = float(candidate_result.scale)
-        if candidate_result.quantity_percent is not None:
-            match_quantities[key] = float(candidate_result.quantity_percent)
+        quantity = candidate_result.quantity_percent
+        if quantity is not None and np.isfinite(quantity):
+            match_quantities[key] = float(quantity)
+        else:
+            match_quantities.pop(key, None)
         match_iic[key] = _candidate_iic_value(candidate, estimate_candidate_iic)
         match_zero_shifts[key] = float(result.global_zero_shift)
         match_cell_scales[key] = float(candidate_result.cell_scale)
@@ -361,7 +413,6 @@ def draw_match_profile_result(
                     l=_safe_int(l),
                 )
             )
-        y_span = max(observed_ymax - observed_ymin, observed_ymax, float(active_plot_context.get("height", 0.0)), 1.0)
         preview_height = max(y_span * float(getattr(style, "preview_stick_fraction", 0.16)), y_span * 0.015)
         preview_baseline = background_plot
         # Compact independent lanes also fit below each stacked pattern.

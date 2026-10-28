@@ -133,11 +133,12 @@ class LayeredSvgExporter:
                 prefix,
             )
 
-        for layer in CANVAS_LAYER_ORDER:
+        for layer_index, layer in enumerate(CANVAS_LAYER_ORDER):
             entries = rendered.get(layer, [])
             if not entries:
                 continue
-            group = self._group(document, _LAYER_LABELS[layer], layer.value)
+            group = self._group(document, _LAYER_LABELS[layer], layer.value,
+                                corel_layer_index=layer_index)
             for item_snapshot, node in entries:
                 if item_snapshot is None or not item_snapshot.tag.owner_id:
                     group.appendChild(document.importNode(node, True))
@@ -187,11 +188,18 @@ class LayeredSvgExporter:
         rendered[layer].append((item_snapshot, fragment.element))
 
     @staticmethod
-    def _group(document, label: str, *identity: str, as_layer: bool = True):
+    def _group(document, label: str, *identity: str, as_layer: bool = True,
+               corel_layer_index: int | None = None):
         group = document.createElement("g")
-        group.setAttribute("id", stable_svg_id(*identity, label))
+        group.setAttribute("id", label.replace(' ', '_x0020_') if as_layer
+                           else stable_svg_id(*identity, label))
         if as_layer:
             group.setAttribute("inkscape:groupmode", "layer")
+            # Corel's own SVG exports mark layer groups this way. Retain the
+            # Inkscape attributes as well; ordinary SVG viewers ignore metadata.
+            metadata = document.createElement('metadata')
+            metadata.setAttribute('id', f'CorelCorpID_{corel_layer_index}Corel-Layer')
+            group.appendChild(metadata)
         group.setAttribute("inkscape:label", label)
         return group
 

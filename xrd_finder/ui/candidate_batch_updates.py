@@ -28,6 +28,7 @@ class CandidateBatchUpdateController(QObject):
         status_callback: Callable[[str], None] | None = None,
         title_callback: Callable[[str], None] | None = None,
         detail_callback: Callable[[str], None] | None = None,
+        state_callback: Callable[[str], None] | None = None,
         interval_ms: int = 250,
         max_batch_rows: int = 12,
         parent: QObject | None = None,
@@ -38,6 +39,7 @@ class CandidateBatchUpdateController(QObject):
         self._status_callback = status_callback
         self._title_callback = title_callback
         self._detail_callback = detail_callback
+        self._state_callback = state_callback
         self._max_batch_rows = max(1, int(max_batch_rows))
         self._active_session_token: int | None = None
         self._searching = False
@@ -52,6 +54,7 @@ class CandidateBatchUpdateController(QObject):
         self._displayed = 0
         self._failed = 0
         self._notice = ""
+        self._search_error = ""
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(max(1, int(interval_ms)))
@@ -71,6 +74,7 @@ class CandidateBatchUpdateController(QObject):
         self._displayed = 0
         self._failed = 0
         self._notice = ""
+        self._search_error = ""
         self._searching = True
         self._emit_status()
 
@@ -148,10 +152,13 @@ class CandidateBatchUpdateController(QObject):
             displayed += self.flush_now()
         return displayed
 
-    def mark_search_complete(self, session_token: int | None = None) -> bool:
+    def mark_search_complete(self, session_token: int | None = None, *, error: str = "") -> bool:
         if session_token is not None and session_token != self._active_session_token:
             return False
         self._searching = False
+        if error:
+            self._search_error = str(error)
+            self._notice = " ".join(str(error).split())
         self._emit_status()
         return True
 
@@ -170,10 +177,21 @@ class CandidateBatchUpdateController(QObject):
         self._displayed = 0
         self._failed = 0
         self._notice = ""
+        self._search_error = ""
         if self._title_callback is not None:
             self._title_callback("Candidate list")
         if self._detail_callback is not None:
             self._detail_callback("")
+        if self._state_callback is not None:
+            self._state_callback("idle")
+
+    @property
+    def activity_state(self) -> str:
+        if self._active_session_token is None:
+            return "idle"
+        if self._searching or self._queued + self._downloading + self._indexing + self._ranking + len(self._pending):
+            return "busy"
+        return "error" if self._failed or self._search_error else "complete"
 
     def _emit_status(self) -> None:
         status = CandidateBatchStatus(
@@ -189,6 +207,8 @@ class CandidateBatchUpdateController(QObject):
             failed=self._failed,
             notice=self._notice,
         )
+        if self._state_callback is not None:
+            self._state_callback(self.activity_state)
         if self._status_callback is not None:
             self._status_callback(candidate_batch_status_text(status))
         if self._title_callback is not None:

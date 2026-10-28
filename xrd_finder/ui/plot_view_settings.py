@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from xrd_finder.ui.app_settings import app_settings
 from xrd_finder.ui.plot_style import PlotLineStyle, PlotMarkerStyle, PlotStyle
+from xrd_finder.ui.theme import is_dark_theme, settings_panel_style, window_style
 
 
 PLOT_ASPECTS = {
@@ -97,21 +98,22 @@ class PlotViewSettings:
     grid_alpha: float = 0.18
     legend_visible: bool = True
     legend_font_size: int = 10
-    multi_legend_alignment: str = "Auto"
+    multi_legend_alignment: str = "Right"
     multi_legend_phase_names_visible: bool = True
+    multi_phase_legend_mode: str = "individual"
     cursor_vertical_line_visible: bool = False
     hkl_labels_visible: bool = False
     layer_observed_visible: bool = True
     layer_preview_peak_positions_visible: bool = True
-    layer_total_profile_visible: bool = True
-    layer_phase_profiles_visible: bool = True
-    layer_background_visible: bool = True
-    layer_difference_visible: bool = True
-    layer_phase_ticks_visible: bool = True
-    layer_phase_peak_sticks_visible: bool = True
+    layer_total_profile_visible: bool = False
+    layer_phase_profiles_visible: bool = False
+    layer_background_visible: bool = False
+    layer_difference_visible: bool = False
+    layer_phase_ticks_visible: bool = False
+    layer_phase_peak_sticks_visible: bool = False
     layer_coverage_markers_visible: bool = True
     layer_peak_labels_visible: bool = False
-    layer_unknown_peaks_visible: bool = True
+    layer_unknown_peaks_visible: bool = False
     observed_color: str = "#202124"
     calculated_color: str = "#0b8043"
     background_color: str = "#9aa0a6"
@@ -240,154 +242,7 @@ class PlotViewSettingsWidget(QScrollArea):
         layout.addWidget(button_row)
         layout.addStretch(1)
         self.setWidget(container)
-        self.setStyleSheet(
-            """
-            QScrollArea#plotViewSettings {
-                background: #24282d;
-                border: 0;
-            }
-            QWidget#plotViewSettingsBody {
-                background: #24282d;
-            }
-            QWidget#viewSection {
-                background: #20252b;
-                border: 1px solid #3d4651;
-                border-radius: 4px;
-            }
-            QToolButton#viewSectionHeader {
-                background: #4a4f55;
-                color: #eef2f7;
-                border: 0;
-                border-top-left-radius: 3px;
-                border-top-right-radius: 3px;
-                padding: 5px 8px;
-                font-weight: 700;
-                text-align: left;
-            }
-            QWidget#viewSectionContent {
-                background: #20252b;
-                color: #e5e7eb;
-            }
-            QTabWidget#plotViewTabs::pane {
-                border: 1px solid #3d4651;
-                background: #20252b;
-            }
-            QTabBar::tab {
-                background: #303740;
-                color: #d7dde5;
-                padding: 6px 12px;
-                border: 1px solid #3d4651;
-                border-bottom: 0;
-            }
-            QTabBar::tab:selected {
-                background: #4a4f55;
-                color: #ffffff;
-                font-weight: 700;
-            }
-            QLabel#activeProfileLabel {
-                background: #151a20;
-                border: 1px solid #3d4651;
-                border-radius: 4px;
-                color: #eaf2ff;
-                padding: 8px;
-                font-weight: 700;
-            }
-            QLabel#lineGroupTitle {
-                color: #d8dee7;
-                font-weight: 700;
-                padding: 8px 2px 2px 2px;
-            }
-            QTableWidget#profileCandidateTable {
-                background: #1b2026;
-                color: #eef2f7;
-                gridline-color: #3d4651;
-                border: 1px solid #3d4651;
-            }
-            QWidget#axisCard {
-                background: #1b2026;
-                border: 1px solid #3d4651;
-                border-radius: 4px;
-            }
-            QToolButton#axisCardTitle {
-                background: #323941;
-                color: #f2f6fb;
-                border: 0;
-                border-top-left-radius: 3px;
-                border-top-right-radius: 3px;
-                padding: 4px 7px;
-                font-weight: 700;
-                text-align: left;
-            }
-            QLabel {
-                color: #d7dde5;
-                font-weight: 600;
-            }
-            QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
-                background: #1b2229;
-                color: #eef2f7;
-                border: 1px solid #43505c;
-                border-radius: 2px;
-                min-height: 26px;
-                padding: 2px 6px;
-            }
-            QSpinBox, QDoubleSpinBox {
-                padding-right: 22px;
-            }
-            QSpinBox::up-button, QDoubleSpinBox::up-button,
-            QSpinBox::down-button, QDoubleSpinBox::down-button {
-                background: #303943;
-                border-left: 1px solid #56616d;
-                width: 20px;
-            }
-            QSpinBox::up-button, QDoubleSpinBox::up-button {
-                border-bottom: 1px solid #56616d;
-                border-top-right-radius: 2px;
-            }
-            QSpinBox::down-button, QDoubleSpinBox::down-button {
-                border-bottom-right-radius: 2px;
-            }
-            QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
-            QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
-                background: #43505c;
-            }
-            QCheckBox {
-                color: #eef2f7;
-                spacing: 6px;
-            }
-            QPushButton#viewResetButton {
-                background: #5c6167;
-                color: #f8fafc;
-                border: 1px solid #737a82;
-                border-radius: 4px;
-                min-height: 26px;
-                font-weight: 700;
-            }
-            QPushButton#saveDefaultButton {
-                background: #007a4d;
-                color: #f8fafc;
-                border: 1px solid #15a36c;
-                border-radius: 4px;
-                min-height: 26px;
-                font-weight: 700;
-            }
-            QPushButton#factoryResetButton {
-                background: #4b5563;
-                color: #f8fafc;
-                border: 1px solid #6b7280;
-                border-radius: 4px;
-                min-height: 26px;
-                font-weight: 700;
-            }
-            QPushButton#colorButton {
-                background: #333a42;
-                color: #f8fafc;
-                border: 1px solid #56616d;
-                border-radius: 3px;
-                min-height: 24px;
-                font-weight: 700;
-            }
-            """
-        )
+        self.setStyleSheet(window_style(is_dark_theme(self)) + settings_panel_style(is_dark_theme(self)))
         self._load_saved_default()
 
     def _graph_tab(self) -> QWidget:
@@ -476,7 +331,7 @@ class PlotViewSettingsWidget(QScrollArea):
                     candidate.get("Entry", ""),
                     candidate.get("Phase", ""),
                     candidate.get("Match", candidate.get("Match (%)", candidate.get("Prob.", ""))),
-                    candidate.get("I/Ic*", candidate.get("I/Ic", "")),
+                    candidate.get("I/Ic*", candidate.get("I/Ic", "")) if candidate.get("Source", "").upper()=="PDF2" else "",
                 ]
                 for column, value in enumerate(values):
                     item = QTableWidgetItem(str(value))
@@ -722,10 +577,15 @@ class PlotViewSettingsWidget(QScrollArea):
         self.legend_font_spin = self._spin(7, 36, 10)
         self.multi_legend_alignment_combo = QComboBox()
         self.multi_legend_alignment_combo.addItems(["Auto", "Right", "Center", "Left"])
+        self.multi_legend_alignment_combo.setCurrentText('Right')
         self.multi_legend_alignment_combo.currentTextChanged.connect(self._emit_settings)
         self.multi_legend_phase_names_checkbox = QCheckBox()
         self.multi_legend_phase_names_checkbox.setChecked(True)
         self.multi_legend_phase_names_checkbox.toggled.connect(self._emit_settings)
+        self.multi_phase_legend_mode_combo = QComboBox()
+        self.multi_phase_legend_mode_combo.addItem("Individual per pattern", "individual")
+        self.multi_phase_legend_mode_combo.addItem("Common to all patterns", "common")
+        self.multi_phase_legend_mode_combo.currentIndexChanged.connect(self._emit_settings)
         self.cursor_line_checkbox = QCheckBox()
         self.cursor_line_checkbox.toggled.connect(self._emit_settings)
         self.hkl_labels_checkbox = QCheckBox()
@@ -751,6 +611,7 @@ class PlotViewSettingsWidget(QScrollArea):
         form.addRow("Legend / XRD text size", self.legend_font_spin)
         form.addRow("Multi-XRD legend alignment", self.multi_legend_alignment_combo)
         form.addRow("Phase names in Multi-XRD legend", self.multi_legend_phase_names_checkbox)
+        form.addRow("Phase legend layout", self.multi_phase_legend_mode_combo)
         form.addRow("Vertical cursor line", self.cursor_line_checkbox)
         form.addRow("HKL labels", self.hkl_labels_checkbox)
         return widget
@@ -769,22 +630,22 @@ class PlotViewSettingsWidget(QScrollArea):
             "Show or hide the temporary sticks for the candidate selected in the results table."
         )
         self.layer_total_profile_checkbox = QCheckBox()
-        self.layer_total_profile_checkbox.setChecked(True)
+        self.layer_total_profile_checkbox.setChecked(False)
         self.layer_total_profile_checkbox.toggled.connect(self._emit_settings)
         self.layer_phase_profiles_checkbox = QCheckBox()
-        self.layer_phase_profiles_checkbox.setChecked(True)
+        self.layer_phase_profiles_checkbox.setChecked(False)
         self.layer_phase_profiles_checkbox.toggled.connect(self._emit_settings)
         self.layer_background_checkbox = QCheckBox()
-        self.layer_background_checkbox.setChecked(True)
+        self.layer_background_checkbox.setChecked(False)
         self.layer_background_checkbox.toggled.connect(self._emit_settings)
         self.layer_difference_checkbox = QCheckBox()
-        self.layer_difference_checkbox.setChecked(True)
+        self.layer_difference_checkbox.setChecked(False)
         self.layer_difference_checkbox.toggled.connect(self._emit_settings)
         self.layer_phase_ticks_checkbox = QCheckBox()
-        self.layer_phase_ticks_checkbox.setChecked(True)
+        self.layer_phase_ticks_checkbox.setChecked(False)
         self.layer_phase_ticks_checkbox.toggled.connect(self._emit_settings)
         self.layer_phase_peak_sticks_checkbox = QCheckBox()
-        self.layer_phase_peak_sticks_checkbox.setChecked(True)
+        self.layer_phase_peak_sticks_checkbox.setChecked(False)
         self.layer_phase_peak_sticks_checkbox.toggled.connect(self._emit_settings)
         self.layer_coverage_markers_checkbox = QCheckBox()
         self.layer_coverage_markers_checkbox.setChecked(True)
@@ -793,7 +654,7 @@ class PlotViewSettingsWidget(QScrollArea):
         self.layer_peak_labels_checkbox.setChecked(False)
         self.layer_peak_labels_checkbox.toggled.connect(self._emit_settings)
         self.layer_unknown_peaks_checkbox = QCheckBox()
-        self.layer_unknown_peaks_checkbox.setChecked(True)
+        self.layer_unknown_peaks_checkbox.setChecked(False)
         self.layer_unknown_peaks_checkbox.toggled.connect(self._emit_settings)
         form.addRow("Experimental pattern", self.layer_observed_checkbox)
         form.addRow("Candidate preview", self.layer_preview_peak_positions_checkbox)
@@ -822,7 +683,10 @@ class PlotViewSettingsWidget(QScrollArea):
         self.calculated_color_input.textChanged.connect(self._emit_settings)
         self.background_color_input = QLineEdit("#9aa0a6")
         self.background_color_input.textChanged.connect(self._emit_settings)
-        self.reference_color_input = QLineEdit("#1a73e8")
+        # Retained for saved plot settings, even though reference colors are
+        # chosen per candidate. It must share the panel's QObject lifetime.
+        self.reference_color_input = QLineEdit("#1a73e8", self)
+        self.reference_color_input.hide()
         self.reference_color_input.textChanged.connect(self._emit_settings)
         self.observed_width_spin = self._double_spin(0.5, 5.0, 1.35, 0.1)
         self.calculated_width_spin = self._double_spin(0.5, 5.0, 1.6, 0.1)
@@ -1057,6 +921,7 @@ class PlotViewSettingsWidget(QScrollArea):
             legend_visible=bool(self.legend_checkbox.isChecked()),
             legend_font_size=int(self.legend_font_spin.value()),
             multi_legend_alignment=self.multi_legend_alignment_combo.currentText(),
+            multi_phase_legend_mode=self.multi_phase_legend_mode_combo.currentData(),
             multi_legend_phase_names_visible=bool(
                 self.multi_legend_phase_names_checkbox.isChecked()
             ),
@@ -1202,6 +1067,9 @@ class PlotViewSettingsWidget(QScrollArea):
         self.legend_checkbox.setChecked(settings.legend_visible)
         self.legend_font_spin.setValue(settings.legend_font_size)
         self.multi_legend_alignment_combo.setCurrentText(settings.multi_legend_alignment)
+        self.multi_phase_legend_mode_combo.setCurrentIndex(max(
+            0, self.multi_phase_legend_mode_combo.findData(settings.multi_phase_legend_mode)
+        ))
         self.multi_legend_phase_names_checkbox.setChecked(
             settings.multi_legend_phase_names_visible
         )

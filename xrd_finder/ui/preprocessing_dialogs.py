@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from xrd_finder.ui.screen_bound_dialog import ScreenBoundDialog, scrollable_dialog_body
 import numpy as np
 from PySide6.QtCore import QSignalBlocker, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
@@ -113,6 +114,7 @@ class SmoothPanel(QWidget, _OddWindowMixin):
     previewRequested = Signal()
     applyRequested = Signal()
     cancelRequested = Signal()
+    resetRequested = Signal()
 
     def __init__(self, default_window: int, auto_plan=None, parent=None) -> None:
         super().__init__(parent)
@@ -140,10 +142,14 @@ class SmoothPanel(QWidget, _OddWindowMixin):
 
         cancel_button = QPushButton("Cancel")
         apply_button = QPushButton("Apply")
+        reset_button = QPushButton("Reset")
+        reset_button.setToolTip("Remove applied smoothing and later processing; keep earlier processing and crop ranges. Older data without undo history returns to the original trace.")
+        reset_button.clicked.connect(self._request_reset)
         cancel_button.clicked.connect(self._request_cancel)
         apply_button.clicked.connect(self._request_apply)
 
         button_row = QHBoxLayout()
+        button_row.addWidget(reset_button)
         button_row.addStretch(1)
         button_row.addWidget(cancel_button)
         button_row.addWidget(apply_button)
@@ -178,6 +184,10 @@ class SmoothPanel(QWidget, _OddWindowMixin):
     def _request_cancel(self) -> None:
         self._preview_timer.stop()
         self.cancelRequested.emit()
+
+    def _request_reset(self) -> None:
+        self._preview_timer.stop()
+        self.resetRequested.emit()
 
     def window_size(self) -> int:
         return self._default_window
@@ -380,6 +390,7 @@ class BackgroundRemovalPanel(QWidget):
     applyRequested = Signal()
     subtractRequested = Signal()
     cancelRequested = Signal()
+    resetRequested = Signal()
 
     def __init__(self, default_degree: int = 10, auto_plan=None, auto_model=None, initial_state=None, parent=None) -> None:
         super().__init__(parent)
@@ -519,10 +530,14 @@ class BackgroundRemovalPanel(QWidget):
 
         apply_button = QPushButton("Apply")
         cancel_button = QPushButton("Cancel")
+        reset_button = QPushButton("Reset")
+        reset_button.setToolTip("Remove applied background subtraction and later processing; keep earlier processing and crop ranges. Older data without undo history returns to the original trace.")
+        reset_button.clicked.connect(self._request_reset)
         apply_button.clicked.connect(self.applyRequested)
         cancel_button.clicked.connect(self.cancelRequested)
 
         button_row = QHBoxLayout()
+        button_row.addWidget(reset_button)
         button_row.addStretch(1)
         button_row.addWidget(apply_button)
         button_row.addWidget(cancel_button)
@@ -554,6 +569,10 @@ class BackgroundRemovalPanel(QWidget):
         if self._loading_settings:
             return
         self._preview_timer.start()
+
+    def _request_reset(self) -> None:
+        self._preview_timer.stop()
+        self.resetRequested.emit()
 
     def _emit_scheduled_preview(self) -> None:
         if not self._loading_settings:
@@ -838,7 +857,7 @@ class BackgroundRemovalPanel(QWidget):
     def show_total_background(self) -> bool:
         return self.include_amorphous()
 
-class SmoothDialog(QDialog):
+class SmoothDialog(ScreenBoundDialog):
     def __init__(self, default_window: int, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Smooth XRD pattern")
@@ -846,7 +865,7 @@ class SmoothDialog(QDialog):
         self._panel.applyRequested.connect(self.accept)
         self._panel.cancelRequested.connect(self.reject)
 
-        layout = QVBoxLayout(self)
+        layout = scrollable_dialog_body(self)
         layout.addWidget(self._panel)
 
     def auto_enabled(self) -> bool:
@@ -868,7 +887,7 @@ class SmoothDialog(QDialog):
         return self._panel.passes()
 
 
-class BackgroundRemovalDialog(QDialog):
+class BackgroundRemovalDialog(ScreenBoundDialog):
     def __init__(self, default_degree: int = 10, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Remove background")
@@ -876,7 +895,7 @@ class BackgroundRemovalDialog(QDialog):
         self._panel.applyRequested.connect(self.accept)
         self._panel.cancelRequested.connect(self.reject)
 
-        layout = QVBoxLayout(self)
+        layout = scrollable_dialog_body(self)
         layout.addWidget(self._panel)
 
     def auto_enabled(self) -> bool:

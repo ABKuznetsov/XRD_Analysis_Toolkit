@@ -116,6 +116,8 @@ def normalize_intensity(data: np.ndarray, target_max: float = 100.0) -> np.ndarr
     return result
 
 def processed_pattern_data(pattern: Pattern | None) -> np.ndarray | None:
+    if getattr(pattern, 'input_kind', '') == 'peak_list':
+        return None
     if pattern is None or not pattern.processed_points:
         return None
     data = np.asarray(pattern.processed_points, dtype=float)
@@ -127,6 +129,8 @@ def processed_pattern_data(pattern: Pattern | None) -> np.ndarray | None:
 def observed_pattern_data(pattern: Pattern | None) -> np.ndarray | None:
     if pattern is None:
         return None
+    if getattr(pattern, 'input_kind', '') == 'peak_list':
+        return None  # Discrete intensities are not a sampled measurement.
     processed = processed_pattern_data(pattern)
     if processed is not None:
         return processed
@@ -143,6 +147,11 @@ def load_observed_patterns(
 ) -> list[ObservedPatternPlotData]:
     loaded: list[ObservedPatternPlotData] = []
     for pattern in patterns:
+        if getattr(pattern, 'input_kind', '') == 'peak_list':
+            points = np.asarray(pattern.peak_points, dtype=float).reshape(-1, 2)
+            loaded.append(ObservedPatternPlotData(pattern, f'Manual peaks: {pattern.name}',
+                points[:, 0], points[:, 1], 100.))
+            continue
         try:
             if active_override is not None and pattern.id == active_override[0]:
                 data = np.asarray(active_override[1], dtype=float)

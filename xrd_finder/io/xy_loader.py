@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-import re
+import csv
 
 import numpy as np
 
 
 def load_xy(path: str | Path) -> np.ndarray:
     rows: list[list[float]] = []
-    for raw_line in Path(path).read_text(encoding="utf-8", errors="ignore").splitlines():
+    for raw_line in Path(path).read_text(encoding="utf-8-sig", errors="ignore").splitlines():
         line = raw_line.strip()
         if not line or line.startswith(("#", "!", "//")):
             continue
@@ -28,21 +28,34 @@ def load_xy(path: str | Path) -> np.ndarray:
 
 def _parse_numeric_columns(line: str) -> list[float]:
     line = line.strip()
-    if "," in line and "." in line:
-        tokens = re.split(r"[,\s;]+", line)
-    elif ";" in line:
-        tokens = [token.strip().replace(",", ".") for token in line.split(";")]
+    if ";" in line:
+        delimiter = ';'
     elif "\t" in line:
-        tokens = [token.strip().replace(",", ".") for token in line.split("\t")]
+        delimiter = '\t'
+    elif ',' in line:
+        delimiter = ','
+        parts = line.split()
+        if len(parts) >= 2:
+            try:
+                # Whitespace-separated decimal-comma data remain supported.
+                float(parts[0].replace(',', '.'))
+                float(parts[1].replace(',', '.'))
+            except ValueError:
+                pass
+            else:
+                delimiter = None
     else:
-        tokens = line.replace(",", ".").split()
+        delimiter = None
+    tokens = (next(csv.reader([line], delimiter=delimiter, skipinitialspace=True))
+              if delimiter is not None else line.split())
 
     values: list[float] = []
     for token in tokens:
+        token = token.strip()
         if not token:
             continue
         try:
-            values.append(float(token))
+            values.append(float(token if delimiter == ',' else token.replace(',', '.')))
         except ValueError:
             break
     return values

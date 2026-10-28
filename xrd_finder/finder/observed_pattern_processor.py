@@ -31,7 +31,7 @@ class ObservedPatternProcessor:
                 background = self.estimate_background(x_grid, observed_y)
         else:
             background = np.zeros_like(observed_y)
-        target_y = np.clip(observed_y - background, 0.0, None)
+        target_y = observed_y - background
         fwhm = finder_input.fwhm or self.estimate_fwhm(x_grid, target_y)
         peaks = self.observed_peaks(x_grid, target_y, fwhm)
         peak_positions = np.asarray([peak.two_theta for peak in peaks], dtype=float)

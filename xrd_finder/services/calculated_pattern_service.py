@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import cmath
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import re
 
 import numpy as np
+from xrd_finder.services.profile_support import PROFILE_KERNEL_WINDOW_FWHM, profile_reflection_range
 
 CU_KA1_WAVELENGTH = 1.54051
 CU_KA2_WAVELENGTH = 1.54433
@@ -79,6 +80,9 @@ class HKLPeak:
     f2: float = 0.0
     lp: float = 1.0
     raw_intensity: float = 0.0
+    # Unweighted powder-family strength, before spectrum and geometry factors.
+    intrinsic_intensity: float | None = None
+    intensity_origin: str = ""
 
 
 @dataclass(slots=True)
@@ -196,8 +200,11 @@ def _apply_symop(op: str, x: float, y: float, z: float) -> tuple[float, float, f
 
 def expand_atoms_by_symmetry(structure, tol_digits: int = 5) -> list[ExpandedAtom]:
     expanded = []
-    seen = set()
+    tolerance = 10.0 ** (-tol_digits) + 1.0e-12
     for atom in getattr(structure, "atoms", None) or []:
+        # Deduplicate equivalent special positions within this site only.
+        # Separate disorder/partial-occupancy records contribute independently.
+        seen = []
         if atom.x is None or atom.y is None or atom.z is None:
             continue
         occupancy = atom.occupancy if atom.occupancy is not None else 1.0
@@ -206,10 +213,13 @@ def expand_atoms_by_symmetry(structure, tol_digits: int = 5) -> list[ExpandedAto
                 x, y, z = _apply_symop(op, atom.x, atom.y, atom.z)
             except Exception:
                 continue
-            key = (atom.element, round(x, tol_digits), round(y, tol_digits), round(z, tol_digits))
-            if key in seen:
+            fractional = (x, y, z)
+            # Match CrIStMa's fractional orbit tolerance, including across
+            # the unit-cell boundary. Rounded bins are not a distance test.
+            if any(all(abs((a-b+0.5) % 1.0 - 0.5) <= tolerance
+                       for a, b in zip(fractional, previous)) for previous in seen):
                 continue
-            seen.add(key)
+            seen.append(fractional)
             expanded.append(ExpandedAtom(atom.element, x, y, z, occupancy, atom.biso, atom.uiso))
     return expanded
 
@@ -465,6 +475,41 @@ def pseudo_voigt_values(x, center: float, fwhm: float, eta: float):
     return (1.0 - eta) * gaussian_values(x, center, fwhm) + eta * lorentzian_values(x, center, fwhm)
 
 
+def add_integrated_peak(x, y, *, center: float, intensity: float, fwhm: float, eta: float) -> None:
+    """Add an integrated line intensity using an area-normalized density.
+
+    Keep the unit-height function above for peak measurement. This physical
+    profile uses the same 25-FWHM sampled-window convention as CrIStMa; the
+    normalization is computed before cropping to the observed scan.
+    """
+    if len(x) < 2 or intensity <= 0.0:
+        return
+    width = max(float(fwhm), 1.0e-8)
+    step = float(np.median(np.diff(x)))
+    if not math.isfinite(step) or step <= 0.0:
+        raise ValueError("Profile grid must be finite and strictly increasing")
+    radius = PROFILE_KERNEL_WINDOW_FWHM * width
+    raw_left = math.ceil((center - radius - float(x[0])) / step)
+    raw_right = math.floor((center + radius - float(x[0])) / step) + 1
+    left = int(np.searchsorted(x, center - radius, side="left"))
+    right = int(np.searchsorted(x, center + radius, side="right"))
+    if left >= right:
+        return
+    fraction = float(np.clip(eta, 0.0, 1.0))
+
+    def density(values):
+        gaussian_area = width * math.sqrt(math.pi / (4.0 * math.log(2.0)))
+        lorentzian_area = width * math.pi / 2.0
+        return ((1.0 - fraction) * gaussian_values(values, center, width) / gaussian_area
+                + fraction * lorentzian_values(values, center, width) / lorentzian_area)
+
+    full_x = float(x[0]) + np.arange(raw_left, raw_right, dtype=float) * step
+    sampled_area = float(np.sum(density(full_x)) * step)
+    if not math.isfinite(sampled_area) or sampled_area <= 0.0:
+        raise ValueError("Profile kernel has no finite sampled area")
+    y[left:right] += float(intensity) * density(x[left:right]) / sampled_area
+
+
 def _two_theta_from_d(d_spacing: float, wavelength: float) -> float | None:
     argument = wavelength / (2.0 * d_spacing)
     if argument <= 0.0 or argument >= 1.0:
@@ -494,6 +539,8 @@ def calculated_profile_from_peaks(
     eta: float = 0.0,
     wavelength: float | None = CU_KA1_WAVELENGTH,
     include_kalpha2: bool = True,
+    *,
+    normalize: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
     x = np.asarray(x_grid, dtype=float)
     y = np.zeros_like(x, dtype=float)
@@ -501,14 +548,7 @@ def calculated_profile_from_peaks(
         return x, y
 
     def add_peak(center: float, intensity: float) -> None:
-        if not (x[0] <= center <= x[-1]):
-            return
-        half_width = PROFILE_WINDOW_FACTOR * max(fwhm, 1e-6)
-        left = np.searchsorted(x, center - half_width, side="left")
-        right = np.searchsorted(x, center + half_width, side="right")
-        if right <= left:
-            return
-        y[left:right] += intensity * pseudo_voigt_values(x[left:right], center, fwhm, eta)
+        add_integrated_peak(x, y, center=center, intensity=intensity, fwhm=fwhm, eta=eta)
 
     lines = radiation_lines_from_wavelength(wavelength, include_kalpha2=include_kalpha2)
     for peak in peaks:
@@ -518,7 +558,7 @@ def calculated_profile_from_peaks(
             center = _two_theta_from_d(float(peak.d), line_wavelength)
             if center is not None:
                 add_peak(center + zero_shift, float(peak.intensity) * line_fraction)
-    if np.nanmax(y) > 0:
+    if normalize and np.nanmax(y) > 0:
         y = 100.0 * y / np.nanmax(y)
     return x, y
 
@@ -539,11 +579,17 @@ class CalculatedPatternService:
             include_kalpha2=include_kalpha2,
         )[0][0]
         kwargs["wavelength"] = primary_wavelength
-        peaks = calculate_hkl_sticks(structure, two_theta_min=two_theta_min, two_theta_max=two_theta_max, **kwargs)
         if x_grid is None:
             x_grid = np.linspace(two_theta_min, two_theta_max, 5000)
+        low, high = profile_reflection_range(float(np.min(x_grid)), float(np.max(x_grid)), fwhm,
+            wavelengths=[line[0] for line in radiation_lines_from_wavelength(wavelength, include_kalpha2=include_kalpha2)])
+        profile_peaks = calculate_hkl_sticks(structure, two_theta_min=low, two_theta_max=high, **kwargs)
+        peaks = [peak for peak in profile_peaks if two_theta_min <= peak.two_theta <= two_theta_max]
+        maximum = max((peak.intensity for peak in peaks),default=0.)
+        if maximum > 0.:
+            peaks = [replace(peak,intensity=100.*peak.intensity/maximum) for peak in peaks]
         x, y = calculated_profile_from_peaks(
-            peaks,
+            profile_peaks,
             x_grid,
             fwhm=fwhm,
             eta=eta,

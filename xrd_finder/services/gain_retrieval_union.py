@@ -4,9 +4,16 @@ import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
-from xrd_finder.services.gain_retrieval_channels import RetrievalChannelRun
+from xrd_finder.services.gain_retrieval_channels import (
+    RetrievalChannelRun,
+    geometry_channel,
+    overlap_deficit_channel,
+    rank_channel_scores,
+    rare_line_channel,
+)
 from xrd_finder.services.geometric_fingerprint import peak_geometric_hashes
 from xrd_finder.services.phase_pattern_equivalence import phase_patterns_equivalent
+from xrd_finder.services.residual_geometry import build_residual_geometry_index
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +25,7 @@ class GainRetrievalConfig:
     rank_corroboration: float = 0.20
     pair_bin_deg: float = 0.08
     ratio_bin: float = 0.02
+    primary_reserve: int = 18
 
     def channel_limit(self, channel: str) -> int:
         for configured_channel, limit in self.channel_limits:
@@ -41,6 +49,205 @@ class GainRetrievalPool:
             if member == key:
                 return family
         raise KeyError(key)
+
+
+def build_production_gain_retrieval_pool(
+    reference_lines: Mapping[str, Sequence[object]],
+    primary_scores: Mapping[str, float],
+    residual_records: Iterable[object],
+    overlap_records: Iterable[object] = (),
+    *,
+    config: GainRetrievalConfig,
+    accepted_ids: Iterable[str] = (),
+    wavelength: float = 1.5406,
+    zero_shift: float = 0.0,
+) -> GainRetrievalPool:
+    """Build a conservative Gain shortlist around the proven primary ranking.
+
+    The primary prefix is protected. Configured auxiliary channels may only
+    occupy the remaining verification slots, so rescue cannot displace the
+    candidates that already make the current Quick search reliable. The
+    final candidate verification is supplied by the caller.
+    """
+
+    known: dict[str, tuple[object, ...]] = {}
+    for phase_id, lines in reference_lines.items():
+        prepared = tuple(lines)
+        if prepared:
+            known[str(phase_id)] = prepared
+    residual = tuple(residual_records)
+    overlap = tuple(overlap_records)
+    if not known:
+        return GainRetrievalPool((), (), (), 0, 0, ())
+
+    primary = {
+        str(phase_id): float(score)
+        for phase_id, score in primary_scores.items()
+        if str(phase_id) in known
+    }
+    strong_run = rank_channel_scores(
+        "strong",
+        primary,
+        {},
+        limit=config.channel_limit("strong"),
+    )
+    rare_run = rare_line_channel(
+        known,
+        residual,
+        limit=config.channel_limit("rare"),
+    )
+    runs: list[RetrievalChannelRun] = [strong_run]
+    if config.channel_limit("rare") > 0:
+        runs.append(rare_run)
+    if config.channel_limit("geometry") > 0:
+        geometry_index = build_residual_geometry_index(
+            known,
+            wavelength=wavelength,
+        )
+        runs.append(
+            geometry_channel(
+                geometry_index,
+                residual,
+                limit=config.channel_limit("geometry"),
+                wavelength=wavelength,
+                zero_shift=zero_shift,
+            )
+        )
+    if config.channel_limit("overlap") > 0:
+        runs.append(
+            overlap_deficit_channel(
+                known,
+                overlap,
+                limit=config.channel_limit("overlap"),
+            )
+        )
+    return _build_protected_production_pool(
+        tuple(runs),
+        known,
+        accepted_ids,
+        residual,
+        overlap,
+        config=config,
+        wavelength=wavelength,
+        zero_shift=zero_shift,
+    )
+
+
+def _build_protected_production_pool(
+    channel_runs: tuple[RetrievalChannelRun, ...],
+    reference_lines: Mapping[str, Sequence[object]],
+    accepted_ids: Iterable[str],
+    residual_records: Iterable[object],
+    overlap_records: Iterable[object],
+    *,
+    config: GainRetrievalConfig,
+    wavelength: float,
+    zero_shift: float,
+) -> GainRetrievalPool:
+    """Keep the proven Quick prefix and spend only spare slots on rescue hits."""
+
+    known = {str(phase_id): tuple(lines) for phase_id, lines in reference_lines.items()}
+    accepted = {str(value) for value in accepted_ids}
+    prefixes = _bounded_channel_prefixes(channel_runs, known, config)
+    raw_union = _round_robin_union(prefixes, limit=max(0, int(config.union_limit)))
+    strong_hits = next((hits for channel, hits in prefixes if channel == "strong"), ())
+    primary_ids = tuple(
+        str(hit.phase_id)
+        for hit in strong_hits
+        if str(hit.phase_id) not in accepted
+    )
+    profile_limit = max(0, int(config.profile_limit))
+    reserve = min(
+        max(0, int(config.primary_reserve)),
+        profile_limit,
+        len(primary_ids),
+    )
+    selected = list(primary_ids[:reserve])
+    selected_set = set(selected)
+
+    rescue_supported = {
+        str(hit.phase_id)
+        for channel, hits in prefixes
+        if channel != "strong"
+        for hit in hits
+    }
+    channel_evidence = _normalized_channel_evidence(prefixes)
+    residual = _residual_evidence(
+        residual_records,
+        wavelength=wavelength,
+        zero_shift=zero_shift,
+    )
+    overlap = tuple(
+        q
+        for record in overlap_records
+        if (q := _record_q(record, wavelength=wavelength, zero_shift=zero_shift))
+        is not None
+    )
+
+    def rescue_score(phase_id: str) -> float:
+        retrieval_score = _candidate_retrieval_score(
+            phase_id,
+            channel_evidence,
+            config.rank_corroboration,
+        )
+        coverage, missing_fraction = _line_level_terms(
+            known[phase_id],
+            residual,
+            overlap,
+            wavelength=wavelength,
+        )
+        total = (
+            retrieval_score
+            + coverage
+            - max(0.0, float(config.missing_line_weight)) * missing_fraction
+        )
+        return total if math.isfinite(total) else 0.0
+
+    rescue_rows: list[tuple[float, str]] = []
+    for phase_id in raw_union:
+        if (
+            phase_id in accepted
+            or phase_id in selected_set
+            or phase_id not in rescue_supported
+        ):
+            continue
+        rescue_rows.append((rescue_score(phase_id), phase_id))
+    rescue_rows.sort(key=lambda item: (-item[0], item[1]))
+    for _score, phase_id in rescue_rows:
+        if phase_id in selected_set:
+            continue
+        selected.append(phase_id)
+        selected_set.add(phase_id)
+        if len(selected) >= profile_limit:
+            break
+
+    for phase_id in primary_ids[reserve:]:
+        if phase_id in selected_set:
+            continue
+        selected.append(phase_id)
+        selected_set.add(phase_id)
+        if len(selected) >= profile_limit:
+            break
+    for phase_id in raw_union:
+        if phase_id in accepted or phase_id in selected_set:
+            continue
+        selected.append(phase_id)
+        selected_set.add(phase_id)
+        if len(selected) >= profile_limit:
+            break
+
+    assignments = tuple(
+        (phase_id, f"pattern:{phase_id}")
+        for phase_id in sorted({*accepted, *raw_union, *selected})
+    )
+    return GainRetrievalPool(
+        optional_ids=tuple(selected[:profile_limit]),
+        family_assignments=assignments,
+        channel_runs=channel_runs,
+        raw_union_count=len(raw_union),
+        collapsed_family_count=len(raw_union),
+        raw_candidate_ids=raw_union,
+    )
 
 
 def build_gain_retrieval_pool(
@@ -497,4 +704,5 @@ __all__ = [
     "GainRetrievalConfig",
     "GainRetrievalPool",
     "build_gain_retrieval_pool",
+    "build_production_gain_retrieval_pool",
 ]

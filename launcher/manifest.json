@@ -5,26 +5,26 @@
   "apps": {
     "xrd_finder": {
       "name": "XRD Phase Finder",
-      "version": "1.6.6",
+      "version": "1.6.7",
       "entry_module": "xrd_finder.apps.finder_gui",
       "folder": ".",
       "requirements": "requirements.txt",
-      "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.6/XRD_Phase_Finder_Setup_v1_6_6.exe",
+      "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_Setup_v1_6_7.exe",
       "manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/launcher/manifest.json",
       "update_manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/launcher/updates/xrd_finder.json",
       "windows_update_manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/launcher/updates/xrd_finder_windows.json",
       "macos_update_manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/launcher/updates/xrd_finder_macos.json",
       "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.6/XRD_Phase_Finder_macOS_1.6.6.pkg",
       "macos_installer_sha256": "b82d7ce9b14af3da73e39c55f00433080ab08e930f0740e73e8fe4a4b77d0561",
-      "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.6/XRD_Phase_Finder_Setup_v1_6_6.exe",
-      "installer_sha256": "0935322293a19c37204e317531d9766663d774debfee59aa1eacb8ddc33c3647",
-      "installer_filename": "XRD_Phase_Finder_Setup_v1_6_6.exe",
-      "installer_size_bytes": 5349256,
+      "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_Setup_v1_6_7.exe",
+      "installer_sha256": "3f31a4478bfb646494e7e6e60b22c741a3d3b2791e0f9fea14cbc1713782b2b3",
+      "installer_filename": "XRD_Phase_Finder_Setup_v1_6_7.exe",
+      "installer_size_bytes": 5458643,
       "platform_versions": {
-        "windows": "1.6.6",
+        "windows": "1.6.7",
         "macos": "1.6.6"
       },
-      "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.6"
+      "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7"
     }
   }
 }

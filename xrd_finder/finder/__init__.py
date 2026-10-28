@@ -1,6 +1,7 @@
 from xrd_finder.finder.context import CalculationContext
 from xrd_finder.finder.models import (
     FinderCandidateInput,
+    FinderCandidateFailure,
     FinderCandidateResult,
     FinderInput,
     FinderResult,
@@ -21,6 +22,7 @@ def __getattr__(name: str):
 __all__ = [
     "CalculationContext",
     "FinderCandidateInput",
+    "FinderCandidateFailure",
     "FinderCandidateResult",
     "FinderInput",
     "FinderResult",

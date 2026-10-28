@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from xrd_finder.services.gain_peak_width import estimate_profile_fwhm
+
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -83,34 +85,6 @@ def scale_profile_to_reference(y, reference_max: float) -> np.ndarray:
     return y / max_y * max(reference_max, 1.0)
 
 
-def estimate_profile_fwhm(x, corrected_y) -> float:
-    x = np.asarray(x, dtype=float)
-    y = np.asarray(corrected_y, dtype=float)
-    if len(x) < 5 or float(np.nanmax(y)) <= 0:
-        return 0.18
-    peak_indices, _properties = find_peaks(
-        y,
-        prominence=max(float(np.nanpercentile(y, 98)) * 0.02, float(np.nanstd(y)) * 2.0, 1.0),
-        distance=max(3, len(y) // 900),
-    )
-    widths = []
-    for index in peak_indices[:120]:
-        peak_height = y[index]
-        if peak_height <= 0:
-            continue
-        half_height = peak_height * 0.5
-        left = index
-        while left > 0 and y[left] > half_height:
-            left -= 1
-        right = index
-        while right < len(y) - 1 and y[right] > half_height:
-            right += 1
-        width = float(x[right] - x[left])
-        if 0.03 <= width <= 1.2:
-            widths.append(width)
-    if not widths:
-        return 0.18
-    return float(np.clip(np.nanmedian(widths), 0.06, 0.8))
 
 
 def _set_legend_label(item, label: str | None):
@@ -198,8 +172,14 @@ def peak_intensity_stick_arrays(
         ceiling_values = None
     stick_x = []
     stick_y = []
+    finite_x = x_grid[np.isfinite(x_grid)]
+    if not finite_x.size:
+        return stick_x, stick_y
+    low, high = float(finite_x.min()), float(finite_x.max())
     for peak in peaks:
         two_theta = float(getattr(peak, "two_theta", 0.0))
+        if not low <= two_theta <= high:
+            continue
         base_y = float(np.interp(two_theta, x_grid, baseline))
         intensity = max(float(getattr(peak, "intensity", 0.0)), 0.0)
         top_y = base_y + height * intensity / 100.0

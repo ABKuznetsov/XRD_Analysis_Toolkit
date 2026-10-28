@@ -5,14 +5,13 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QGuiApplication, QKeySequence, QPalette
+from PySide6.QtGui import QAction, QKeySequence, QPalette
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QGridLayout,
+    QApplication,
     QHeaderView,
     QFrame,
     QLabel,
-    QMenu,
     QPushButton,
     QScrollArea,
     QTableWidget,
@@ -23,73 +22,43 @@ from PySide6.QtWidgets import (
 )
 
 from xrd_finder.services.ccdc_service import extract_doi
+from xrd_finder.ui.theme import is_dark_theme, theme_colors
+from xrd_finder.ui.formula_display import FormulaDisplayDelegate, formula_html
 
 
 class CopyableTableWidget(QTableWidget):
-    """Read-only table with spreadsheet-style selection and TSV copying."""
+    """Copy scientific table selections as TSV, including whole-column labels."""
 
-    def __init__(self, rows: int = 0, columns: int = 0, parent: QWidget | None = None) -> None:
-        super().__init__(rows, columns, parent)
-        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        header = self.horizontalHeader()
-        header.setSectionsClickable(True)
-        header.sectionClicked.connect(self.selectColumn)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        action = QAction('Copy', self)
+        action.setShortcut(QKeySequence.StandardKey.Copy)
+        action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+        action.triggered.connect(self.copy_selection)
+        self.addAction(action)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
 
     def selected_text(self) -> str:
-        indexes = self.selectedIndexes()
-        if not indexes:
-            return ""
-        selected = {(index.row(), index.column()) for index in indexes}
+        selected = {(index.row(), index.column()) for index in self.selectedIndexes()}
+        if not selected:
+            return ''
         rows = sorted({row for row, _column in selected})
         columns = sorted({column for _row, column in selected})
-        includes_every_row = len(rows) == self.rowCount() and rows == list(range(self.rowCount()))
-        lines: list[str] = []
-        if includes_every_row:
-            lines.append("\t".join(self._header_text(column) for column in columns))
+        lines = []
+        if rows == list(range(self.rowCount())):
+            lines.append('\t'.join(self.horizontalHeaderItem(column).text()
+                                   if self.horizontalHeaderItem(column) is not None else ''
+                                   for column in columns))
         for row in rows:
-            lines.append(
-                "\t".join(
-                    self._item_text(row, column) if (row, column) in selected else ""
-                    for column in columns
-                )
-            )
-        return "\n".join(lines)
+            lines.append('\t'.join(self.item(row, column).text()
+                                   if (row, column) in selected and self.item(row, column) is not None else ''
+                                   for column in columns))
+        return '\n'.join(lines)
 
     def copy_selection(self) -> None:
         text = self.selected_text()
         if text:
-            QGuiApplication.clipboard().setText(text)
-
-    def keyPressEvent(self, event) -> None:
-        if event.matches(QKeySequence.StandardKey.Copy):
-            self.copy_selection()
-            event.accept()
-            return
-        if event.matches(QKeySequence.StandardKey.SelectAll):
-            self.selectAll()
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-    def contextMenuEvent(self, event) -> None:
-        menu = QMenu(self)
-        copy_action = menu.addAction("Copy")
-        copy_action.setShortcut(QKeySequence.StandardKey.Copy)
-        copy_action.setEnabled(bool(self.selectedIndexes()))
-        copy_action.triggered.connect(self.copy_selection)
-        select_all_action = menu.addAction("Select all")
-        select_all_action.setShortcut(QKeySequence.StandardKey.SelectAll)
-        select_all_action.triggered.connect(self.selectAll)
-        menu.exec(event.globalPos())
-
-    def _header_text(self, column: int) -> str:
-        item = self.horizontalHeaderItem(column)
-        return item.text() if item is not None else ""
-
-    def _item_text(self, row: int, column: int) -> str:
-        item = self.item(row, column)
-        return item.text() if item is not None else ""
+            QApplication.clipboard().setText(text)
 
 
 class CompoundCardWidget(QWidget):
@@ -98,6 +67,7 @@ class CompoundCardWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.labels: dict[str, QLabel] = {}
+        self.candidate_key: tuple[str, str] | None = None
         self.sample_labels: dict[str, QLabel] = {}
         self.sample_title: QLabel | None = None
         self.reference_title: QLabel | None = None
@@ -118,6 +88,8 @@ class CompoundCardWidget(QWidget):
             self.sample_title.setText(title if title else "No sample selected")
         for key, label in self.sample_labels.items():
             text = str(data.get(key, "") or "")
+            if key in {'Sample ID', 'Sample Date/time'}:
+                label.setTextFormat(Qt.TextFormat.PlainText)
             label.setText(text if text else "-")
         self._set_table_rows(self.sample_phase_table, phase_rows)
         if pattern is not None and self.tabs is not None:
@@ -125,6 +97,7 @@ class CompoundCardWidget(QWidget):
 
     def set_candidate(self, candidate: Mapping[str, object] | None) -> None:
         data = dict(candidate or {})
+        self.candidate_key = (str(data.get('Source', '')), str(data.get('Entry', ''))) if candidate else None
         if "Links" not in data:
             data["Links"] = self._links_html(data)
 
@@ -146,10 +119,12 @@ class CompoundCardWidget(QWidget):
 
         if self.reference_title is not None:
             title = str(data.get("Name", "") or data.get("Phase", "") or "")
-            self.reference_title.setText(title if title else "No reference selected")
+            self.reference_title.setText(formula_html(title) if title else "No reference selected")
 
         for key, label in self.labels.items():
             text = str(data.get(key, "") or "")
+            if key in {"Formula", "Name", "Mineral Name"}:
+                text = formula_html(text)
             label.setText(text if text else "-")
 
         self._set_table_rows(self.atom_table, data.get("_AtomRows"))
@@ -160,10 +135,7 @@ class CompoundCardWidget(QWidget):
     def _build_ui(self) -> None:
         colors = self._theme_colors()
         self.setStyleSheet(
-            f"CompoundCardWidget {{ background: {colors['bg']}; color: {colors['text']}; }}"
-            "QTabWidget::pane { border: 1px solid #46515d; top: -1px; }"
-            "QTabBar::tab { background: #252a31; color: #eef2f7; padding: 6px 10px; }"
-            "QTabBar::tab:selected { background: #34404c; }"
+            f"CompoundCardWidget {{ background: {colors['panel']}; color: {colors['text']}; }}"
         )
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -176,7 +148,7 @@ class CompoundCardWidget(QWidget):
     def _sample_tab(self, colors: dict[str, str]) -> QWidget:
         scroll = self._scroll_area(colors)
         content = QWidget()
-        content.setStyleSheet(f"background: {colors['bg']}; color: {colors['text']};")
+        content.setStyleSheet(f"background: {colors['panel']}; color: {colors['text']};")
         scroll.setWidget(content)
 
         layout = QVBoxLayout(content)
@@ -194,6 +166,8 @@ class CompoundCardWidget(QWidget):
             self._field_grid(
                 [
                     ("Sample Name", "Sample name"),
+                    ("Sample ID", "Sample ID"),
+                    ("Sample Date/time", "Measurement date/time"),
                     ("Sample File", "Source file"),
                     ("Sample Method", "Method"),
                     ("Sample Wavelength", "Wavelength"),
@@ -204,6 +178,14 @@ class CompoundCardWidget(QWidget):
                 target=self.sample_labels,
             )
         )
+
+        layout.addWidget(self._section_title("Notes"))
+        notes = QLabel('-')
+        notes.setWordWrap(True)
+        notes.setTextFormat(Qt.TextFormat.PlainText)
+        notes.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.sample_labels['Sample Notes'] = notes
+        layout.addWidget(notes)
 
         layout.addWidget(self._section_title("Assigned phases"))
         self.sample_phase_table = self._table(
@@ -218,7 +200,7 @@ class CompoundCardWidget(QWidget):
                 "beta",
                 "gamma",
                 "V",
-                "Quant. (%)",
+                "Est. wt.%",
                 "I/Ic",
                 "Cell scale",
                 "FWHM",
@@ -227,6 +209,8 @@ class CompoundCardWidget(QWidget):
             stretch_columns={0},
         )
         self.sample_phase_table.setMinimumHeight(220)
+        self.sample_phase_table.setItemDelegateForColumn(0, FormulaDisplayDelegate(self.sample_phase_table))
+        self.sample_phase_table.setItemDelegateForColumn(1, FormulaDisplayDelegate(self.sample_phase_table))
         layout.addWidget(self.sample_phase_table, 2)
         layout.addStretch(1)
         return scroll
@@ -234,7 +218,7 @@ class CompoundCardWidget(QWidget):
     def _reference_tab(self, colors: dict[str, str]) -> QWidget:
         scroll = self._scroll_area(colors)
         content = QWidget()
-        content.setStyleSheet(f"background: {colors['bg']}; color: {colors['text']};")
+        content.setStyleSheet(f"background: {colors['panel']}; color: {colors['text']};")
         scroll.setWidget(content)
 
         layout = QVBoxLayout(content)
@@ -295,11 +279,7 @@ class CompoundCardWidget(QWidget):
         layout.addWidget(self.atom_table, 2)
 
         layout.addWidget(self._section_title("Diffraction data"))
-        self.diffraction_table = self._table(
-            ["d [A]", "2theta", "Int.", "h", "k", "l", "Mult."],
-            stretch_columns={2, 6},
-            copyable=True,
-        )
+        self.diffraction_table = self._table(["d [A]", "2theta", "Int.", "h", "k", "l", "Mult."], stretch_columns={2, 6})
         self.diffraction_table.setMinimumHeight(300)
         layout.addWidget(self.diffraction_table, 3)
         return scroll
@@ -354,15 +334,13 @@ class CompoundCardWidget(QWidget):
         grid.setVerticalSpacing(2)
         for row_index, (key, caption) in enumerate(rows):
             name = QLabel(caption)
-            name.setStyleSheet(
-                "background: #282c31; border-left: 3px solid #e9328f; "
-                "color: #d4dde7; font-weight: 700; padding: 4px 7px;"
-            )
+            colors = self._theme_colors()
+            name.setStyleSheet(f"background: transparent; color: {colors['muted']}; padding: 5px 2px; font-weight: 500;")
             value = QLabel("-")
             value.setWordWrap(True)
             value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             colors = self._theme_colors()
-            value.setStyleSheet(f"background: {colors['bg']}; color: {colors['text']}; padding: 4px 6px;")
+            value.setStyleSheet(f"background: transparent; color: {colors['text']}; padding: 5px 4px;")
             target_labels[key] = value
             grid.addWidget(name, row_index, 0)
             grid.addWidget(value, row_index, 1)
@@ -373,6 +351,7 @@ class CompoundCardWidget(QWidget):
         if pattern is None:
             return {}
         name = str(getattr(pattern, "name", "") or "")
+        metadata = getattr(pattern, 'metadata', {}) or {}
         source_path = str(getattr(pattern, "source_path", "") or "")
         source_name = Path(source_path).name if source_path else ""
         wavelength = getattr(pattern, "wavelength", None)
@@ -396,6 +375,9 @@ class CompoundCardWidget(QWidget):
         phase_count = len(linked_phase_ids) if isinstance(linked_phase_ids, list) else 0
         return {
             "Sample Name": name,
+            "Sample ID": str(metadata.get('sample_id') or ''),
+            "Sample Date/time": str(metadata.get('sample_datetime') or '').replace('T', ' ', 1),
+            "Sample Notes": str(getattr(pattern, 'notes', '') or ''),
             "Sample File": source_name or source_path,
             "Sample Method": "XRD",
             "Sample Wavelength": wavelength_text,
@@ -406,31 +388,26 @@ class CompoundCardWidget(QWidget):
 
     def _section_title(self, text: str) -> QLabel:
         label = QLabel(text)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         label.setStyleSheet(self._section_style())
         return label
 
     def _section_style(self) -> str:
+        colors = self._theme_colors()
         return (
-            "background: #3a3f45; border: 1px solid #515860; border-radius: 3px; "
-            "color: #f1f3f4; font-weight: 700; padding: 5px 7px;"
+            f"background: {colors['alt']}; color: {colors['text']}; border: 0; border-radius: 6px; "
+            "font-weight: 600; padding: 8px;"
         )
 
-    def _table(
-        self,
-        headers: list[str],
-        stretch_columns: set[int] | None = None,
-        *,
-        copyable: bool = False,
-    ) -> QTableWidget:
-        table_class = CopyableTableWidget if copyable else QTableWidget
-        table = table_class(0, len(headers))
+    def _table(self, headers: list[str], stretch_columns: set[int] | None = None) -> QTableWidget:
+        table = CopyableTableWidget(0, len(headers))
         table.setHorizontalHeaderLabels(headers)
         table.verticalHeader().setVisible(False)
         table.setAlternatingRowColors(True)
+        table.setShowGrid(False)
+        table.verticalHeader().setDefaultSectionSize(30)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        if not copyable:
-            table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectItems)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
         header = table.horizontalHeader()
@@ -439,10 +416,10 @@ class CompoundCardWidget(QWidget):
         self._apply_table_column_modes(table, stretch_columns)
         colors = self._theme_colors()
         table.setStyleSheet(
-            f"QTableWidget {{ background: {colors['panel']}; alternate-background-color: {colors['alt']}; color: {colors['text']}; gridline-color: {colors['border']}; }}"
-            f"QTableWidget::item {{ color: {colors['text']}; }}"
+            f"QTableWidget {{ background: {colors['panel']}; alternate-background-color: {colors['alt']}; color: {colors['text']}; gridline-color: {colors['cell_border']}; }}"
+            f"QTableWidget::item {{ color: {colors['text']}; border-bottom: 1px solid {colors['cell_border']}; border-right: 1px solid {colors['cell_border']}; }}"
             f"QTableWidget::item:selected {{ background: {colors['selected']}; color: {colors['text']}; }}"
-            "QHeaderView::section { background: #33383e; color: #f1f3f4; padding: 4px; }"
+            f"QHeaderView::section {{ background: {colors['header']}; color: {colors['muted']}; border: 0; border-bottom: 1px solid {colors['cell_border']}; border-right: 1px solid {colors['cell_border']}; padding: 8px 6px; }}"
         )
         return table
 
@@ -455,26 +432,7 @@ class CompoundCardWidget(QWidget):
             header.setSectionResizeMode(column, mode)
 
     def _theme_colors(self) -> dict[str, str]:
-        dark = self.palette().color(QPalette.ColorRole.Window).lightness() < 128
-        if dark:
-            return {
-                "bg": "#1f2328",
-                "panel": "#252a31",
-                "alt": "#2c323a",
-                "text": "#eef2f7",
-                "border": "#46515d",
-                "selected": "#315f92",
-                "link": "#8ab4f8",
-            }
-        return {
-            "bg": "#f4f6f8",
-            "panel": "#ffffff",
-            "alt": "#f3f6fa",
-            "text": "#111827",
-            "border": "#cbd5e1",
-            "selected": "#dbeafe",
-            "link": "#0b63ce",
-        }
+        return theme_colors(is_dark_theme(self))
 
     def _set_table_rows(self, table: QTableWidget | None, rows) -> None:
         if table is None:

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from xrd_finder.instrument.models import InstrumentProfile
+from xrd_finder.core.structure import CellParameters
 from xrd_finder.finder.reference_lines import ReferenceLineSet
 
 
@@ -41,6 +42,8 @@ class FinderCandidateInput:
     source: str = ""
     structure: object | None = None
     reference_lines: ReferenceLineSet | None = None
+    initial_cell: CellParameters | None = None
+    # Local structure for physical Quant; cached lines still drive alignment.
     quantification_cif_path: str = ""
 
 
@@ -73,6 +76,9 @@ class FinderInput:
     smoothing_window: int = 0
     snap_peak_positions: bool = True
     quantification_complete: bool = True
+    refine_sample_broadening: bool = False
+    # Internal fixed-calibration option; the UI still has one search workflow.
+    refine_scan_zero: bool = True
 
 
 @dataclass(slots=True)
@@ -95,7 +101,7 @@ class FinderCandidateResult:
     cell_fit_initial_rms_deg: float = 0.0
     cell_fit_rms_deg: float = 0.0
     fwhm: float = 0.0
-    profile_eta: float = 0.0
+    profile_eta: float | None = 0.0  # None: calibrated TCH mixing depends on angle.
     two_theta: list[float] = field(default_factory=list)
     profile: list[float] = field(default_factory=list)
     peak_two_theta: list[float] = field(default_factory=list)
@@ -107,6 +113,19 @@ class FinderCandidateResult:
     matched_reference_two_theta: list[float] = field(default_factory=list)
     matched_observed_two_theta: list[float] = field(default_factory=list)
     matched_delta_two_theta: list[float] = field(default_factory=list)
+    sample_broadening: dict = field(default_factory=dict)
+    mass_profile: list[float] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class FinderCandidateFailure:
+    candidate_key: str
+    entry_id: str
+    source: str
+    cif_path: str
+    stage: str
+    error_type: str
+    message: str
 
 
 @dataclass(slots=True)
@@ -118,5 +137,8 @@ class FinderResult:
     global_zero_shift: float
     fwhm: float
     candidates: list[FinderCandidateResult]
-    profile_eta: float = 0.0
+    profile_eta: float | None = 0.0
     observed_peaks: list[ObservedPeak] = field(default_factory=list)
+    sample_broadening_requested: bool = False
+    quantification_error: str = ''
+    candidate_failures: list[FinderCandidateFailure] = field(default_factory=list)

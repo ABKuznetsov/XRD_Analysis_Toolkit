@@ -5,15 +5,18 @@ import math
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
+    QBoxLayout,
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QSizePolicy,
     QSlider,
     QWidget,
 )
 
 from xrd_finder.ui.plot_view_settings import PLOT_ASPECTS
+from xrd_finder.ui.wrapping_layout import WrappingLayout
 
 
 def d_spacing_from_two_theta(two_theta: float, wavelength: float) -> float | None:
@@ -32,15 +35,21 @@ class FinderPlotControlBar(QWidget):
     plotAspectModeChanged = Signal(str)
     patternOffsetPercentChanged = Signal(int)
     normalizePatternsChanged = Signal(bool)
+    zeroCorrectionChanged = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("finderPlotControlBar")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 3, 0, 0)
-        layout.setSpacing(6)
+        self._bar_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        self._bar_layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+        self._bar_layout.setContentsMargins(8, 5, 8, 5)
+        self._bar_layout.setSpacing(6)
+        self._controls = QWidget()
+        layout = WrappingLayout(self._controls)
+        self._flow_layout = layout
 
         self.pattern_display_mode = QComboBox()
         self.pattern_display_mode.addItems(["One", "All selected"])
@@ -61,11 +70,17 @@ class FinderPlotControlBar(QWidget):
         )
         self.plot_aspect_mode.currentTextChanged.connect(self.plotAspectModeChanged)
 
-        self.normalize_patterns_checkbox = QCheckBox("Norm.")
+        self.normalize_patterns_checkbox = QCheckBox('Normalize')
         self.normalize_patterns_checkbox.setToolTip(
             "Normalize observed XRD patterns to Imax = 100 for display and phase search."
         )
         self.normalize_patterns_checkbox.toggled.connect(self.normalizePatternsChanged)
+        self.correct_zero_checkbox = QCheckBox("Correct zero")
+        self.correct_zero_checkbox.setToolTip(
+            "Display this scan and its phase lines on the corrected 2theta scale. "
+            "Uses Processing > Zero shift; original data and fitted results are unchanged."
+        )
+        self.correct_zero_checkbox.toggled.connect(self.zeroCorrectionChanged)
 
         self.pattern_offset_slider = QSlider(Qt.Orientation.Horizontal)
         self.pattern_offset_slider.setRange(0, 150)
@@ -88,28 +103,52 @@ class FinderPlotControlBar(QWidget):
         self.cursor_position_status_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
-        self.cursor_position_status_label.setStyleSheet(
-            "background: #20262d; border: 1px solid #3b4652; border-radius: 3px; "
-            "color: #d7e3f4; font-weight: 700; padding: 3px 8px;"
-        )
+        self.cursor_position_status_label.setObjectName('cursorReadout')
         self.cursor_position_status_label.setMinimumHeight(24)
         self.cursor_position_status_label.setSizePolicy(
-            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Ignored,
             QSizePolicy.Policy.Fixed,
         )
         self.set_cursor_readout()
 
-        layout.addWidget(QLabel("XRD:"))
-        layout.addWidget(self.pattern_display_mode)
-        layout.addWidget(QLabel("Format:"))
-        layout.addWidget(self.plot_aspect_mode)
-        layout.addWidget(self.normalize_patterns_checkbox)
-        layout.addSpacing(4)
-        layout.addWidget(QLabel("Offset"))
-        layout.addWidget(self.pattern_offset_slider)
-        layout.addWidget(self.pattern_offset_value)
-        layout.addStretch(1)
-        layout.addWidget(self.cursor_position_status_label)
+        for controls in ((QLabel('Patterns'), self.pattern_display_mode),
+                         (QLabel('Aspect'), self.plot_aspect_mode),
+                         (self.normalize_patterns_checkbox,),
+                         (QLabel('Offset'), self.pattern_offset_slider, self.pattern_offset_value),
+                         (self.correct_zero_checkbox,)):
+            group=QWidget()
+            row=QHBoxLayout(group);row.setContentsMargins(0,0,0,0);row.setSpacing(6)
+            for control in controls:row.addWidget(control)
+            layout.addWidget(group)
+        self._bar_layout.addWidget(self._controls, 1)
+        self._bar_layout.addWidget(self.cursor_position_status_label, 0, Qt.AlignmentFlag.AlignRight)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_control_layout()
+
+    def _update_control_layout(self) -> None:
+        if not hasattr(self, '_flow_layout'):
+            return
+        density=getattr(self.window(),"_ui_density_factor",1.)
+        self._bar_layout.setContentsMargins(round(8*density),round(5*density),round(8*density),round(5*density))
+        self._bar_layout.setSpacing(max(1,round(6*density)))
+        available=max(1,self.width()-round(16*density)-2)
+        self._controls.show()
+        show_cursor=True
+        self.cursor_position_status_label.show()
+        cursor_width=self.cursor_position_status_label.sizeHint().width() if show_cursor else 0
+        horizontal=self._flow_layout.sizeHint().width()+cursor_width+round(6*density)<=available
+        direction=QBoxLayout.Direction.LeftToRight if horizontal else QBoxLayout.Direction.TopToBottom
+        self._bar_layout.setDirection(direction)
+        controls_width=available-cursor_width-round(6*density) if horizontal else available
+        height=self._flow_layout.heightForWidth(controls_width)
+        self._controls.setFixedHeight(height)
+        cursor_height=self.cursor_position_status_label.sizeHint().height()
+        total=(max(height,cursor_height) if horizontal else height+cursor_height+self._bar_layout.spacing())+round(10*density)+2
+        if self.minimumHeight()!=total or self.maximumHeight()!=total:
+            self.setFixedHeight(total)
+            self.updateGeometry()
 
     def set_cursor_readout(
         self,
@@ -124,6 +163,9 @@ class FinderPlotControlBar(QWidget):
             d_text = "-" if d_spacing is None else f"{d_spacing:.3f} A"
             text = f"2theta: {two_theta:.3f} deg    I: {intensity:.3g}    d: {d_text}"
         self.cursor_position_status_label.setText(text)
+        self.cursor_position_status_label.setToolTip(text)
+        self.setToolTip(text)
+        self._update_control_layout()
 
     def _set_offset_value(self, value: int) -> None:
         self.pattern_offset_value.setText(f"{value}%")

@@ -24,6 +24,7 @@ PLOT_LAYER_EXPORT_MAP: dict[str, CanvasLayer] = {
     "peak_labels": CanvasLayer.LABELS,
     "hkl": CanvasLayer.LABELS,
     "pattern_legends": CanvasLayer.LEGENDS,
+    "phase_legend": CanvasLayer.LEGENDS,
     "legend_info": CanvasLayer.LEGENDS,
 }
 
@@ -160,3 +161,23 @@ def remove_pattern_layer_items(
             removed += 1
         plot_layers[layer] = kept
     return removed
+
+
+def restore_profile_layer_stacking(match_plot, pattern_ids) -> None:
+    """Keep a partial replacement in the same painter order as a full redraw."""
+    ranks = {pattern_id: index for index, pattern_id in enumerate(pattern_ids)}
+    groups = {}
+    for item in match_plot.plotItem.items:
+        stage = getattr(item, "_xrd_profile_render_stage", None)
+        pattern_id = getattr(item, "_xrd_pattern_id", None)
+        if stage is None or pattern_id not in ranks:
+            continue
+        key = (id(item.parentItem()), item.zValue())
+        groups.setdefault(key, []).append(item)
+    for items in groups.values():
+        ordered = sorted(items, key=lambda item: (
+            item._xrd_profile_render_stage, ranks[item._xrd_pattern_id],
+        ))
+        # stackBefore only changes sibling ordering, not z values or ownership.
+        for before, after in reversed(list(zip(ordered, ordered[1:]))):
+            before.stackBefore(after)

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QFontMetrics, QMouseEvent
 from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
+from xrd_finder.ui.wrapping_layout import WrappingLayout
 
 
 def periodic_table_positions() -> list[tuple[str, int, int]]:
@@ -52,17 +53,17 @@ def element_sort_key(symbol: str) -> int:
 
 def element_state_style(state: str) -> str:
     palette = {
-        "neutral": ("#0f8a75", "#42c7ad", "#ffffff"),
+        "neutral": ("#0f8a75", "#2c927e", "#ffffff"),
         "excluded": ("#9b1b59", "#d85a98", "#ffffff"),
         "required": ("#315f92", "#69a7e8", "#f3f9ff"),
-        "optional": ("#0f8a75", "#42c7ad", "#ffffff"),
+        "optional": ("#0f8a75", "#2c927e", "#ffffff"),
         "any": ("#5f6368", "#8a8d91", "#ffffff"),
     }
     bg, border, color = palette.get(state, palette["neutral"])
     return (
         "QPushButton {"
         f"background: {bg}; border: 1px solid {border}; color: {color};"
-        "border-radius: 2px; font-weight: 700; padding: 0px;"
+        "border-radius: 4px; font-weight: 600; padding: 0px;"
         "}"
     )
 
@@ -80,7 +81,7 @@ class ElementFilterButton(QPushButton):
         self.setToolTip(
             f"{symbol}\n"
             "Left click: required element (blue).\n"
-            "Right click: element absent (pink).\n"
+            "Right click: exclude structures containing this element (pink).\n"
             "Click again to remove the filter.\n"
             "Hold and drag to select several elements."
         )
@@ -190,11 +191,11 @@ class PeriodicTableWidget(QWidget):
         self._excluded_mode = bool(strict)
         if self.mode_button is None:
             return
-        self.mode_button.setText("May be present" if strict else "Element absent")
+        self.mode_button.setText("Allow others" if strict else "Exclude others")
         self.mode_button.setToolTip(
-            "Allow all pink elements; keep blue required cells."
+            "Allow all excluded elements in the search again; keep the required elements."
             if strict else
-            "Mark all green elements as absent; keep blue required cells."
+            "Exclude all optional elements from the search; keep the required elements."
         )
         if strict:
             self.mode_button.setStyleSheet(
@@ -226,34 +227,60 @@ class PeriodicTableWidget(QWidget):
         spacing_x = self._grid.horizontalSpacing()
         spacing_y = self._grid.verticalSpacing()
         available_width = max(1, self.width() - margins.left() - margins.right() - spacing_x * (self._GRID_COLUMNS - 1))
-        section_gap = 10
+        density=getattr(self.window(),"_ui_density_factor",1.)
+        section_gap = round(6*density)
+        legend_height = self._legend_layout.heightForWidth(max(1, self.width()))
         available_height = max(
             1,
-            self.height() - margins.top() - margins.bottom() - spacing_y * (self._GRID_ROWS - 1) - section_gap - 22,
+            self.height() - margins.top() - margins.bottom() - spacing_y * (self._GRID_ROWS - 1) - section_gap - round(18*density) - legend_height,
         )
-        width = max(16, available_width // self._GRID_COLUMNS)
-        height = max(14, available_height // self._GRID_ROWS)
+        # Seven periods and the two f-block rows contain clickable cells.
+        # Fit height independently: keeping a fixed 22:18 ratio left large
+        # panels empty while their symbols remained unnecessarily small.
+        width = max(4, available_width // self._GRID_COLUMNS)
+        height = max(3, min(round(width * 1.2), available_height // 9))
+        self._grid.setRowMinimumHeight(8,max(1,round(4*density)))
         self._set_cell_size(width, height)
 
     def _set_cell_size(self, width: int, height: int) -> None:
-        font_size = max(10, min(20, round(min(width * 0.42, height * 0.52))))
+        density=getattr(self.window(),"_ui_density_factor",1.)
+        font_size = max(3, min(round(20*density), round(min(width * 0.7, height * 0.7))))
+        font = self.font()
+        font.setBold(True)
+        while font_size > 3:
+            font.setPixelSize(font_size)
+            metrics = QFontMetrics(font)
+            if (metrics.height() <= height - 2 and
+                    max(metrics.horizontalAdvance(symbol) for symbol in self._buttons) <= width - 2):
+                break
+            font_size -= 1
+        header_size = max(3, min(round(12*density), round(width * 0.45)))
+        style=(f'QPushButton {{ font-size: {font_size}px; }} '
+               f'QLabel[periodicHeader="true"] {{ font-size: {header_size}px; }}')
+        if self.styleSheet()!=style:
+            self.setStyleSheet(style)
         for widget in self._widgets:
-            widget.setFixedSize(width, height)
+            widget.setFixedSize(width, max(4,header_size + round(5*density)) if isinstance(widget,QLabel) else height)
             font = widget.font()
-            font.setPointSize(font_size)
+            font.setPixelSize(font_size)
             font.setBold(True)
             widget.setFont(font)
+        if self.mode_button is not None:
+            self.mode_button.setFixedSize(min(round(150*density), width * 6 + round(10*density)), min(round(34*density), height * 2 + round(4*density)))
+            font = self.mode_button.font()
+            font.setPixelSize(max(max(3,round(9*density)), min(max(3,round(12*density)), width // 2 + round(3*density))))
+            self.mode_button.setFont(font)
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(2)
 
         grid = QGridLayout()
         self._grid = grid
         grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(2)
-        grid.setVerticalSpacing(4)
+        grid.setHorizontalSpacing(1)
+        grid.setVerticalSpacing(1)
 
         for group in range(1, 19):
             label = self._header_label(str(group))
@@ -269,7 +296,6 @@ class PeriodicTableWidget(QWidget):
             self._add_element_button(grid, symbol, period, group)
 
         self.mode_button = QPushButton(self)
-        self.mode_button.setFixedSize(140, 32)
         self.mode_button.clicked.connect(self.modeToggleRequested)
         self.set_excluded_mode(False)
         grid.addWidget(
@@ -277,7 +303,7 @@ class PeriodicTableWidget(QWidget):
             alignment=Qt.AlignmentFlag.AlignCenter,
         )
 
-        grid.setRowMinimumHeight(8, 10)
+        grid.setRowMinimumHeight(8, 4)
         lanth_label = self._header_label("L")
         act_label = self._header_label("A")
         self._widgets.extend([lanth_label, act_label])
@@ -291,32 +317,41 @@ class PeriodicTableWidget(QWidget):
             self._add_element_button(grid, symbol, 10, 4 + index)
 
         layout.addLayout(grid)
-        legend = QHBoxLayout()
+        legend = self._legend_layout = WrappingLayout(spacing=10)
         legend.setContentsMargins(2, 0, 2, 0)
-        legend.setSpacing(5)
         for state, label_text in (
             ("required", "Required"),
-            ("neutral", "May be present"),
-            ("excluded", "Element absent"),
+            ("neutral", "Optional"),
+            ("excluded", "Excluded"),
         ):
             swatch = QLabel("H", self)
             swatch.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            swatch.setFixedSize(20, 18)
+            swatch.setFixedSize(18, 18)
             swatch.setStyleSheet(element_state_style(state).replace("QPushButton", "QLabel"))
             label = QLabel(label_text, self)
+            font = label.font()
+            font.setPixelSize(14)
+            label.setFont(font)
+            label.setStyleSheet("font-size: 14px;")
             self._legend_swatches.append(swatch)
             self._legend_labels.append(label)
-            legend.addWidget(swatch)
-            legend.addWidget(label)
-        legend.addStretch()
+            group = QWidget()
+            row = QHBoxLayout(group)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(4)
+            row.addWidget(swatch)
+            row.addWidget(label)
+            legend.addWidget(group)
         layout.addLayout(legend)
+        layout.addStretch(1)
         self.setMinimumHeight(215)
         self._fit_cells_to_area()
 
     def _header_label(self, text: str) -> QLabel:
         label = QLabel(text)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setStyleSheet("background: #202328; border: 1px solid #3d444d; color: #9aa4af;")
+        label.setProperty("periodicHeader",True)
+        label.setStyleSheet("background: transparent; border: 0; color: #8c9ba9;")
         label.setFixedSize(22, 18)
         return label
 

@@ -13,9 +13,10 @@ _TWO_THETA_TAGS = ("_pd_peak_2theta", "_pd_peak_2theta_scan")
 _INTENSITY_TAGS = (
     "_pd_peak_intensity",
     "_pd_peak_intensity_total",
-    "_refln_intensity_meas",
-    "_refln_f_squared_meas",
 )
+# _refln_ observations (including F²) are not powder integrated intensities.
+# They must never override the structural powder calculation merely because
+# a d-spacing column is present in the same loop.
 
 
 def extract_cif_powder_peaks(

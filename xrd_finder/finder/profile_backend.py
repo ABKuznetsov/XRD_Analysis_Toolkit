@@ -12,9 +12,8 @@ from xrd_finder.instrument.models import InstrumentProfile
 from xrd_finder.instrument.resolution import cristma_tch_profile
 from xrd_finder.services.calculated_pattern_service import (
     HKLPeak,
-    PROFILE_WINDOW_FACTOR,
     calculated_profile_from_peaks,
-    pseudo_voigt_values,
+    add_integrated_peak,
 )
 
 
@@ -26,7 +25,35 @@ class PeakProfileBackend(Protocol):
         peaks: list[HKLPeak],
         x_grid: np.ndarray,
         context: CalculationContext,
+        *, normalize: bool = True,
     ) -> np.ndarray: ...
+
+
+def validate_instrument_eta(context: CalculationContext) -> None:
+    """CrIStMa instrument models do not expose a separate constant PV mixing."""
+    eta = 0.0 if context.profile_eta is None else float(context.profile_eta)
+    if not math.isfinite(eta) or eta != 0.0:
+        raise ValueError('Free profile eta is unsupported with an instrument model; use its resolution parameters')
+
+
+def profile_reference_angle(peaks, instrument_profile: InstrumentProfile, d_spacing_scale=1.0) -> float:
+    """Resolution is evaluated at the Bragg angle, before the scan zero shift."""
+    if not peaks:
+        return 40.0
+    peak = max(peaks, key=lambda p: float(p.intensity))
+    d = float(peak.d) * float(d_spacing_scale)
+    wavelength = float(instrument_profile.radiation.components[0].wavelength_angstrom)
+    ratio = wavelength / (2. * d) if d > 0. else 0.
+    if 0. < ratio < 1.:
+        return math.degrees(2. * math.asin(ratio))
+    return float(peak.two_theta)
+
+
+def instrument_fwhm_at(instrument_profile: InstrumentProfile, two_theta: float) -> float:
+    resolution = instrument_profile.resolution
+    if resolution.model == 'constant_fwhm':
+        return float(resolution.constant_fwhm_deg)
+    return float(cristma_tch_profile(resolution).fwhm_deg_at(two_theta))
 
 
 def instrument_profile_with_width_floor(
@@ -64,15 +91,16 @@ def instrument_profile_with_width_floor(
 
 
 class FinderPeakProfileBackend:
-    """Compatibility profile backend used until CrIStMa accepts aligned lines."""
+    """Fast area-normalized profiles for explicit and relative peak lists."""
 
-    cache_key = "finder-peaks-v1"
+    cache_key = "finder-integrated-peaks-v3-instrument-model"
 
     def calculate(
         self,
         peaks: list[HKLPeak],
         x_grid: np.ndarray,
         context: CalculationContext,
+        *, normalize: bool = True,
     ) -> np.ndarray:
         _x, profile = calculated_profile_from_peaks(
             peaks,
@@ -81,6 +109,7 @@ class FinderPeakProfileBackend:
             eta=context.profile_eta,
             wavelength=context.wavelength,
             include_kalpha2=context.include_kalpha2,
+            normalize=normalize,
         )
         return np.asarray(profile, dtype=float)
 
@@ -90,8 +119,10 @@ class FinderPeakProfileBackend:
         x_grid: np.ndarray,
         context: CalculationContext,
         instrument_profile: InstrumentProfile,
+        *, normalize: bool = True,
     ) -> np.ndarray:
         """Build a fast profile from indexed lines using the full instrument state."""
+        validate_instrument_eta(context)
         x = np.asarray(x_grid, dtype=float)
         y = np.zeros_like(x, dtype=float)
         if not peaks or len(x) == 0:
@@ -100,6 +131,9 @@ class FinderPeakProfileBackend:
         components = instrument_profile.radiation.components
         if instrument_profile.radiation.mode != "kalpha_doublet":
             components = components[:1]
+        representative = profile_reference_angle(peaks, instrument_profile)
+        instrument_profile = instrument_profile_with_width_floor(
+            instrument_profile, context.fwhm, representative)
         resolution = instrument_profile.resolution
         broadening = (
             ConstantWidthProfile(float(resolution.constant_fwhm_deg))
@@ -129,24 +163,27 @@ class FinderPeakProfileBackend:
                 width = (
                     float(broadening.fwhm_deg)
                     if isinstance(broadening, ConstantWidthProfile)
-                    else float(broadening.fwhm_deg_at(center))
+                    else float(broadening.fwhm_deg_at(center - position_shift))
                 )
                 # The instrument profile describes the resolution floor.  A
                 # real sample can be broader because of crystallite size,
                 # strain, disorder, or unresolved overlap.  Finder estimates
                 # that observed phase width in ``context.fwhm``; discarding it
                 # here recreated an artificially narrow instrument-only line.
-                width = max(width, float(context.fwhm))
+                eta = (float(broadening._width_and_mixing_at(center - position_shift)[1])
+                       if not isinstance(broadening, ConstantWidthProfile)
+                       else 0.0)
                 self._add_peak(
                     x,
                     y,
                     center=center,
-                    intensity=float(peak.intensity) * float(component.weight),
+                    # Sticks already include the primary component's weight.
+                    intensity=float(peak.intensity) * float(component.weight) / float(components[0].weight),
                     fwhm=width,
-                    eta=context.profile_eta,
+                    eta=eta,
                 )
         maximum = float(np.nanmax(y)) if len(y) else 0.0
-        if maximum > 0.0:
+        if normalize and maximum > 0.0:
             y *= 100.0 / maximum
         return y
 
@@ -167,20 +204,7 @@ class FinderPeakProfileBackend:
         fwhm: float,
         eta: float,
     ) -> None:
-        if not (float(x[0]) <= center <= float(x[-1])):
-            return
-        width = max(float(fwhm), 1.0e-6)
-        half_window = PROFILE_WINDOW_FACTOR * width
-        left = int(np.searchsorted(x, center - half_window, side="left"))
-        right = int(np.searchsorted(x, center + half_window, side="right"))
-        if right <= left:
-            return
-        y[left:right] += max(float(intensity), 0.0) * pseudo_voigt_values(
-            x[left:right],
-            center,
-            width,
-            eta,
-        )
+        add_integrated_peak(x, y, center=center, intensity=intensity, fwhm=fwhm, eta=eta)
 
 
 __all__ = ["FinderPeakProfileBackend", "PeakProfileBackend"]

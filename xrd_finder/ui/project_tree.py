@@ -12,12 +12,14 @@ class ProjectTree(QTreeWidget):
     object_delete_requested = Signal(str, str)
     series_create_requested = Signal()
     object_move_to_series_requested = Signal(str, str, str)
+    pattern_copy_to_series_requested = Signal(str, str)
     pattern_selection_changed = Signal(list)
     phase_selection_changed = Signal(list)
 
     def __init__(self) -> None:
         super().__init__()
-        self.setHeaderLabel("Data")
+        self.setObjectName('projectTree')
+        self.setHeaderLabel('Project')
         self.setToolTip(
             "Project tree\n"
             "Select a row to make that XRD pattern or CIF phase active.\n"
@@ -75,6 +77,7 @@ class ProjectTree(QTreeWidget):
             open_action = menu.addAction("Open")
         rename_action = menu.addAction("Rename")
         move_actions: list[tuple[object, str]] = []
+        copy_actions: list[tuple[object, str]] = []
         if object_type in {"pattern", "phase"}:
             move_menu = menu.addMenu("Move to series")
             move_actions.append((move_menu.addAction("No series"), ""))
@@ -82,6 +85,14 @@ class ProjectTree(QTreeWidget):
                 move_menu.addSeparator()
                 for series_id, series_name in self._series_names:
                     move_actions.append((move_menu.addAction(series_name), series_id))
+        if object_type == "pattern":
+            copy_menu = menu.addMenu("Copy to")
+            copy_actions.append((copy_menu.addAction("New series..."), "__new__"))
+            copy_actions.append((copy_menu.addAction("No series"), ""))
+            if self._series_names:
+                copy_menu.addSeparator()
+                for series_id, series_name in self._series_names:
+                    copy_actions.append((copy_menu.addAction(series_name), series_id))
         delete_action = None
         if object_type in {"series", "pattern", "phase"}:
             delete_action = menu.addAction("Delete series" if object_type == "series" else "Delete")
@@ -97,6 +108,10 @@ class ProjectTree(QTreeWidget):
         for move_action, series_id in move_actions:
             if action == move_action:
                 self.object_move_to_series_requested.emit(object_type, object_id, series_id)
+                return
+        for copy_action, series_id in copy_actions:
+            if action == copy_action:
+                self.pattern_copy_to_series_requested.emit(object_id, series_id)
                 return
         if action == rename_action:
             self.object_rename_requested.emit(object_type, object_id)

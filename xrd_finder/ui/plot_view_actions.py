@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from xrd_finder.ui.screen_bound_dialog import ScreenBoundDialog
+from xrd_finder.ui.interface_scaling import load_workspace_preferences,PERSISTED_PLOT_FIELDS
+
 import math
 
 import pyqtgraph as pg
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QEvent, QTimer, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QDialog, QSizePolicy, QVBoxLayout, QWidget
 
@@ -50,34 +53,71 @@ def _apply_axis_appearance(
 
 
 class PhaseFinderPlotViewActionsMixin:
+    def eventFilter(self, watched, event) -> bool:
+        if watched is getattr(self, "plot_canvas", None) and event.type() in (
+            QEvent.Type.Resize, QEvent.Type.Show,
+        ):
+            # Splitter and startup layout changes can resize the canvas without
+            # resizing the main window. Refit after the layout has settled.
+            self._plot_aspect_timer.start(0)
+        return super().eventFilter(watched, event)
+
     def _init_plot_view_state(self) -> None:
         self.plot_settings_panel: PlotViewSettingsWidget | None = None
         self.plot_view_settings = (
             PlotViewSettingsWidget.load_saved_default_settings()
             or PlotViewSettings()
         )
+        stored=load_workspace_preferences().get('plot',{})
+        if not isinstance(stored,dict):stored={}
+        for key in PERSISTED_PLOT_FIELDS:
+            if key not in stored:
+                continue
+            value=stored.get(key)
+            if key == 'multi_phase_legend_mode' and value in ('common', 'individual'):
+                self.plot_view_settings.multi_phase_legend_mode = value
+            elif key == 'multi_legend_phase_names_visible' and isinstance(value, bool):
+                self.plot_view_settings.multi_legend_phase_names_visible = value
+            elif key=='aspect_ratio' and value is None:
+                self.plot_view_settings.aspect_ratio=None
+            elif isinstance(value,(int,float)) and not isinstance(value,bool) and math.isfinite(value) and 0<value<=100:
+                setattr(self.plot_view_settings,key,value)
         self.plot_style = plot_style_from_view_settings(self.plot_view_settings)
         self.plot_marker_size = self.plot_style.marker.size
         self._plot_grid_item = None
+        # An unowned singleShot can call this Python mixin after Qt has
+        # destroyed the dialog. Owning the timer also coalesces resize bursts.
+        self._plot_aspect_timer=QTimer(self)
+        self._plot_aspect_timer.setSingleShot(True)
+        self._plot_aspect_timer.timeout.connect(self._apply_plot_view_aspect)
+        self._plot_initial_settings_timer=QTimer(self)
+        self._plot_initial_settings_timer.setSingleShot(True)
+        self._plot_initial_settings_timer.timeout.connect(self._apply_saved_plot_view_settings)
+        self._plot_balance_timer = QTimer(self)
+        self._plot_balance_timer.setSingleShot(True)
+        self._plot_balance_timer.timeout.connect(self._balance_plot_canvas)
 
     def _plot_view_tab(self) -> QWidget:
         self.plot_settings_panel = PlotViewSettingsWidget()
         self.plot_settings_panel.set_settings(self.plot_view_settings, emit=False)
         self.plot_settings_panel.settingsChanged.connect(self._apply_plot_view_settings)
         self.plot_settings_panel.profileCandidateColorRequested.connect(self._change_profile_candidate_color)
-        QTimer.singleShot(0, lambda: self._apply_plot_view_settings(self.plot_settings_panel.settings()))
-        QTimer.singleShot(0, self._update_profile_view_context)
+        self._plot_panel_init_timer=QTimer(self.plot_settings_panel)
+        self._plot_panel_init_timer.setSingleShot(True)
+        self._plot_panel_init_timer.timeout.connect(lambda:self._apply_plot_view_settings(self.plot_settings_panel.settings()))
+        self._plot_panel_init_timer.timeout.connect(self._update_profile_view_context)
+        self._plot_panel_init_timer.start(0)
         return self.plot_settings_panel
 
     def _show_plot_view_settings_window(self) -> None:
         dialog = getattr(self, "_plot_view_settings_dialog", None)
         if dialog is None:
-            dialog = QDialog(self)
+            dialog = ScreenBoundDialog(self)
             dialog.setWindowTitle("Plot appearance")
             dialog.setMinimumSize(680, 620)
             dialog.resize(780, 720)
             layout = QVBoxLayout(dialog)
-            layout.setContentsMargins(8, 8, 8, 8)
+            layout.setContentsMargins(8,8,8,8)
             layout.addWidget(self._plot_view_tab())
             self._plot_view_settings_dialog = dialog
         self._update_profile_view_context()
@@ -122,6 +162,8 @@ class PhaseFinderPlotViewActionsMixin:
             finally:
                 aspect_combo.blockSignals(signals_were_blocked)
         self._apply_plot_view_aspect()
+        if hasattr(self,"_save_workspace_preferences"):
+            self._save_workspace_preferences()
         if hasattr(self, "project"):
             self.project.touch()
         if hasattr(self, "project_changed"):
@@ -164,6 +206,7 @@ class PhaseFinderPlotViewActionsMixin:
             "legend_font_size",
             "multi_legend_alignment",
             "multi_legend_phase_names_visible",
+            "multi_phase_legend_mode",
             "cursor_vertical_line_visible",
             "hkl_labels_visible",
             "layer_observed_visible",
@@ -210,6 +253,8 @@ class PhaseFinderPlotViewActionsMixin:
                 ):
                     setattr(settings, field, getattr(previous_settings, field))
         self.plot_view_settings = settings
+        if hasattr(self,"_save_workspace_preferences"):
+            self._save_workspace_preferences()
         self._sync_plot_aspect_control(settings)
         self.plot_style = plot_style_from_view_settings(settings)
         self.plot_marker_size = self.plot_style.marker.size
@@ -224,6 +269,8 @@ class PhaseFinderPlotViewActionsMixin:
                     != settings.multi_legend_alignment
                     or getattr(previous_settings, "multi_legend_phase_names_visible", None)
                     != settings.multi_legend_phase_names_visible
+                    or getattr(previous_settings, "multi_phase_legend_mode", None)
+                    != settings.multi_phase_legend_mode
                 )
                 and hasattr(self, "_refresh_multi_pattern_legends")
             ):
@@ -245,7 +292,7 @@ class PhaseFinderPlotViewActionsMixin:
             self._apply_plot_layer_visibility_settings(settings)
             if self.legend_item is not None and settings.legend_visible:
                 try:
-                    self.legend_item.setLabelTextSize(f"{settings.legend_font_size}pt")
+                    self.legend_item.setLabelTextSize(f"{settings.legend_font_size*getattr(self,'_ui_density_factor',1.)}pt")
                 except Exception:
                     pass
             self._sync_current_plot_export_tags()
@@ -261,7 +308,7 @@ class PhaseFinderPlotViewActionsMixin:
         else:
             self.match_plot.setStyleSheet("border: 0;")
         title = settings.title_text if settings.title_visible else ""
-        self.match_plot.setTitle(title, color=settings.title_color, size=f"{settings.title_font_size}pt")
+        self.match_plot.setTitle(title if title.strip() else None, color=settings.title_color, size=f"{settings.title_font_size*getattr(self,'_ui_density_factor',1.)}pt")
         self._sync_plot_canvas_margins(settings, bool(title.strip()))
         axis_visible = {
             "bottom": settings.bottom_axis_visible,
@@ -300,7 +347,7 @@ class PhaseFinderPlotViewActionsMixin:
             settings,
         )
         axis_font = QFont()
-        axis_font.setPointSize(settings.tick_font_size)
+        axis_font.setPointSizeF(settings.tick_font_size*getattr(self,"_ui_density_factor",1.))
         axis_values_visible = {
             "bottom": settings.bottom_axis_values_visible,
             "top": settings.top_axis_values_visible,
@@ -326,7 +373,7 @@ class PhaseFinderPlotViewActionsMixin:
         self._apply_plot_layer_visibility_settings(settings)
         if self.legend_item is not None and settings.legend_visible:
             try:
-                self.legend_item.setLabelTextSize(f"{settings.legend_font_size}pt")
+                self.legend_item.setLabelTextSize(f"{settings.legend_font_size*getattr(self,'_ui_density_factor',1.)}pt")
             except Exception:
                 pass
         self._apply_plot_view_aspect()
@@ -340,20 +387,36 @@ class PhaseFinderPlotViewActionsMixin:
         layout = getattr(self, "plot_canvas_layout", None)
         if layout is None:
             return
-        top_needs_space = title_visible or (
-            settings.top_axis_visible
-            and (settings.top_axis_values_visible or settings.top_axis_label_visible)
-        )
-        bottom_needs_space = settings.bottom_axis_visible and (
-            settings.bottom_axis_values_visible or settings.bottom_axis_label_visible
-        )
-        layout.setContentsMargins(26, 26 if top_needs_space else 14, 26, 38 if bottom_needs_space else 24)
+        # Reserve an actual inner gutter for axis text. Outer whitespace is
+        # equal on all four sides as Qt measures labels and tick values.
+        gutter=max(2,round(8*getattr(self,"_ui_density_factor",1.)))
+        layout.setContentsMargins(gutter,gutter,gutter,gutter)
+        plot_item = getattr(self.match_plot, 'plotItem', None)
+        if plot_item is not None:
+            inner=max(3,round(12*getattr(self,"_ui_density_factor",1.)))
+            plot_item.layout.setContentsMargins(inner,inner,inner,inner)
         title_item = getattr(getattr(self.match_plot, "plotItem", None), "titleLabel", None)
         if title_item is not None:
-            try:
-                title_item.setVisible(title_visible)
-            except Exception:
-                pass
+            # Hiding LabelItem alone leaves PlotItem's fixed 30 px title row.
+            if not title_visible:
+                plot_item.setTitle(None)
+
+    def _balance_plot_canvas(self) -> None:
+        """Keep the plot frame centered with equal compact outer gutters.
+
+        Axis labels and ticks are laid out inside the frame by pyqtgraph.
+        The data rectangle does not need compensating whitespace outside it.
+        """
+        layout=getattr(self,'plot_canvas_layout',None)
+        if layout is None:
+            return
+        gutter=max(2,round(8*getattr(self,'_ui_density_factor',1.)))
+        previous=layout.contentsMargins()
+        if (previous.left(),previous.top(),previous.right(),previous.bottom())==(gutter,)*4:
+            return
+        layout.setContentsMargins(gutter,gutter,gutter,gutter)
+        layout.activate()
+        self._apply_plot_view_aspect()
 
     def _sync_current_plot_export_tags(self) -> None:
         if not hasattr(self, "match_plot") or not hasattr(self, "plot_layers"):
@@ -387,7 +450,6 @@ class PhaseFinderPlotViewActionsMixin:
             "hkl": settings.hkl_labels_visible,
             "preview_hkl": settings.hkl_labels_visible,
             "unknown_peaks": settings.layer_unknown_peaks_visible,
-            "pattern_legends": settings.legend_visible,
         }
         for layer, visible in layer_fields.items():
             for item in self.plot_layers.get(layer, []):
@@ -397,6 +459,7 @@ class PhaseFinderPlotViewActionsMixin:
                     item.setVisible(bool(visible))
         if hasattr(self, "_rebuild_visible_legend"):
             self._rebuild_visible_legend()
+        self._apply_zero_shift_display()
 
     def _apply_grid_settings(self, settings: PlotViewSettings) -> None:
         self.match_plot.showGrid(x=False, y=False)
@@ -432,7 +495,7 @@ class PhaseFinderPlotViewActionsMixin:
             axis_name,
             _axis_label(label, unit) if label else "",
             color=settings.axis_color,
-            **{"font-size": f"{settings.label_font_size}pt"},
+            **{"font-size": f"{settings.label_font_size*getattr(self,'_ui_density_factor',1.)}pt"},
         )
 
     def _apply_tick_spacing(self, axis_name: str, axis, settings: PlotViewSettings) -> None:
@@ -453,12 +516,13 @@ class PhaseFinderPlotViewActionsMixin:
     def _apply_plot_view_aspect(self) -> None:
         if not hasattr(self, "match_plot"):
             return
+        self._update_plot_text_density()
         aspect = getattr(self.plot_view_settings, "aspect_ratio", None)
         source = getattr(self, "plot_canvas", None) or getattr(self, "center_splitter", None)
         source_width = int(source.width()) if source is not None else 0
         source_height = int(source.height()) if source is not None else 0
-        if source_width < 120 or source_height < 120:
-            QTimer.singleShot(50, self._apply_plot_view_aspect)
+        if source_width < 60 or source_height < 40:
+            self._plot_aspect_timer.start(50)
             return
         horizontal_margins = 0
         vertical_margins = 0
@@ -467,15 +531,18 @@ class PhaseFinderPlotViewActionsMixin:
             margins = layout.contentsMargins()
             horizontal_margins = margins.left() + margins.right()
             vertical_margins = margins.top() + margins.bottom()
-        canvas_width = max(source_width - horizontal_margins, 260)
-        canvas_height = max(source_height - vertical_margins, 220)
+        canvas_width = max(1, source_width - horizontal_margins)
+        density=getattr(self,"_ui_density_factor",1.)
+        minimum_height = round((120 if self.height()/density < 700 else 220)*density)
+        canvas_height = max(1, source_height - vertical_margins)
         if aspect is None:
             if hasattr(self, "plot_canvas_layout"):
                 self.plot_canvas_layout.setAlignment(self.match_plot, Qt.Alignment())
-            self.match_plot.setMinimumSize(260, 220)
+            self.match_plot.setMinimumSize(min(round(260*density),canvas_width),min(minimum_height,canvas_height))
             self.match_plot.setMaximumSize(16777215, 16777215)
             self.match_plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             self.match_plot.updateGeometry()
+            self._plot_balance_timer.start(0)
             return
         if hasattr(self, "plot_canvas_layout"):
             self.plot_canvas_layout.setAlignment(self.match_plot, Qt.AlignmentFlag.AlignCenter)
@@ -484,13 +551,30 @@ class PhaseFinderPlotViewActionsMixin:
         if target_height > canvas_height:
             target_height = canvas_height
             target_width = int(target_height * float(aspect))
-        target_width = max(240, min(target_width, canvas_width))
-        target_height = max(180, min(target_height, canvas_height))
-        self.match_plot.setMinimumSize(240, 180)
+        target_width = max(1, min(target_width, canvas_width))
+        target_height = max(1, min(target_height, canvas_height))
+        self.match_plot.setMinimumSize(1, 1)
         self.match_plot.setMaximumSize(16777215, 16777215)
         self.match_plot.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.match_plot.setFixedSize(target_width, target_height)
         self.match_plot.updateGeometry()
+        self._plot_balance_timer.start(0)
+
+    def _update_plot_text_density(self):
+        settings=self.plot_view_settings
+        factor=getattr(self,'_ui_density_factor',1.)
+        title = settings.title_text if settings.title_visible and settings.title_text.strip() else None
+        self.match_plot.setTitle(title, color=settings.title_color, size=f'{settings.title_font_size*factor}pt')
+        font=QFont();font.setPointSizeF(max(3,settings.tick_font_size*factor))
+        for side in ('left','right','top','bottom'):
+            axis=self.match_plot.getAxis(side)
+            axis.setTickFont(font)
+            axis.setLabel(text=axis.labelText,units=axis.labelUnits,
+                          unitPrefix=axis.labelUnitPrefix,
+                          color=settings.axis_color,
+                          **{'font-size':f'{max(3,settings.label_font_size*factor)}pt'})
+        legend=getattr(self,'legend_item',None)
+        if legend is not None:legend.setLabelTextSize(f'{max(3,settings.legend_font_size*factor)}pt')
 
     def _apply_x_axis_scale(self, settings: PlotViewSettings) -> None:
         axis_scales = {
@@ -529,5 +613,7 @@ class PhaseFinderPlotViewActionsMixin:
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        if hasattr(self,"_interface_scale_timer"):
+            self._interface_scale_timer.start(30)
         if hasattr(self, "match_plot"):
-            QTimer.singleShot(0, self._apply_plot_view_aspect)
+            self._plot_aspect_timer.start(0)

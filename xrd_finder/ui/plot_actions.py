@@ -14,8 +14,9 @@ from xrd_finder.ui.pattern_plot_helpers import ensure_right_legend
 from xrd_finder.ui.finder_plot_control_bar import d_spacing_from_two_theta
 from xrd_finder.ui.plot_export_dialog import PlotExportDialog
 from xrd_finder.ui.plot_layer_items import remove_pattern_layer_items
+from xrd_finder.ui.formula_display import formula_html
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QAction, QImage
+from PySide6.QtGui import QAction, QActionGroup, QImage
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -29,28 +30,52 @@ class PhaseFinderPlotActionsMixin:
         "hkl_labels_visible": False,
         "layer_observed_visible": True,
         "layer_preview_peak_positions_visible": True,
-        "layer_total_profile_visible": True,
-        "layer_phase_profiles_visible": True,
+        "layer_total_profile_visible": False,
+        "layer_phase_profiles_visible": False,
         "layer_background_visible": False,
         "layer_difference_visible": False,
-        "layer_phase_ticks_visible": True,
-        "layer_phase_peak_sticks_visible": True,
+        "layer_phase_ticks_visible": False,
+        "layer_phase_peak_sticks_visible": False,
         "layer_coverage_markers_visible": True,
         "layer_peak_labels_visible": False,
         "layer_unknown_peaks_visible": False,
     }
 
     def _show_plot_context_menu(self, point) -> None:
+        if getattr(self, '_peak_info_armed', False):
+            self._cancel_peak_information(close_card=True)
+            return
+        if getattr(self, "_search_mode", "search") == "peaks":
+            return
         menu = QMenu(self)
         menu.addAction("Export image...", self._export_plot_image)
         menu.addSeparator()
         menu.addAction("Show full pattern", self._full_pattern_range)
-        legend_action = menu.addAction("Legend")
+        multi = bool(getattr(self, "show_all_selected_patterns", False))
+        legend_action = menu.addAction("Pattern names" if multi else "Legend")
         legend_action.setCheckable(True)
         legend_action.setChecked(
             bool(getattr(getattr(self, "plot_view_settings", None), "legend_visible", True))
         )
         legend_action.toggled.connect(self._set_legend_visible)
+        if multi:
+            phase_menu = QMenu("Phase legend", menu)
+            menu.addMenu(phase_menu)
+            phase_menu.setObjectName("phaseLegendMenu")
+            group = QActionGroup(phase_menu)
+            group.setExclusive(True)
+            settings = self.plot_view_settings
+            selected = (settings.multi_phase_legend_mode
+                        if settings.multi_legend_phase_names_visible else "hidden")
+            for mode, title in (("common", "Common to all patterns"),
+                                ("individual", "Individual per pattern"),
+                                ("hidden", "Hidden")):
+                action = phase_menu.addAction(title)
+                action.setData(mode)
+                action.setCheckable(True)
+                action.setChecked(mode == selected)
+                group.addAction(action)
+                action.triggered.connect(lambda _checked, value=mode: self._set_multi_phase_legend_mode(value))
         menu.addSeparator()
         menu.addAction(self._layer_action("Experimental pattern", "observed", enabled=True))
         preview_action = self._layer_action(
@@ -417,13 +442,20 @@ class PhaseFinderPlotActionsMixin:
             self._rebuild_visible_legend()
 
     def _clear_profile_plot_layers(self, *, include_observed: bool = False, rebuild_legend: bool = True) -> None:
+        for pattern_id, context in getattr(self, 'observed_pattern_plot_context', {}).items():
+            context.pop('accepted_profile_result_key', None)
+            self._refresh_peak_information_assignments(pattern_id)
         layers = list(self._PROFILE_OVERLAY_LAYERS)
         if include_observed:
-            layers[0:0] = ["observed", "pattern_legends"]
+            if not getattr(self, "show_all_selected_patterns", False) and hasattr(self, "_reserve_common_phase_legend_space"):
+                self._reserve_common_phase_legend_space(0.0)
+            layers[0:0] = ["observed", "pattern_legends", "phase_legend"]
         self._remove_plot_layer_items(layers, rebuild_legend=rebuild_legend)
 
     def _clear_calculated_overlay(self, pattern_id: str | None = None) -> None:
         if pattern_id:
+            self.observed_pattern_plot_context.get(pattern_id, {}).pop('accepted_profile_result_key', None)
+            self._refresh_peak_information_assignments(pattern_id)
             remove_pattern_layer_items(
                 self.match_plot,
                 self.plot_layers,
@@ -432,7 +464,8 @@ class PhaseFinderPlotActionsMixin:
             )
         else:
             self._clear_profile_plot_layers(rebuild_legend=False)
-        self.active_overlay_entry_id = None
+        if not pattern_id or pattern_id == getattr(self._active_pattern(), "id", None):
+            self.active_overlay_entry_id = None
         self._rebuild_visible_legend()
 
     def _clear_preview_overlay(self) -> None:
@@ -579,9 +612,7 @@ class PhaseFinderPlotActionsMixin:
         if getattr(self, "show_all_selected_patterns", False):
             if getattr(self, "legend_item", None) is not None:
                 self.legend_item.setVisible(False)
-            local_visible = bool(getattr(settings, "legend_visible", True)) if settings is not None else True
-            for item in self.plot_layers.get("pattern_legends", []):
-                item.setVisible(local_visible)
+            self._refresh_multi_pattern_legends()
             return
         if settings is not None and not bool(getattr(settings, "legend_visible", True)):
             if getattr(self, "legend_item", None) is not None:
@@ -617,7 +648,7 @@ class PhaseFinderPlotActionsMixin:
                 if not label or label in seen:
                     continue
                 try:
-                    legend.addItem(self._legend_sample_item(layer, item), label)
+                    legend.addItem(self._legend_sample_item(layer, item), formula_html(label))
                     seen.add(label)
                 except Exception:
                     pass
@@ -632,6 +663,9 @@ class PhaseFinderPlotActionsMixin:
     def _set_grid_visible(self, visible: bool) -> None:
         visible = bool(visible)
         self.grid_visible = visible
+        action = getattr(self, 'show_grid_action', None)
+        if action is not None:
+            action.setChecked(visible)
         if hasattr(self, "plot_view_settings"):
             self.plot_view_settings.grid_visible = visible
             self._apply_grid_settings(self.plot_view_settings)
@@ -645,8 +679,7 @@ class PhaseFinderPlotActionsMixin:
             self.plot_view_settings.legend_visible = visible
         self._sync_view_checkbox("legend_checkbox", visible)
         if getattr(self, "show_all_selected_patterns", False):
-            for item in self.plot_layers.get("pattern_legends", []):
-                item.setVisible(visible)
+            self._refresh_multi_pattern_legends()
             if self.legend_item is not None:
                 self.legend_item.setVisible(False)
             return
@@ -655,6 +688,19 @@ class PhaseFinderPlotActionsMixin:
             return
         if self.legend_item is not None:
             self.legend_item.setVisible(False)
+
+    def _set_multi_phase_legend_mode(self, mode: str) -> None:
+        if mode not in {"common", "individual", "hidden"}:
+            return
+        settings = self.plot_view_settings
+        settings.multi_legend_phase_names_visible = mode != "hidden"
+        if mode != "hidden":
+            settings.multi_phase_legend_mode = mode
+        if self.plot_settings_panel is not None:
+            self.plot_settings_panel.set_settings(settings, emit=False)
+        self._refresh_multi_pattern_legends()
+        self._save_workspace_preferences()
+        self._sync_current_plot_export_tags()
 
     def _add_legend_info(self, text: str) -> None:
         item = self.match_plot.plot([], [], pen=pg.mkPen("#00000000", width=0.1), name=text)

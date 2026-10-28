@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import asdict
 import hashlib
 from pathlib import Path
 from typing import Any
@@ -109,12 +110,16 @@ def result_snapshot(
     return {
         "phases": phases,
         "quantification": {
-            "method": "profile_scale_cell_mass",
+            "method": "hill_howard_absolute_profiles",
             "is_estimate": True,
+            **({'unavailable_reason': result.quantification_error}
+               if getattr(result, 'quantification_error', '') else {}),
         },
         "fit": fit_record,
         "unknown_peaks": unknown_peaks,
         "preview_path": None,
+        **({'candidate_failures': [asdict(failure) for failure in result.candidate_failures]}
+           if getattr(result, 'candidate_failures', []) else {}),
     }
 
 
@@ -187,6 +192,8 @@ def build_analysis_summary(
                     )
                 ),
                 "fit": deepcopy(snapshot.get("fit", {})),
+                **({'candidate_failures': deepcopy(snapshot['candidate_failures'])}
+                   if snapshot.get('candidate_failures') else {}),
                 "unknown_peaks": deepcopy(snapshot.get("unknown_peaks", [])),
                 "preview_path": preview_paths.get(pattern_id) or snapshot.get("preview_path"),
             }
