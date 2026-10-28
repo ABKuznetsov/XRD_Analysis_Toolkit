@@ -15,10 +15,10 @@ The nine horizontal slides introduce capabilities, data sources, libraries, inst
 ## Download
 
 - [Windows installer (1.6.7): XRD_Phase_Finder_Setup_v1_6_7.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_Setup_v1_6_7.exe)
-- [macOS package (1.6.6): XRD_Phase_Finder_macOS_1.6.6.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.6/XRD_Phase_Finder_macOS_1.6.6.pkg)
+- [macOS package (1.6.7): XRD_Phase_Finder_macOS_1.6.7.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_macOS_1.6.7.pkg)
 - [Ubuntu / Debian package (1.6.7): XRD_Phase_Finder_1.6.7_amd64.deb](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_1.6.7_amd64.deb)
 
-The current Windows installer is on the [XRD Phase Finder 1.6.7 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7). Linux is also available as a 1.6.7 amd64 DEB. The macOS package remains at 1.6.6 until rebuilt.
+Windows, macOS and Linux installers are available on the [XRD Phase Finder 1.6.7 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7). The macOS package supports Intel and Apple silicon; Python 3.11 or 3.12 is required for the Sci runtime.
 
 ## Main window
 
