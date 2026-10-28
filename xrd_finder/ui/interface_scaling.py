@@ -1,18 +1,10 @@
 """Compact controls with independently fitted workspace panels."""
-import json
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QComboBox, QLayout, QWidgetAction
-from xrd_finder.ui.app_settings import app_settings
 from xrd_finder.ui.ui_density import UiDensity
 from xrd_finder.ui.system_theme import SystemThemeObserver
+from xrd_finder.ui.workspace_preferences import load_workspace_preferences
 PERSISTED_PLOT_FIELDS = ('aspect_ratio', 'custom_aspect_width', 'custom_aspect_height', 'label_font_size', 'tick_font_size', 'title_font_size', 'legend_font_size', 'multi_phase_legend_mode', 'multi_legend_phase_names_visible')
-
-def load_workspace_preferences():
-    try:
-        data = json.loads(app_settings().value('ui/workspace_view_v1', '', type=str))
-        return data if isinstance(data, dict) else {}
-    except (ValueError, TypeError):
-        return {}
 
 class InterfaceScalingMixin:
 
@@ -31,16 +23,7 @@ class InterfaceScalingMixin:
         self._system_theme_observer.changed.connect(self._apply_interface_theme)
         self._applied_density = None
         stored = load_workspace_preferences()
-        defaults = {'main_splitter': [204, 1765, 537], 'center_splitter': [650, 180], 'composition_splitter': [377, 784]}
-        self._interface_splitter_ratios = {}
-        saved = stored.get('splitters', {})
-        if not isinstance(saved, dict):
-            saved = {}
         for name, splitter in self._layout_state._splitters.items():
-            values = saved.get(name)
-            if not isinstance(values, list) or len(values) != splitter.count() or (not all((isinstance(value, (int, float)) and value > 0 for value in values))):
-                values = splitter.sizes() if self.settings.contains(f'layout/{name}') else defaults.get(name, splitter.sizes())
-            self._interface_splitter_ratios[name] = values
             splitter.splitterMoved.connect(lambda _position, _index, key=name, target=splitter: self._remember_splitter_ratios(key, target))
         self._ui_scale_percent = stored.get('ui_scale', 100)
         if self._ui_scale_percent not in (75, 85, 100, 115, 125, 150):
@@ -119,12 +102,7 @@ class InterfaceScalingMixin:
                 self._sync_plot_canvas_margins(self.plot_view_settings, self.plot_view_settings.title_visible)
                 self._plot_aspect_timer.start(0)
             self.layout().activate()
-            for name, splitter in self._layout_state._splitters.items():
-                from PySide6.QtCore import Qt
-                extent = splitter.width() if splitter.orientation() == Qt.Orientation.Horizontal else splitter.height()
-                values = self._interface_splitter_ratios[name]
-                total = max(1, sum(values))
-                splitter.setSizes([max(1, round(value / total * extent)) for value in values])
+            self._layout_state.apply_proportions()
             self.cursor_status_panel._update_control_layout()
             self.element_table._fit_cells_to_area()
         finally:
@@ -132,7 +110,7 @@ class InterfaceScalingMixin:
 
     def _remember_splitter_ratios(self, name, splitter):
         if not self._interface_scaling and (not self._layout_state.pinned):
-            self._interface_splitter_ratios[name] = splitter.sizes()
+            self._layout_state.remember_splitter_proportions(name, splitter)
 
     def _set_interface_scale(self, text):
         self._ui_scale_percent = int(text.removeprefix('UI ').rstrip('%'))
@@ -144,5 +122,5 @@ class InterfaceScalingMixin:
         if not hasattr(self, '_ui_scale_percent'):
             return
         plot = getattr(self, 'plot_view_settings', None)
-        data = {'ui_scale': self._ui_scale_percent, 'splitters': self._interface_splitter_ratios, 'plot': {key: getattr(plot, key) for key in PERSISTED_PLOT_FIELDS} if plot else {}}
-        self.settings.setValue('ui/workspace_view_v1', json.dumps(data))
+        data = {'ui_scale': self._ui_scale_percent, 'plot': {key: getattr(plot, key) for key in PERSISTED_PLOT_FIELDS} if plot else {}}
+        self._layout_state.save(workspace_updates=data)

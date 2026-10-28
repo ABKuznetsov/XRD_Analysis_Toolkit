@@ -2,6 +2,8 @@
 
 ## 1.6.7 - 2026-10-28
 
+- Start fresh installations with Edit layout enabled.
+- Store panel and column proportions in one workspace record; migrate older pixel-based settings.
 - Responsive HD/2K interface and saved table-column proportions.
 - Common or individual phase legends and properly formatted chemical formulas.
 - Manual peak lists, peak information and background-aware peak detection.

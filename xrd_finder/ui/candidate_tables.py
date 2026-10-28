@@ -8,6 +8,7 @@ from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor
 from xrd_finder.ui.theme import is_dark_theme, theme_colors
 from xrd_finder.ui.formula_display import FormulaDisplayDelegate, canonical_display_formula
+from xrd_finder.ui.workspace_preferences import normalized_proportions
 from PySide6.QtWidgets import (
     QHeaderView,
     QApplication,
@@ -104,6 +105,12 @@ class _ColumnLayoutTableWidget(QTableWidget):
 
     def column_layout_proportions(self):
         return list(self._column_layout_weights)
+
+    def column_layout_state(self):
+        return {
+            'order': [self.horizontalHeader().logicalIndex(i) for i in range(self.columnCount())],
+            'proportions': normalized_proportions(self._column_layout_weights, self.columnCount()),
+        }
 
     def set_column_layout_editable(self, editable: bool) -> None:
         self._column_layout_managed = True
@@ -203,7 +210,27 @@ class _ColumnLayoutTableWidget(QTableWidget):
         self._set_fitted_column_widths(widths)
         self._capture_column_proportions()
 
-    def restore_column_layout(self, state, proportions=None) -> None:
+    def restore_column_layout(self, state, proportions=None) -> bool:
+        if state is None:
+            return False
+        if isinstance(state, dict):
+            order = state.get('order')
+            weights = normalized_proportions(state.get('proportions'), self.columnCount())
+            if (weights is None or not isinstance(order, list)
+                    or any(type(i) is not int for i in order)
+                    or sorted(order) != list(range(self.columnCount()))):
+                return False
+            self._fitting_columns = True
+            try:
+                header = self.horizontalHeader()
+                for visual, logical in enumerate(order):
+                    header.moveSection(header.visualIndex(logical), visual)
+                self._column_layout_weights = weights
+                self._manual_column_layout = True
+            finally:
+                self._fitting_columns = False
+            self._apply_column_layout_lock()
+            return True
         self._fitting_columns = True
         try:
             restored = self.horizontalHeader().restoreState(state)
@@ -222,6 +249,7 @@ class _ColumnLayoutTableWidget(QTableWidget):
                 # Existing 1.6.7 layouts stored pixel widths; retain their ratios.
                 self._capture_column_proportions()
         self._apply_column_layout_lock()
+        return restored
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

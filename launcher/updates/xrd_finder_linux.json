@@ -1,15 +1,32 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.6.4",
+  "version": "1.6.7",
   "channel": "stable",
-  "published_at": "2026-10-03",
-  "assets": [],
+  "published_at": "2026-10-28",
+  "assets": [
+    {
+      "name": "XRD_Phase_Finder_1.6.7_amd64.deb",
+      "type": "installer",
+      "platform": "linux",
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_1.6.7_amd64.deb",
+      "sha256": "7d6f5bced327f7c9f52acf29e537ed81525cbd533c8d798bea789dbe5247fa0c",
+      "size_bytes": 77636102
+    }
+  ],
   "summary": [
-    "Align Match/Gain, peak processing and database workflow with the revised manuscript."
+    "Linux amd64 desktop package of XRD Phase Finder 1.6.7."
   ],
   "platform_versions": {
-    "linux": "1.6.4"
+    "linux": "1.6.7"
   },
-  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.4"
+  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_1.6.7_amd64.deb",
+  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7",
+  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_1.6.7_amd64.deb",
+  "installer_sha256": "7d6f5bced327f7c9f52acf29e537ed81525cbd533c8d798bea789dbe5247fa0c",
+  "installer_filename": "XRD_Phase_Finder_1.6.7_amd64.deb",
+  "installer_size_bytes": 77636102,
+  "linux_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_1.6.7_amd64.deb",
+  "linux_installer_sha256": "7d6f5bced327f7c9f52acf29e537ed81525cbd533c8d798bea789dbe5247fa0c"
 }

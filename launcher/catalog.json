@@ -10,7 +10,8 @@
       "icon": "icon.png",
       "announcement_revision": 0,
       "platforms": [
-        "windows"
+        "windows",
+        "linux"
       ],
       "architectures": [
         "x86_64"
@@ -19,12 +20,13 @@
       "installer": {
         "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_Setup_v1_6_7.exe",
         "filename": "XRD_Phase_Finder_Setup_v1_6_7.exe",
-        "size_bytes": 5458643,
-        "sha256": "3f31a4478bfb646494e7e6e60b22c741a3d3b2791e0f9fea14cbc1713782b2b3"
+        "size_bytes": 5459614,
+        "sha256": "4dfd063556f55478c9e215480e46a1fe4ccb8673e9f166e0fb089374f34ec3f7"
       },
       "platform_versions": {
         "windows": "1.6.7",
-        "macos": "1.6.6"
+        "macos": "1.6.6",
+        "linux": "1.6.7"
       }
     }
   ]

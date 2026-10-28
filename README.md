@@ -16,9 +16,9 @@ The nine horizontal slides introduce capabilities, data sources, libraries, inst
 
 - [Windows installer (1.6.7): XRD_Phase_Finder_Setup_v1_6_7.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_Setup_v1_6_7.exe)
 - [macOS package (1.6.6): XRD_Phase_Finder_macOS_1.6.6.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.6/XRD_Phase_Finder_macOS_1.6.6.pkg)
-- [Ubuntu / Debian package (1.6.4): XRD_Phase_Finder_1.6.4_amd64.deb](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.4/XRD_Phase_Finder_1.6.4_amd64.deb)
+- [Ubuntu / Debian package (1.6.7): XRD_Phase_Finder_1.6.7_amd64.deb](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_1.6.7_amd64.deb)
 
-The current Windows installer is on the [XRD Phase Finder 1.6.7 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7). The macOS package remains at 1.6.6 and the Linux package at 1.6.4 until rebuilt.
+The current Windows installer is on the [XRD Phase Finder 1.6.7 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7). Linux is also available as a 1.6.7 amd64 DEB. The macOS package remains at 1.6.6 until rebuilt.
 
 ## Main window
 
@@ -49,7 +49,7 @@ On first launch, the launcher checks the per-user scientific Python runtime and 
 
 ### Ubuntu / Debian Linux
 
-Download `XRD_Phase_Finder_1.6.4_amd64.deb` from the [1.6.4 release](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.4) and install it with your package manager. The application can also be started from source:
+Download `XRD_Phase_Finder_1.6.7_amd64.deb` from the [1.6.7 release](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7) and install it with your package manager. The application can also be started from source:
 
 ```bash
 git clone https://github.com/ABKuznetsov/XRD_Analysis_Toolkit.git

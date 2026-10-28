@@ -14,21 +14,22 @@
       "type": "installer",
       "platform": "windows",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_Setup_v1_6_7.exe",
-      "sha256": "3f31a4478bfb646494e7e6e60b22c741a3d3b2791e0f9fea14cbc1713782b2b3",
-      "size_bytes": 5458643
+      "sha256": "4dfd063556f55478c9e215480e46a1fe4ccb8673e9f166e0fb089374f34ec3f7",
+      "size_bytes": 5459614
     }
   ],
   "summary": [
-    "Responsive HD/2K interface and saved table-column proportions.",
+    "One relative workspace layout for panels and columns, with migration of old settings.",
+    "Edit layout is enabled automatically on first launch.",
     "Common or individual phase legends and properly formatted chemical formulas.",
     "Manual peak lists, peak information and background-aware peak detection.",
     "Reversible manual angle calibration and consistent numeric-setting arrows.",
     "Search and calculated-reference display limited to the measured scan range."
   ],
   "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_Setup_v1_6_7.exe",
-  "installer_sha256": "3f31a4478bfb646494e7e6e60b22c741a3d3b2791e0f9fea14cbc1713782b2b3",
+  "installer_sha256": "4dfd063556f55478c9e215480e46a1fe4ccb8673e9f166e0fb089374f34ec3f7",
   "installer_filename": "XRD_Phase_Finder_Setup_v1_6_7.exe",
-  "installer_size_bytes": 5458643,
+  "installer_size_bytes": 5459614,
   "platform_versions": {
     "windows": "1.6.7"
   },
