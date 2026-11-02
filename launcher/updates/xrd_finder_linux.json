@@ -1,32 +1,32 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.6.7",
+  "version": "1.6.9",
   "channel": "stable",
-  "published_at": "2026-10-28",
+  "published_at": "2026-11-02",
   "assets": [
     {
-      "name": "XRD_Phase_Finder_1.6.7_amd64.deb",
+      "name": "XRD_Phase_Finder_1.6.9_amd64.deb",
       "type": "installer",
       "platform": "linux",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_1.6.7_amd64.deb",
-      "sha256": "7d6f5bced327f7c9f52acf29e537ed81525cbd533c8d798bea789dbe5247fa0c",
-      "size_bytes": 77636102
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_1.6.9_amd64.deb",
+      "sha256": "2e602c7c099dcacdfa70335143c8ddcd33065fdb9f3eb29ace0abd8bdaada61a",
+      "size_bytes": 77714354
     }
   ],
   "summary": [
-    "Linux amd64 desktop package of XRD Phase Finder 1.6.7."
+    "Linux amd64 desktop package of XRD Phase Finder 1.6.9."
   ],
   "platform_versions": {
-    "linux": "1.6.7"
+    "linux": "1.6.9"
   },
-  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_1.6.7_amd64.deb",
-  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7",
-  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_1.6.7_amd64.deb",
-  "installer_sha256": "7d6f5bced327f7c9f52acf29e537ed81525cbd533c8d798bea789dbe5247fa0c",
-  "installer_filename": "XRD_Phase_Finder_1.6.7_amd64.deb",
-  "installer_size_bytes": 77636102,
-  "linux_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_1.6.7_amd64.deb",
-  "linux_installer_sha256": "7d6f5bced327f7c9f52acf29e537ed81525cbd533c8d798bea789dbe5247fa0c"
+  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.9",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_1.6.9_amd64.deb",
+  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.9",
+  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_1.6.9_amd64.deb",
+  "installer_sha256": "2e602c7c099dcacdfa70335143c8ddcd33065fdb9f3eb29ace0abd8bdaada61a",
+  "installer_filename": "XRD_Phase_Finder_1.6.9_amd64.deb",
+  "installer_size_bytes": 77714354,
+  "linux_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_1.6.9_amd64.deb",
+  "linux_installer_sha256": "2e602c7c099dcacdfa70335143c8ddcd33065fdb9f3eb29ace0abd8bdaada61a"
 }

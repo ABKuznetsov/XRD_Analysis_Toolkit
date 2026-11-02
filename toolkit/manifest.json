@@ -24,10 +24,10 @@
       "platform_versions": {
         "windows": "1.6.9",
         "macos": "1.6.7",
-        "linux": "1.6.7"
+        "linux": "1.6.9"
       },
-      "linux_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_1.6.7_amd64.deb",
-      "linux_installer_sha256": "7d6f5bced327f7c9f52acf29e537ed81525cbd533c8d798bea789dbe5247fa0c",
+      "linux_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_1.6.9_amd64.deb",
+      "linux_installer_sha256": "2e602c7c099dcacdfa70335143c8ddcd33065fdb9f3eb29ace0abd8bdaada61a",
       "linux_update_manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/launcher/updates/xrd_finder_linux.json"
     }
   }

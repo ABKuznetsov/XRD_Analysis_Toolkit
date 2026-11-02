@@ -16,9 +16,9 @@ The nine horizontal slides introduce capabilities, data sources, libraries, inst
 
 - [Windows installer (1.6.9): XRD_Phase_Finder_Setup_v1_6_9.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_Setup_v1_6_9.exe)
 - [macOS package (1.6.7): XRD_Phase_Finder_macOS_1.6.7.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_macOS_1.6.7.pkg)
-- [Ubuntu / Debian package (1.6.7): XRD_Phase_Finder_1.6.7_amd64.deb](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_1.6.7_amd64.deb)
+- [Ubuntu / Debian package (1.6.9): XRD_Phase_Finder_1.6.9_amd64.deb](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_1.6.9_amd64.deb)
 
-The current Windows installer is available on the [XRD Phase Finder 1.6.9 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.9). macOS and Linux packages remain available as version 1.6.7; their download links are listed above.
+The current Windows installer is available on the [XRD Phase Finder 1.6.9 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.9). The Linux amd64 package is also available as version 1.6.9. The macOS package remains at version 1.6.7; its download link is listed above.
 
 ## Main window
 
@@ -50,7 +50,7 @@ On first launch, the launcher checks the per-user scientific Python runtime and 
 
 ### Ubuntu / Debian Linux
 
-Download `XRD_Phase_Finder_1.6.7_amd64.deb` from the [1.6.7 release](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7) and install it with your package manager. The application can also be started from source:
+Download `XRD_Phase_Finder_1.6.9_amd64.deb` from the [1.6.9 release](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.9) and install it with your package manager. The application can also be started from source:
 
 ```bash
 git clone https://github.com/ABKuznetsov/XRD_Analysis_Toolkit.git
