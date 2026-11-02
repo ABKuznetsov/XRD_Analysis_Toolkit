@@ -1,35 +1,35 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.6.7",
+  "version": "1.6.9",
   "channel": "stable",
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
-  "published_at": "2026-10-28",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_macOS_1.6.7.pkg",
-  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7",
+  "published_at": "2026-11-02",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_macOS_1.6.9.pkg",
+  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.9",
   "assets": [
     {
-      "name": "XRD_Phase_Finder_macOS_1.6.7.pkg",
+      "name": "XRD_Phase_Finder_macOS_1.6.9.pkg",
       "type": "installer",
       "platform": "macos",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_macOS_1.6.7.pkg",
-      "sha256": "262d2022e576c3250e205a1ac1f517f067dee428195d1822a92870d2379c0677",
-      "size_bytes": 7063738
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_macOS_1.6.9.pkg",
+      "sha256": "7856d6e174f269189d12e0a858de24509efc184d8900dc0f9a6d19be39af255c",
+      "size_bytes": 5106706
     }
   ],
   "summary": [
-    "One relative workspace layout for panels and columns, with migration of old settings.",
-    "Edit layout is enabled automatically on first launch.",
-    "Common or individual phase legends and properly formatted chemical formulas.",
-    "Manual peak lists, peak information and background-aware peak detection.",
-    "Reversible manual angle calibration and consistent numeric-setting arrows.",
-    "Search and calculated-reference display limited to the measured scan range."
+    "Contextual Help explains controls directly in the main window.",
+    "Guided workflows, a quick overview and an optional isolated training example are available from Help.",
+    "Search setup includes instrument selection and optional Le Bail adjustment.",
+    "Instrumental broadening can be calibrated from a standard measurement and CIF.",
+    "XPFF projects retain validated profiles, assignments and search results for faster reopening.",
+    "Background reference preparation and relative workspace sizing have been improved."
   ],
-  "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_macOS_1.6.7.pkg",
-  "macos_installer_sha256": "262d2022e576c3250e205a1ac1f517f067dee428195d1822a92870d2379c0677",
+  "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_macOS_1.6.9.pkg",
+  "macos_installer_sha256": "7856d6e174f269189d12e0a858de24509efc184d8900dc0f9a6d19be39af255c",
   "platform_versions": {
-    "macos": "1.6.7"
+    "macos": "1.6.9"
   },
-  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7"
+  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.9"
 }

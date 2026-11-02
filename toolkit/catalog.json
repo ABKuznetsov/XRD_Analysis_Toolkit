@@ -25,7 +25,7 @@
       },
       "platform_versions": {
         "windows": "1.6.9",
-        "macos": "1.6.7",
+        "macos": "1.6.9",
         "linux": "1.6.9"
       }
     }
