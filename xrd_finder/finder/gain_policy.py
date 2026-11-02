@@ -34,7 +34,7 @@ class GainPolicy:
     phase_snr_detection: float = 3.0
     phase_snr_full_support: float = 7.0
     minimum_phase_snr_support: float = 0.50
-    minimum_reported_gain: float = 3.0
+    minimum_reported_gain: float = 0.5
 
     def combine_evidence(
         self,
@@ -110,6 +110,7 @@ class GainPolicy:
         dominant_evidence: GainStage | str | None = None,
         profile_gain: float | None = None,
         profile_evaluated: bool = False,
+        independent_signal_confirmed: bool = False,
     ) -> float:
         """Return a Gain value only when its evidence is safe to display."""
 
@@ -124,7 +125,8 @@ class GainPolicy:
             and max(float(profile_gain or 0.0), 0.0) <= 0.0
         ):
             return 0.0
-        return value if value >= float(self.minimum_reported_gain) else 0.0
+        return value if (value >= float(self.minimum_reported_gain)
+                         or independent_signal_confirmed) else 0.0
 
     def select_stage(self, *, direct_count: int, overlap_count: int) -> GainStage:
         if direct_count >= self.minimum_stage_records:

@@ -1,5 +1,5 @@
 certifi
-cristma==0.1.0b13
+cristma==0.1.0b14
 numpy
 packaging
 pybaselines

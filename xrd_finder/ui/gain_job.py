@@ -270,6 +270,19 @@ class GainJobController(QObject):
         self._cancel = Event()
         cancel = self._cancel
         serial = self._serial
+        if isinstance(inputs,GainJobInput):
+            from xrd_finder.io.score_cache import restore_scores
+            cached=restore_scores(self.window,'gain',self.window.candidate_table.ranking_row_values())
+            if cached is not None:
+                from xrd_finder.services.gain_calculation import GainJobResult
+                from xrd_finder.ui.gain_scoring import GainIndexedEvidence,GainStage
+                evidence={name:GainIndexedEvidence(GainStage(value['stage']),
+                    tuple(tuple(pair) for pair in value['indexed_matches']))
+                    for name,value in cached.get('indexed_evidence',{}).items()}
+                result=GainJobResult(rows=cached['rows'],status=cached.get('status',''),debug=cached.get('debug',''),
+                    hidden_matches=cached.get('hidden_matches',{}),evidence=cached.get('evidence',{}),indexed_evidence=evidence)
+                self._finish(serial,key,result)
+                return
         task = self._task
 
         def calculate(progress):
@@ -359,6 +372,9 @@ class GainJobController(QObject):
         window._set_candidate_status_state("complete")
         self._completed_indexed_evidence = dict(result.indexed_evidence)
         self._completed_identity = self._read_identity()
+        from xrd_finder.io.score_cache import save_scores
+        save_scores(window,'gain',result.rows,dict(status=result.status,debug=result.debug,
+            hidden_matches=result.hidden_matches,evidence=result.evidence,indexed_evidence=result.indexed_evidence))
 
     def _fail(self, serial, key, message, details):
         self._monitor.stop()

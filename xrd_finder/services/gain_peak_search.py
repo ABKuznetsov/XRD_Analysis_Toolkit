@@ -1,15 +1,17 @@
-"""Additional-phase search on measured peaks, without fitting phase amplitudes."""
+"""Additional-phase search using unaccounted measured peak areas."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 from collections.abc import Iterable
 from functools import lru_cache
+import numpy as np
 
 from xrd_finder.finder.gain_policy import DEFAULT_GAIN_POLICY
 from xrd_finder.services.gain_shortlist import significant_residual_records
 from xrd_finder.services.phase_pattern_equivalence import phase_patterns_equivalent
 from xrd_finder.services.profile_matched_peak_detector import is_broad_rescue_candidate
+from xrd_finder.services.gain_peak_areas import remaining_peak_areas
 
 
 def _number(obj, name, default=0.0):
@@ -96,31 +98,21 @@ def build_gain_peak_search_context(
         if all(abs(item.two_theta-r.two_theta) > .01 for r in unique):
             unique.append(item)
     unique.sort(key=lambda r: r.two_theta)
-    selected_positions = tuple(line.two_theta for pattern in patterns for line in pattern)
+    residual_areas, independent = remaining_peak_areas(unique,patterns)
     direct, overlap = [], []
-    for item in unique:
-        tolerance = max(.26, min(.72, max(width, item.fwhm)*2.4))
-        group = overlap if any(abs(p-item.two_theta) <= tolerance for p in selected_positions) else direct
-        group.append(item)
+    for item,area,novel in zip(unique,residual_areas,independent,strict=True):
+        if area<=0.:
+            continue
+        group=direct if novel else overlap
+        group.append(replace(item,area=float(area)))
     return GainPeakSearchContext(tuple(unique), tuple(direct), tuple(overlap), patterns, width, two_theta_range)
 
 
 def gain_peak_retrieval_records(
     context: GainPeakSearchContext,
 ) -> tuple[tuple[GainPeakRecord, ...], tuple[GainPeakRecord, ...]]:
-    """Keep adjacent maxima searchable without asserting a new phase.
-
-    Use each measured half-width with a small coordinate allowance, rather
-    than the global candidate-search window. These groups only feed candidate
-    retrieval; the conservative context still determines displayed Gain.
-    """
-    positions = tuple(line.two_theta for phase in context.accepted_patterns for line in phase)
-    direct, shared = [], []
-    for record in context.records:
-        tolerance = max(.05, .5*record.fwhm)
-        group = shared if any(abs(position-record.two_theta) <= tolerance for position in positions) else direct
-        group.append(record)
-    return tuple(direct), tuple(shared)
+    """Retrieve from unaccounted areas, including partially shared peaks."""
+    return context.direct_records, context.overlap_records
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +126,17 @@ class GainPeakCandidateScore:
     missing_strong_lines: int = 0
     equivalent_to_accepted: bool = False
     retrieval_score: float = 0.0
+
+    @property
+    def independent_signal_confirmed(self) -> bool:
+        """Distinguish a weak contribution from an unsupported coincidence.
+
+        Direct score includes both residual-area coverage and the penalty for
+        missing strong reference lines. Three distinct independent matches
+        explaining at least half of that remaining signal can be useful even
+        when the already accepted phase dominates the total intensity.
+        """
+        return self.direct_matches >= 3 and self.direct_score >= 50.0
 
 
 @lru_cache(maxsize=4096)
@@ -163,35 +166,44 @@ def score_gain_peak_candidate(
             independent.append(line)
         if len(independent) >= 42:
             break
-    opportunities = []
-    for index, line in enumerate(independent):
-        weight = math.sqrt(line.intensity/maximum)
-        for record_index, record in enumerate(context.records):
-            width = max(.26, min(.72, max(context.base_fwhm, record.fwhm)*2.4))
-            distance = abs(line.two_theta-record.two_theta)
-            if distance <= width:
-                quality = math.exp(-.5*(distance/width)**2)
-                opportunities.append((quality*weight, index, record_index, quality))
+    # A broad retrieval window is not the uncertainty of a measured maximum.
+    # Evaluate a coherent candidate cell against the measured peak widths.
+    positions = np.asarray([record.two_theta for record in context.records])
+    widths = np.clip([record.fwhm*.5 for record in context.records], .05, .18)
+    angles = np.asarray([line.two_theta for line in independent])
+    strengths = np.sqrt([line.intensity/maximum for line in independent])
+    distance = np.abs(angles[:, None]-positions[None, :])
+    quality = np.exp(-.5*(distance/widths)**2)
+    line_indices, record_indices = np.nonzero(distance <= 3.*widths)
+    priorities = quality[line_indices, record_indices]*strengths[line_indices]
+    # Retain the existing deterministic greedy one-to-one association order.
+    order = np.lexsort((-quality[line_indices, record_indices], -record_indices,
+                        -line_indices, -priorities))
     used_lines, used_records = set(), set()
     pairs = []
-    for _, index, record_index, quality in sorted(opportunities, reverse=True):
+    for item in order:
+        index, record_index = int(line_indices[item]), int(record_indices[item])
         if index in used_lines or record_index in used_records:
             continue
         used_lines.add(index)
         used_records.add(record_index)
-        pairs.append((index, record_index, quality))
+        pairs.append((index, record_index, float(quality[index, record_index])))
     if len(pairs) < 2:
         return GainPeakCandidateScore(matched_lines=len(pairs), missing_strong_lines=len(independent)-len(used_lines))
     matched_weight = sum(math.sqrt(independent[i].intensity/maximum)*quality for i, _, quality in pairs)
     missing_weight = sum(math.sqrt(line.intensity/maximum) for i, line in enumerate(independent) if i not in used_lines)
-    support = matched_weight/max(matched_weight + .15*missing_weight, 1e-12)
+    # Expected strong reflections carry the same weight whether observed or
+    # absent. Coincidences collected across a mixture are insufficient when
+    # much of the candidate's own strong-line pattern remains unsupported.
+    support = matched_weight/max(matched_weight + missing_weight, 1e-12)
     direct_positions = {r.two_theta for r in context.direct_records}
     direct_pairs = [(i, j, q) for i,j,q in pairs if context.records[j].two_theta in direct_positions]
     overlap_pairs = [(i, j, q) for i,j,q in pairs if context.records[j].two_theta not in direct_positions]
 
     def coverage(pairs, records):
         total = sum(r.area for r in records)
-        return sum(context.records[j].area*q for _,j,q in pairs)/max(total, 1e-12) if total > 0 else 0.0
+        areas={r.two_theta:r.area for r in records}
+        return sum(areas.get(context.records[j].two_theta,0.)*q for _,j,q in pairs)/max(total, 1e-12) if total > 0 else 0.0
 
     direct = 100*coverage(direct_pairs, context.direct_records)*min(len(direct_pairs)/3, 1)
     overlap = 100*coverage(overlap_pairs, context.overlap_records)*min(len(pairs)/3, 1)
@@ -204,7 +216,8 @@ def score_gain_peak_candidate(
     # matching lines can saturate the cap despite strong unsupported lines.
     retrieval_score = float(score*support)
     total_area = sum(record.area for record in context.records)
-    novel_area = sum(context.records[j].area*q for _,j,q in direct_pairs)
+    residual_areas={r.two_theta:r.area for r in context.direct_records}
+    novel_area = sum(residual_areas.get(context.records[j].two_theta,0.)*q for _,j,q in direct_pairs)
     novelty = novel_area/max(total_area, 1e-12)
     # Shared positions keep a candidate retrievable, but cannot establish an
     # additional component on their own. Normalizing only by unexplained area

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.9 - 2026-11-02
+
+- Contextual Help explains controls directly in the main window.
+- Guided workflows, a quick overview and an optional isolated training example are available from Help.
+- Search setup includes instrument selection and optional Le Bail adjustment.
+- Instrumental broadening can be calibrated from a standard measurement and CIF.
+- XPFF projects retain validated profiles, assignments and search results for faster reopening.
+- Background reference preparation and relative workspace sizing have been improved.
+
 ## Unreleased
 
 - Preserve one relative workspace layout for panels and columns, with initial proportions taken from the reviewed layout. Migrate native Qt pixel records before screen constraints change their ratios and remove competing pixel-state writers.

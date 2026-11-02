@@ -50,7 +50,8 @@ def _run_gui() -> int:
     args = parser.parse_args()
 
     configure_app_settings_storage()
-    app = QApplication.instance() or QApplication(sys.argv)
+    with trace_operation('startup.qt', slow_ms=0):
+        app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("XRD Phase Finder")
     app.setApplicationDisplayName("XRD Phase Finder")
     app.setOrganizationName("XRD Phase Finder")
@@ -71,9 +72,11 @@ def _run_gui() -> int:
             load_error = f"Could not open XRD Phase Finder File:\n{project_path}\n\n{exc}"
     else:
         project = build_local_project(args.pattern, args.cif)
-    window = PhaseFinderWindow(project, defer_initial_plot=project_loaded)
+    with trace_operation('startup.window', patterns=len(project.patterns), slow_ms=0):
+        window = PhaseFinderWindow(project, defer_initial_plot=project_loaded)
     if project_loaded:
-        window._after_project_loaded()
+        with trace_operation('startup.restore_project', slow_ms=0):
+            window._after_project_loaded()
     if icon_path.exists():
         window.setWindowIcon(QIcon(str(icon_path)))
     window.setWindowTitle(f"XRD Phase Finder - {project.name}")
@@ -98,13 +101,16 @@ def _run_gui() -> int:
     QTimer.singleShot(250, window.activateWindow)
     if load_error:
         QTimer.singleShot(0, lambda: QMessageBox.warning(window, "Open project failed", load_error))
-    app.processEvents()
+    with trace_operation('startup.first_paint', slow_ms=0):
+        app.processEvents()
     ready_file = os.environ.get("XRD_FINDER_READY_FILE")
     if ready_file:
         try:
             Path(ready_file).write_text("ready", encoding="utf-8")
         except OSError:
             pass
+    from xrd_finder.ui.learning_startup import schedule_learning_offer
+    schedule_learning_offer(window)
     return int(app.exec())
 
 

@@ -10,6 +10,15 @@ from xrd_finder.ui.element_filter import element_sort_key
 
 
 class PhaseFinderProjectStateActionsMixin:
+    def _saved_candidate_structure(self,candidate,pattern_id=None):
+        from xrd_finder.io.structure_snapshot import restore_structure
+        pattern=self._active_pattern()
+        pattern_id=pattern_id or getattr(pattern,'id',None)
+        record=self.profile_states.get(pattern_id,{}).get('structure_snapshots',{}).get(self._candidate_key(candidate))
+        if not record:return None
+        path=self._candidate_local_cif_path(candidate)
+        return restore_structure(record,path)
+
     def _collect_project_candidate_cif_paths(self) -> dict[str, str]:
         """Resolve one readable local CIF path for every saved candidate key."""
         candidates = list(self.match_candidates)
@@ -79,6 +88,7 @@ class PhaseFinderProjectStateActionsMixin:
             show_all_selected_patterns=bool(self.show_all_selected_patterns),
             pattern_stack_offset_percent=int(self.pattern_stack_offset_percent),
             normalize_observed_patterns=bool(self.normalize_observed_patterns),
+            scoring_source=getattr(self, '_scoring_source', 'Auto'),
             grid_visible=bool(self.grid_visible),
             show_hkl_labels=bool(self.show_hkl_labels),
             right_tab=right_tab,
@@ -149,6 +159,7 @@ class PhaseFinderProjectStateActionsMixin:
         self.show_all_selected_patterns = bool(state.show_all_selected_patterns)
         self.pattern_stack_offset_percent = int(state.pattern_stack_offset_percent)
         self.normalize_observed_patterns = bool(getattr(state, "normalize_observed_patterns", False))
+        self._set_scoring_source_status('Visible' if state.scoring_source == 'Visible' else 'Auto')
         self.grid_visible = bool(state.grid_visible)
         self.show_hkl_labels = bool(state.show_hkl_labels)
         control_bar = getattr(self, "finder_plot_control_bar", None)
@@ -172,8 +183,20 @@ class PhaseFinderProjectStateActionsMixin:
                 for control, was_blocked in zip(controls, previous_signal_states):
                     control.blockSignals(was_blocked)
         self._restore_filter_state(state)
+        active=self._active_pattern()
+        score_records=self.profile_states.get(getattr(active,'id',None),{}).get('score_results',{})
         if state.candidate_rows:
-            self._set_candidate_rows(self._candidate_state_rows(state.candidate_rows))
+            rows=self._candidate_state_rows(state.candidate_rows)
+            from xrd_finder.io.score_cache import restore_scores
+            saved_match=restore_scores(self,'match',rows)
+            self._set_candidate_rows(saved_match['rows'] if saved_match is not None else rows,
+                                     skip_rank=saved_match is not None or 'gain' in score_records)
+            if saved_match is not None:
+                self._auto_search_ranked_rows=deepcopy(saved_match['rows'])
+                self._auto_search_scored_keys={tuple(key) for key in saved_match.get('scored',[])}
+                self.candidate_table.set_match_diagnostics(
+                    {tuple(key):value for key,value in saved_match.get('failures',[])},
+                    {tuple(key) for key in saved_match.get('unavailable',[])})
             if 0 <= state.candidate_current_row < self.candidate_table.rowCount():
                 previous_block_state = self.candidate_table.blockSignals(True)
                 try:
@@ -188,7 +211,7 @@ class PhaseFinderProjectStateActionsMixin:
                 break
         self._set_grid_visible(self.grid_visible)
         self._refresh_observed_pattern_plot()
-        if self.match_candidates:
+        if any(self._profile_candidates_for_pattern(pattern) for pattern in self._patterns_to_display()):
             previous_network_suppression = bool(getattr(self, "_suppress_candidate_network", False))
             self._suppress_candidate_network = True
             try:
@@ -213,6 +236,9 @@ class PhaseFinderProjectStateActionsMixin:
             show_warnings = getattr(self, "_show_project_load_warnings", None)
             if callable(show_warnings):
                 show_warnings(list(self._project_restore_warnings))
+        if 'gain' in score_records and self.match_candidates:
+            self._candidate_gain_auto_enabled=True
+            self._schedule_candidate_gain_ranking()
 
     def _install_embedded_candidate_cifs(self, state: FinderProjectState) -> None:
         candidate_paths = getattr(state, "candidate_cif_paths", {}) or {}
@@ -304,7 +330,9 @@ class PhaseFinderProjectStateActionsMixin:
                 local_path = self._candidate_local_cif_path(candidate)
                 if local_path is None:
                     raise FileNotFoundError("no readable CIF is available")
-                _phase, structure = create_phase_from_cif(local_path)
+                structure=self._saved_candidate_structure(candidate)
+                if structure is None:
+                    _phase, structure = create_phase_from_cif(local_path)
                 phase_name = self._candidate_phase_name(candidate)
                 if phase_name:
                     structure.name = phase_name

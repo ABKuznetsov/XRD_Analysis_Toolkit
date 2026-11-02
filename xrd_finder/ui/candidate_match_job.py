@@ -67,6 +67,8 @@ class CandidateMatchQueue:
                 w._auto_search_scored_keys = set(ranked.scored_keys)
                 if hasattr(w.candidate_table, 'set_match_diagnostics'):
                     w.candidate_table.set_match_diagnostics(ranked.failures, ranked.unavailable_keys)
+                from xrd_finder.io.score_cache import save_match_scores
+                save_match_scores(w,ranked)
                 w._set_background_status(ranked.diagnostic_summary)
             self._start()
         def failed(message, details):

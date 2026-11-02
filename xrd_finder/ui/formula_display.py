@@ -33,7 +33,7 @@ def _formula_parts(text: str):
     if not compact or len(compact) > 1024:
         return None
     # Explicit substitution groups are display notation, not an occupancy model.
-    validation = re.sub(r'\(([A-Z][a-z]?)(?:,[A-Z][a-z]?)+\)', r'\1', compact)
+    validation = re.sub(r'\(([A-Z][a-z]?)(?:[,/][A-Z][a-z]?)+\)', r'\1', compact)
     try:
         amounts = formula_amounts(validation)
     except (CifCompositionError, ValueError, OverflowError):

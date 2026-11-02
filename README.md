@@ -14,11 +14,11 @@ The nine horizontal slides introduce capabilities, data sources, libraries, inst
 
 ## Download
 
-- [Windows installer (1.6.7): XRD_Phase_Finder_Setup_v1_6_7.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_Setup_v1_6_7.exe)
+- [Windows installer (1.6.9): XRD_Phase_Finder_Setup_v1_6_9.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_Setup_v1_6_9.exe)
 - [macOS package (1.6.7): XRD_Phase_Finder_macOS_1.6.7.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_macOS_1.6.7.pkg)
 - [Ubuntu / Debian package (1.6.7): XRD_Phase_Finder_1.6.7_amd64.deb](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_1.6.7_amd64.deb)
 
-Windows, macOS and Linux installers are available on the [XRD Phase Finder 1.6.7 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.7). The macOS package supports Intel and Apple silicon; Python 3.11 or 3.12 is required for the Sci runtime.
+The current Windows installer is available on the [XRD Phase Finder 1.6.9 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.9). macOS and Linux packages remain available as version 1.6.7; their download links are listed above.
 
 ## Main window
 
@@ -28,6 +28,7 @@ The project tree (A) contains imported patterns and structures. The toolbar (B) 
 
 ## Main features
 
+- use contextual Help, guided workflows and a separate training example;
 - import XRD patterns and CIF files;
 - search user libraries and configured crystallographic databases;
 - filter candidates with the periodic table;
@@ -43,7 +44,7 @@ The project tree (A) contains imported patterns and structures. The toolbar (B) 
 
 ### Windows
 
-Download and run `XRD_Phase_Finder_Setup_v1_6_7.exe`. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
+Download and run `XRD_Phase_Finder_Setup_v1_6_9.exe`. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
 
 On first launch, the launcher checks the per-user scientific Python runtime and offers to install or repair missing packages. User projects, settings and database caches are stored in the user profile.
 
@@ -81,11 +82,11 @@ Download and run the current `.pkg` from the release page. For a direct source r
 2. Set the radiation and instrument profile when needed.
 3. Use the Processing tab to adjust smoothing, background, crop and amorphous contribution.
 4. Select required or possible elements in the periodic table.
-5. Click **Find** and inspect the candidate patterns.
+5. Click **Identify phases**, review the search settings and start the search. Use **Search database** for manual composition-based lookup.
 6. Accept confirmed phases and review the residual signal and Gain suggestions.
 7. Save the interpretation as an `.xpff` project.
 
-Use **Help -> Open example project** to open the bundled demonstration project without changing personal data.
+Use the toolbar **Help** toggle for explanations of controls, **Help -> Learn Finder** for guided workflows, or **Help -> Open example project** for the bundled demonstration project.
 
 ## Offline use
 

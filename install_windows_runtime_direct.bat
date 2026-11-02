@@ -76,7 +76,7 @@ if errorlevel 1 goto failed
 echo Installing required scientific packages...
 call :install_package "certifi"
 if errorlevel 1 goto failed
-call :install_package "cristma==0.1.0b13"
+call :install_package "cristma==0.1.0b14"
 if errorlevel 1 goto failed
 if errorlevel 1 goto failed
 call :install_package "numpy"

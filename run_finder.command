@@ -36,4 +36,12 @@ if [ -z "$PYTHON" ]; then
     exit 1
 fi
 
+# Develop can use a private dependency build without replacing shared Sci libs.
+# Separate interpreter tags prevent loading a cp311 native module in cp313.
+RUNTIME_TAG="$("$PYTHON" -c 'import sys; print(sys.implementation.cache_tag)')"
+XRD_DEVELOP_LIBS="$SCI_ROOT/xrd-develop-libs/$SCI_ARCH/$RUNTIME_TAG"
+if [ -d "$XRD_DEVELOP_LIBS/cristma" ]; then
+    export PYTHONPATH="$APP_ROOT:$XRD_DEVELOP_LIBS${PYTHONPATH+:$PYTHONPATH}"
+fi
+
 "$PYTHON" -m xrd_finder.apps.finder_gui "$@"

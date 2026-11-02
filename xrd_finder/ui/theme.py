@@ -24,11 +24,11 @@ def theme_colors(dark: bool = False, widget: QWidget | None = None) -> dict[str,
         return dict(bg='#10141a', panel='#161c24', alt='#1c2430', text='#e3eaf2',
                     muted='#9aaabb', border='#303c4b', selected='#173e38', input='#111821',
                     header='#1c2632', hover='#242f3d', link='#6cdac1', accent='#087f69',
-                    cell_border='#415166', **SEMANTIC_COLORS)
+                    cell_border='#415166', attention_text='#ff8791', **SEMANTIC_COLORS)
     return dict(bg='#f4f7fa', panel='#ffffff', alt='#f7f9fc', text='#334155',
                 muted='#64748b', border='#dce3eb', selected='#e0f2ed', input='#ffffff',
                 header='#edf2f7', hover='#edf2f7', link='#087f69', accent='#087f69',
-                cell_border='#c3cfdc', **SEMANTIC_COLORS)
+                cell_border='#c3cfdc', attention_text='#b42336', **SEMANTIC_COLORS)
 
 
 def _asset(name: str) -> str:
@@ -108,6 +108,7 @@ def window_style(dark: bool = False) -> str:
         QLabel {{ background: transparent; }}
         QLabel[uiRole="sectionTitle"] {{ color: {c['text']}; font-weight: 600; padding: 4px 0; }}
         QLabel[uiRole="muted"], QLabel#processingPlaceholder {{ color: {c['muted']}; }}
+        QLabel[uiRole="attention"] {{ color: {c['attention_text']}; font-weight: 600; }}
         QWidget#projectSidebar, QWidget#compositionElements, QWidget#compositionControls {{
             background: {c['panel']}; border: 1px solid {c['border']}; border-radius: 9px;
         }}
@@ -188,7 +189,7 @@ def window_style(dark: bool = False) -> str:
         QMenu::item {{ padding: 7px 22px; border-radius: 4px; }}
         QMenu::item:selected {{ background: {c['selected']}; }}
         QMenu::item:disabled {{ color: {c['muted']}; }}
-        QToolTip {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; padding: 5px; }}
+        QToolTip {{ background: {c['panel']}; color: {c['text']}; border: 1px solid {c['border']}; padding: 5px; opacity: 255; }}
     ''' + search_mode_button_style('QPushButton')
 
 

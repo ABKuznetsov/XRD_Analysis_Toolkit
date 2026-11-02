@@ -57,7 +57,7 @@ class PhaseFinderPeakSelectionActionsMixin:
         if self._search_mode == "peaks":
             self._search_selected_peaks()
         elif self._search_mode == "auto":
-            self._auto_search_candidates()
+            self._start_auto_search()
         else:
             self._search_from_controls()
 

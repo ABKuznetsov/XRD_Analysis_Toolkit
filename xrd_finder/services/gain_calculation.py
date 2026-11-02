@@ -1,6 +1,7 @@
 from __future__ import annotations
 from xrd_finder.ui.gain_peak_search_actions import build_window_peak_gain_context, score_window_peak_gain_row, clear_gain_column
 from xrd_finder.services.gain_peak_search import gain_peak_retrieval_records
+from xrd_finder.services.gain_peak_refinement import refine_gain_peak_candidates
 from xrd_finder.services.gain_retrieval_union import GainRetrievalConfig, build_production_gain_retrieval_pool
 from xrd_finder.services.gain_shortlist import GAIN_PROFILE_CANDIDATE_LIMIT
 from xrd_finder.services.calculated_pattern_service import radiation_lines_from_wavelength
@@ -367,6 +368,8 @@ class GainCalculationMixin:
                 if self._candidate_key(candidate) in selected_keys:
                     continue
                 preliminary_gains[row_index] = self._candidate_row_preliminary_gain(row, gain_context)
+            if "peak_search" in gain_context:
+                refine_gain_peak_candidates(self, rows_to_rank, preliminary_gains, gain_context)
             overlap_records = self._gain_stage_records(
                 gain_context,
                 GainStage.OVERLAP,
@@ -381,17 +384,21 @@ class GainCalculationMixin:
             if residual_summary.kind == "none":
                 self._last_gain_debug = "Gain: no significant unexplained peaks"
             else:
-                profile_indices = self._gain_multichannel_profile_indices(
-                    rows_to_rank,
-                    preliminary_gains,
-                    gain_records,
-                    overlap_records,
-                    gain_context,
-                )
-                if not profile_indices:
-                    profile_indices = select_profile_candidate_indices(
+                if "peak_search" in gain_context:
+                    # The preliminary peak pass already cached both scores.
+                    # A budget for expensive grid profiles must not hide those
+                    # completed values for otherwise valid candidate cards.
+                    profile_indices = list(preliminary_gains)
+                else:
+                    profile_indices = self._gain_multichannel_profile_indices(
+                        rows_to_rank,
                         preliminary_gains,
+                        gain_records,
+                        overlap_records,
+                        gain_context,
                     )
+                    if not profile_indices:
+                        profile_indices = select_profile_candidate_indices(preliminary_gains)
                 for row_index in profile_indices:
                     precomputed_gains[row_index] = self._candidate_row_integral_gain(
                         rows_to_rank[row_index], gain_context
@@ -449,9 +456,13 @@ class GainCalculationMixin:
                     ).get(row_key),
                     profile_gain=profile_gain,
                     profile_evaluated=profile_evaluated,
+                    independent_signal_confirmed=bool(getattr(
+                        gain_context.get('_gain_peak_candidate_scores', {}).get(row_key),
+                        'independent_signal_confirmed', False)),
                 )
             if displayed_gain > 0:
                 scored_row[6] = (
+                    f"{displayed_gain:.2g}%" if displayed_gain < 0.1 else
                     f"{displayed_gain:.1f}%" if displayed_gain < 10.0 else f"{displayed_gain:.0f}%"
                 )
             if has_selected_phases and gain_context is not None and "peak_search" in gain_context:
@@ -880,6 +891,13 @@ class GainCalculationMixin:
                 positions.append(position)
             if len(positions) >= (10 if stage == "hidden" else 12):
                 break
+        # Records remain on the measured scan axis. Both SQL channels compare
+        # against catalog Bragg angles, before the scan's common zero shift.
+        # Select the observed scan range above; do not reapply it after moving
+        # into catalog coordinates (valid edge reflections may lie beyond it).
+        zero_shift = common_zero_shift(self.match_zero_shifts.values())
+        positions = [position-zero_shift for position in positions
+                     if 0.0 < position-zero_shift < 180.0]
         if not positions:
             return []
         options = self._gain_search_options()
@@ -1051,7 +1069,10 @@ class GainCalculationMixin:
         evaluated, profile_gain = (context or {}).get('_gain_profile_support_by_key', {}).get(key, (False, None))
         return DEFAULT_GAIN_POLICY.reportable_gain(gain,
             dominant_evidence=(context or {}).get('_gain_dominant_evidence_by_key', {}).get(key),
-            profile_gain=profile_gain, profile_evaluated=evaluated)
+            profile_gain=profile_gain, profile_evaluated=evaluated,
+            independent_signal_confirmed=bool(getattr(
+                (context or {}).get('_gain_peak_candidate_scores', {}).get(key),
+                'independent_signal_confirmed', False)))
 
     def _candidate_profile_with_cell_refinement(self, candidate, peaks, context):
         """Evaluate a shortlisted cell at fixed scan zero; retain only better support."""
@@ -2601,6 +2622,12 @@ def run_gain_job(inputs: GainJobInput, *, progress=None, cancelled=lambda: False
             prepare_gain_references(inputs, progress=progress, cancelled=cancelled)
         calculation = GainComputation(inputs, cancelled, progress=progress)
         calculation._gain_check_cancelled()
+        # SQL rows are merged first and may have blank Match fields. Preserve
+        # the supplied Match channel before deduplication discards those rows.
+        for row in inputs.rows:
+            if len(row) > 5 and calculation._percent_text_value(row[5]) > 0:
+                key = calculation._candidate_key({'Source': row[0], 'Entry': row[1]})
+                calculation._candidate_hidden_match_by_key[key] = row[5]
         if progress:
             progress("Preparing Gain residual...", 0, 0)
         context = calculation._candidate_gain_context()
@@ -2659,7 +2686,7 @@ def run_gain_job(inputs: GainJobInput, *, progress=None, cancelled=lambda: False
                 "_gain_combined_evidence_cache", "_gain_profile_support_by_key",
                 "_gain_dominant_evidence_by_key", "_gain_suppressed_duplicate_patterns",
                 "_gain_cell_refinement_by_key", "_gain_joint_by_key",
-                "_gain_peak_candidate_scores")},
+                "_gain_peak_candidate_scores", "_gain_peak_scale_refinement_by_key")},
             indexed_evidence=indexed_evidence,
             observed_peak_cache=calculation._export_observed_peak_reuse(),
         )

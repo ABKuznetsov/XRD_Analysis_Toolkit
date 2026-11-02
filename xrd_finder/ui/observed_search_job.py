@@ -9,9 +9,10 @@ from PySide6.QtWidgets import QMessageBox
 
 from xrd_finder.services.gain_shortlist import common_zero_shift
 from xrd_finder.services.observed_search_preparation import (
-    ObservedSearchInput, ObservedSearchResult, prepare_observed_search,
+    ObservedSearchInput, ObservedSearchResult,
 )
 from xrd_finder.ui.background_task import BackgroundTaskHandle
+from xrd_finder.services.isolated_observed_search import run_observed_search_isolated
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,15 +137,23 @@ class ObservedSearchController(QObject):
             return
         inputs = capture.inputs
         handle = BackgroundTaskHandle(
-            lambda: prepare_observed_search(inputs, cancelled=cancel.is_set), self,
+            lambda progress: run_observed_search_isolated(inputs,progress=progress,cancelled=cancel.is_set), self,
+            accepts_progress=True,
             operation_name='match.prepare.observed',
         )
         self._handle = handle
         handle.finished.connect(lambda result: self._finish(serial, capture, on_success, result))
         handle.failed.connect(lambda message, details: self._fail(serial, capture, message or details))
+        handle.progress.connect(lambda label,*_args:self._progress(serial,label))
         handle.stopped.connect(self._stopped)
         self._monitor.start()
         handle.start()
+
+    def _progress(self, serial, label):
+        if not self._closing and serial == self._serial and not self._cancel.is_set():
+            from xrd_finder.services.runtime_diagnostics import diagnostic_logger
+            diagnostic_logger().info('event=observed_preparation_stage stage=%s',label.replace(' ','_'))
+            self.window._set_background_status(label)
 
     def _check_inputs(self):
         if self._watch_key != observed_search_watch_key(self.window):

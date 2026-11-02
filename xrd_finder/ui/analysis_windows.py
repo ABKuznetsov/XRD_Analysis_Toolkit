@@ -5,6 +5,8 @@ from xrd_finder.ui.peak_information_actions import PeakInformationActionsMixin
 from xrd_finder.ui.find_peaks_actions import FindPeaksActionsMixin
 from xrd_finder.ui.manual_peak_actions import ManualPeakActionsMixin
 from xrd_finder.ui.manual_calibration_actions import ManualCalibrationActionsMixin
+from xrd_finder.ui.le_bail_actions import LeBailActionsMixin
+from xrd_finder.ui.learning_actions import PhaseFinderLearningActionsMixin
 from xrd_finder.ui.preview_observation_job import PreviewObservationController
 from xrd_finder.ui.structure_overlay import OverlayObservationCache, overlay_observation_key
 from xrd_finder.services.peak_cell_alignment import apply_peak_cell
@@ -70,6 +72,7 @@ from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.io.scientific_folder_import import collect_scientific_folder_groups, unique_series_name
 from xrd_finder.io.xy_loader import load_xy
 from xrd_finder.io.project_io import PORTABLE_PROJECT_SUFFIX, load_project_manifest, save_project_manifest
+from xrd_finder.io.finder_result_cache import cif_content_signature, make_result_record, restore_result
 from xrd_finder.services.calculated_pattern_service import (
     CU_KA1_WAVELENGTH,
     CalculatedPatternService,
@@ -83,7 +86,7 @@ from xrd_finder.services.candidate_search_service import (
 from xrd_finder.services.ccdc_service import CcdcService
 from xrd_finder.services.cod_online_service import CodOnlineService, formula_elements
 from xrd_finder.services.computational_database_service import AflowService, OqmdService
-from xrd_finder.services.local_phase_cache import LocalPhaseCache, LocalPhaseSearchError
+from xrd_finder.services.local_phase_cache import DERIVED_CACHE_VERSION, LocalPhaseCache, LocalPhaseSearchError
 from xrd_finder.services.match_pdf2_service import MatchPdf2Service
 from xrd_finder.services.materials_project_service import MaterialsProjectService
 from xrd_finder.services.preprocessing_service import estimate_background
@@ -144,6 +147,7 @@ from xrd_finder.ui.observed_pattern_actions import (
     PhaseFinderObservedPatternActionsMixin,
     _processed_amorphous_background_data,
 )
+from xrd_finder.ui.observed_patterns import observed_pattern_data
 from xrd_finder.ui.peak_marker_renderer import (
     add_peak_coverage_markers,
 )
@@ -899,6 +903,8 @@ class AnalysisWindow(QDialog):
 
 
 class PhaseFinderWindow(
+    PhaseFinderLearningActionsMixin,
+    LeBailActionsMixin,
     ManualCalibrationActionsMixin,
     ManualPeakActionsMixin,
     FindPeaksActionsMixin,
@@ -941,7 +947,7 @@ class PhaseFinderWindow(
         self._initialize_candidate_batch_updates()
         self._create_center_splitter()
         self.visible_profile_calculation_queue = VisibleProfileCalculationQueue(
-            self._calculate_visible_profile,
+            self._calculate_project_profile,
             self,
         )
         self._create_right_tabs()
@@ -1138,6 +1144,15 @@ class PhaseFinderWindow(
         state = self.profile_states.setdefault(pattern_id, {})
         state["candidates"] = self._candidate_copy_list(self.match_candidates)
         state["gain_overlap_locked"] = bool(self._gain_overlap_locked)
+        from xrd_finder.io.structure_snapshot import structure_record
+        snapshots=state.setdefault('structure_snapshots',{})
+        for candidate in self.match_candidates:
+            key=self._candidate_key(candidate)
+            structure=self.match_structures.get(key)
+            if structure is not None:
+                path=self._candidate_local_cif_path(candidate)
+                record=structure_record(structure,path)
+                if record is not None:snapshots[key]=record
 
     def _load_profile_state(self, pattern_id: str | None) -> None:
         self._profile_state_loading = True
@@ -1148,6 +1163,9 @@ class PhaseFinderWindow(
             self._gain_overlap_locked = bool(state.get("gain_overlap_locked", False))
             self._active_gain_stage = ""
             self.match_structures.clear()
+            for candidate in self.match_candidates:
+                structure=self._saved_candidate_structure(candidate,pattern_id)
+                if structure is not None:self.match_structures[self._candidate_key(candidate)]=structure
             self.match_scales.clear()
             self.match_quantities.clear()
             self.match_iic.clear()
@@ -1199,6 +1217,8 @@ class PhaseFinderWindow(
             except Exception:
                 pass
             self.match_profile_result_cache.clear()
+            for state in self.profile_states.values():
+                state.pop('calculated_result', None)
             selected = getattr(self, '_peak_info_selected', None)
             if selected is not None:
                 self._refresh_peak_information_assignments(selected['pattern_id'])
@@ -1208,6 +1228,7 @@ class PhaseFinderWindow(
             for key, value in self.match_profile_result_cache.items()
             if not key or key[0] != pattern_id
         }
+        self.profile_states.get(pattern_id, {}).pop('calculated_result', None)
         self._refresh_peak_information_assignments(pattern_id)
 
     def _finder_cache_key(
@@ -1216,8 +1237,16 @@ class PhaseFinderWindow(
         candidates: list[dict[str, str]],
         *,
         snap_peak_positions: bool = True,
+        portable: bool = False,
     ) -> tuple[object, ...]:
-        processed_observed = self._pattern_finder_observed_data(pattern)
+        if getattr(self, '_scoring_source', 'Auto') == 'Auto':
+            # Validate the deterministic preprocessing by its original input.
+            # Merely opening a saved fit must not refit 28 backgrounds on Qt's
+            # main thread to obtain a cache key.
+            processed_observed = self._crop_pattern_data(
+                pattern, self._normalized_observed_data(observed_pattern_data(pattern)))
+        else:
+            processed_observed = self._pattern_finder_observed_data(pattern)
         background_data = self._pattern_finder_background_data(pattern)
         background_signature = self._finder_background_signature(background_data)
         structure_overrides = self._finder_candidate_structure_overrides(pattern, candidates)
@@ -1249,6 +1278,17 @@ class PhaseFinderWindow(
                     cif_path = "" if local_path is None else str(local_path)
             except Exception:
                 pass
+            physical_signature = quantification_source_signature(
+                local_path, structure_overrides.get(self._candidate_key(candidate)))
+            if portable:
+                content = cif_content_signature(local_path)
+                physical_signature = (content, physical_signature[1])
+                cif_path = content
+                if content is not None:
+                    # The portable CIF is authoritative. A different computer
+                    # need not rebuild its SQL reflection index just to display
+                    # a previously calculated, identical physical model.
+                    line_fingerprint = ('cif', DERIVED_CACHE_VERSION)
             candidate_signature.append((
                 self._candidate_source(candidate),
                 candidate.get("Entry", ""),
@@ -1262,15 +1302,13 @@ class PhaseFinderWindow(
                     round(float(getattr(initial_cell, name)), 8)
                     for name in ("a", "b", "c", "alpha", "beta", "gamma")
                 ),
-                quantification_source_signature(
-                    local_path, structure_overrides.get(self._candidate_key(candidate))
-                ),
+                physical_signature,
             ))
         instrument_profile = self._instrument_profile_for_pattern(pattern)
         wavelength, include_kalpha2 = self._legacy_radiation_for_pattern(pattern)
         return (
             pattern.id,
-            str(getattr(pattern, "source_path", "")),
+            '' if portable else str(getattr(pattern, "source_path", "")),
             float(wavelength),
             bool(include_kalpha2),
             instrument_profile.calculation_key(),
@@ -1278,7 +1316,7 @@ class PhaseFinderWindow(
             background_signature,
             bool(snap_peak_positions),
             tuple(candidate_signature),
-        )
+        ) + self._le_bail_cache_suffix(pattern)
 
     def _finder_result_for_pattern(
         self,
@@ -1291,6 +1329,34 @@ class PhaseFinderWindow(
     ):
         if getattr(pattern, 'input_kind', '') == 'peak_list':
             return None, {}
+        candidate_by_key = {self._candidate_key(candidate): candidate for candidate in candidates}
+        cache_key = self._finder_cache_key(pattern, candidates, snap_peak_positions=snap_peak_positions)
+        result = self.match_profile_result_cache.get(cache_key)
+        if result is None:
+            record = self.profile_states.get(pattern.id, {}).get('calculated_result')
+            if record is not None:
+                result = restore_result(record, self._finder_cache_key(
+                    pattern, candidates, snap_peak_positions=snap_peak_positions, portable=True))
+                if result is not None:
+                    self.match_profile_result_cache[cache_key] = result
+                    self._trim_match_profile_result_cache()
+        if result is not None:
+            represented = {item.entry_id for item in result.candidates}
+            represented.update(item.entry_id for item in getattr(result, 'candidate_failures', []))
+            omitted = [candidate for candidate in candidates if self._candidate_key(candidate) not in represented]
+            if any(self._candidate_local_cif_path(candidate) is not None for candidate in omitted):
+                # Older builds could cache a partial mixture after skipping an
+                # obsolete SQL card. An available CIF must now be attempted,
+                # or have an explicit failure, rather than silently disappear.
+                result = None
+                self.match_profile_result_cache.pop(cache_key, None)
+        if result is not None:
+            self._record_pattern_zero_shift(pattern, result)
+            return result, candidate_by_key
+        if cache_only:
+            return None, candidate_by_key
+        le_bail = self._le_bail_enabled_for_pattern(pattern)
+        background = bool(background or le_bail)
         instrument = self._instrument_profile_for_pattern(pattern)
         candidate_build = build_finder_candidate_inputs(
             candidates,
@@ -1309,14 +1375,17 @@ class PhaseFinderWindow(
         self._finder_candidates_needing_index = list(candidate_build.needs_index)
         if not finder_candidates:
             return None, candidate_by_key
-        cache_key = self._finder_cache_key(pattern, candidates, snap_peak_positions=snap_peak_positions)
-        result = self.match_profile_result_cache.get(cache_key)
-        if result is not None:
-            self._record_pattern_zero_shift(pattern, result)
-            return result, candidate_by_key
-        if cache_only:
-            return None, candidate_by_key
-        processed_observed = self._pattern_finder_observed_data(pattern)
+        preprocess_auto = bool(background and getattr(self, '_scoring_source', 'Auto') == 'Auto')
+        if preprocess_auto:
+            processed_observed = self._crop_pattern_data(
+                pattern, self._normalized_observed_data(observed_pattern_data(pattern)))
+            prepared = (None if processed_observed is None else
+                        self._auto_scoring_cache.get(self._auto_scoring_cache_key(pattern, processed_observed)))
+            if prepared is not None:
+                processed_observed = np.column_stack([prepared.x, prepared.y])
+                preprocess_auto = False
+        else:
+            processed_observed = self._pattern_finder_observed_data(pattern)
         background_data = self._pattern_finder_background_data(pattern)
         structure_overrides = self._finder_candidate_structure_overrides(pattern, candidates)
         for finder_candidate in finder_candidates:
@@ -1350,13 +1419,19 @@ class PhaseFinderWindow(
             queue = getattr(self, '_accepted_profile_queue', None)
             if queue is None:
                 queue = self._accepted_profile_queue = AcceptedProfileQueue(self)
-            queue.request(pattern, cache_key, inputs)
+            queue.request(pattern, cache_key, inputs, preprocess_auto=preprocess_auto, le_bail=le_bail)
             return None, candidate_by_key
         result = self.finder_service.run(inputs)
         self.match_profile_result_cache[cache_key] = result
+        self._store_calculated_result(pattern, candidates, result, snap_peak_positions=snap_peak_positions)
         self._record_pattern_zero_shift(pattern, result)
         self._trim_match_profile_result_cache()
         return result, candidate_by_key
+
+    def _store_calculated_result(self, pattern, candidates, result, *, snap_peak_positions=True) -> None:
+        key = self._finder_cache_key(pattern, candidates,
+                                    snap_peak_positions=snap_peak_positions, portable=True)
+        self.profile_states.setdefault(pattern.id, {})['calculated_result'] = make_result_record(result, key)
 
     def _finder_candidate_structure_overrides(self, pattern, candidates: list[dict[str, str]]) -> dict[str, object]:
         if pattern is None:
@@ -1629,6 +1704,7 @@ class PhaseFinderWindow(
             self._refresh_observed_pattern_plot()
         else:
             self._restore_finder_state_from_project()
+        self._schedule_project_profiles()
         self._remember_saved_project_state()
 
     def _reset_phase_finder_state(
@@ -1638,6 +1714,9 @@ class PhaseFinderWindow(
         reset_plot_range: bool = False,
         refresh_observed: bool = False,
     ) -> None:
+        search_setup = getattr(self, '_auto_search_setup_popup', None)
+        if search_setup is not None:
+            search_setup.hide()
         self._close_manual_calibration()
         if getattr(self, '_manual_peak_input_armed', False):
             self._close_manual_peak_editor()
@@ -1659,6 +1738,9 @@ class PhaseFinderWindow(
         queue = getattr(self, "visible_profile_calculation_queue", None)
         if queue is not None:
             queue.clear()
+        accepted = getattr(self, '_accepted_profile_queue', None)
+        if accepted is not None:
+            accepted.invalidate()
         self.pattern_display_order_ids = [pattern.id for pattern in self.project.patterns]
         self._clear_probability_caches()
         self.match_candidates.clear()
@@ -1721,6 +1803,11 @@ class PhaseFinderWindow(
                 event.ignore()
                 return
         self._preparation_close_confirmed = True
+        self._close_learning_guide()
+        legend_timer = getattr(self, '_multi_legend_layout_timer', None)
+        if legend_timer is not None:
+            legend_timer.stop()
+            self._multi_legend_layout_pending = False
         self._close_manual_calibration()
         if getattr(self, '_manual_peak_input_armed', False):
             self._close_manual_peak_editor()
@@ -1891,6 +1978,9 @@ class PhaseFinderWindow(
         return scroll
 
     def _show_quick_help(self) -> None:
+        self._toggle_context_help()
+
+    def _show_reference_help(self) -> None:
         QMessageBox.information(self, PHASE_FINDER_HELP_TITLE, PHASE_FINDER_HELP_TEXT)
 
     def _refresh_network_mode_action(self) -> None:
@@ -2775,15 +2865,14 @@ class PhaseFinderWindow(
         if queue is not None and deferred_pattern_ids:
             queue.schedule(deferred_pattern_ids)
 
-    def _calculate_visible_profile(self, pattern_id: str) -> None:
-        if not self.show_all_selected_patterns:
-            return
-        visible_by_id = {
-            pattern.id: pattern
-            for pattern in self._patterns_to_display()
-            if pattern is not None
-        }
-        pattern = visible_by_id.get(pattern_id)
+    def _schedule_project_profiles(self) -> None:
+        """Prepare saved accepted phases even inside collapsed/unchecked folders."""
+        visible = [pattern.id for pattern in self._patterns_to_display()]
+        other = [pattern.id for pattern in self.project.patterns if pattern.id not in visible]
+        self.visible_profile_calculation_queue.schedule(visible + other)
+
+    def _calculate_project_profile(self, pattern_id: str) -> None:
+        pattern = next((item for item in self.project.patterns if item.id == pattern_id), None)
         if pattern is None:
             return
         candidates = self._profile_candidates_for_pattern(pattern)
@@ -2803,8 +2892,11 @@ class PhaseFinderWindow(
             return
         finally:
             self._suppress_candidate_network = previous_network_suppression
-        if result is not None:
-            self._recalculate_match_profile(auto_zoom=False, refresh_pattern_id=pattern_id)
+        if result is not None and pattern_id in {item.id for item in self._patterns_to_display()}:
+            context = self.observed_pattern_plot_context.get(pattern_id, {})
+            displayed = self.match_profile_result_cache.get(context.get('accepted_profile_result_key'))
+            if displayed is not result:
+                self._recalculate_match_profile(auto_zoom=False, refresh_pattern_id=pattern_id)
 
     def _pattern_has_saved_background_components(self, pattern) -> bool:
         if pattern is None:

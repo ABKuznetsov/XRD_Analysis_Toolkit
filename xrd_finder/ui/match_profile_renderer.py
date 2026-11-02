@@ -154,6 +154,7 @@ def store_accepted_cell_results(result, candidates, candidate_key) -> None:
     by_key = {item.entry_id: item for item in result.candidates}
     for candidate in candidates:
         candidate['_QuantificationError'] = getattr(result, 'quantification_error', '')
+        candidate['_LeBailMessage'] = result.position_refinement.get('le_bail', {}).get('message', '')
         item = by_key.get(candidate_key(candidate))
         if item is not None:
             _store_estimated_cell_state(candidate, item)
@@ -205,17 +206,17 @@ def build_finder_candidate_inputs(
             )
             continue
         incomplete_range = getattr(resolution, 'status', None) == 'incomplete'
-        if bool(getattr(resolution, "needs_index", False)) and source != "USER" and not incomplete_range:
-            needs_index.append(candidate)
-            continue
+        local_fallback = incomplete_range or (
+            bool(getattr(resolution, 'needs_index', False)) and source != 'USER'
+        )
         try:
-            if incomplete_range:
-                # A valid local structure can be calculated at the requested
-                # radiation directly; do not hide accepted phases or download
-                # another CIF because only the cached d range is too short.
+            if local_fallback:
+                # An obsolete/missing SQL index is not a missing structure.
+                # Calculate the available project/local CIF in the background;
+                # never use stale reflections or download during restoration.
                 cif_path = quantification_cif_path(candidate) if quantification_cif_path is not None else None
-                if cif_path is None:
-                    raise ValueError('No local structure for the requested reference range')
+                if cif_path is None or not Path(cif_path).is_file():
+                    raise ValueError('No local structure for the requested calculation')
             else:
                 cif_path = candidate_cif_path(candidate)
         except Exception:
@@ -331,6 +332,7 @@ def draw_match_profile_result(
             continue
         _store_estimated_cell_state(candidate, candidate_result)
         candidate['_QuantificationError'] = getattr(result, 'quantification_error', '')
+        candidate['_LeBailMessage'] = result.position_refinement.get('le_bail', {}).get('message', '')
         key = candidate_key(candidate)
         color = phase_color(candidate, index)
         phase_label = phase_legend_label(candidate)
@@ -525,7 +527,7 @@ def draw_match_profile_result(
         x,
         calculated_total_plot,
         style.calculated.color or "#0b8043",
-        f"calculated total | fit {fit_quality:.0f}% | peaks {explained}/{total_observed}",
+        f"{'Le Bail total' if result.position_refinement.get('le_bail', {}).get('status') == 'applied' else 'calculated total'} | fit {fit_quality:.0f}% | peaks {explained}/{total_observed}",
         width=style.calculated.width,
     )
     _tag_plot_item(sum_item, pattern_id, object_id="calculated-total")

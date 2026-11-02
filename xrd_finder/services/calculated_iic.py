@@ -13,7 +13,7 @@ import tempfile
 import threading
 
 import cristma
-from xrd_finder.io.native_cif_session import read_native_cif
+from xrd_finder.io.native_cif_session import read_native_cif, native_cif_session
 from cristma.chemistry.species import IsotopeSpecies
 from cristma.symmetry.orbit import expand_structure
 
@@ -38,6 +38,7 @@ class CalculatedIic:
         self.instrument = InstrumentProfile.default_cu_kalpha()
         self.parameters = {
             "method": "cristma-rir-v1", "cristma": version("cristma"),
+            "structure_model": "mp-rest-v2-full-cell-v1",
             "reference": hashlib.sha256(corundum_reference_path().read_bytes()).hexdigest(),
             "radiation": asdict(self.instrument.radiation),
             "geometry": asdict(self.instrument.geometry),
@@ -129,6 +130,7 @@ class CalculatedIic:
             self._reference = data
             return data
 
+    @native_cif_session
     def calculate(self, path, peaks=None) -> tuple[float, str]:
         fingerprint = hashlib.sha256(Path(path).read_bytes()).hexdigest()
         reference = self.reference_data()

@@ -16,7 +16,10 @@ class ScreenBoundDialog(QDialog):
 
     def showEvent(self, event):
         parent = self.parentWidget()
-        density = getattr(parent.window(), '_ui_density_factor', 1.0) if parent is not None else 1.0
+        bounds = getattr(self, '_bounds_window', None)
+        if bounds is None and parent is not None:
+            bounds = parent.window()
+        density = getattr(bounds, '_ui_density_factor', 1.0)
         if getattr(self, '_dialog_density_factor', None) != density:
             from xrd_finder.ui.ui_density import UiDensity
             if not hasattr(self, '_dialog_density'):
@@ -31,9 +34,9 @@ class ScreenBoundDialog(QDialog):
         available = self.screen().availableGeometry()
         parent = self.parentWidget()
         width, height = (available.width() - 24, available.height() - 48)
-        if parent is not None:
-            width = min(width, parent.window().width() - 16)
-            height = min(height, parent.window().height() - 40)
+        if bounds is not None:
+            width = min(width, bounds.width() - 16)
+            height = min(height, bounds.height() - 40)
         width, height = (max(320, width), max(240, height))
         self.setMinimumSize(min(self.minimumWidth(), width), min(self.minimumHeight(), height))
         self.resize(min(self.width(), width), min(self.height(), height))

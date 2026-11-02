@@ -165,7 +165,7 @@ class PhaseFinderPreprocessingActionsMixin:
         try:
             state = self.profile_states.get(pattern.id, {}) if pattern is not None else {}
             action_bar.zero_shift_refined_value.setText(
-                f"{self._pattern_zero_shift_deg(pattern.id):.6f}" if pattern else "-")
+                f"{self._pattern_zero_shift_deg(pattern.id):.3f}" if pattern else "-")
             action_bar.zero_shift_refined_value.setEnabled(pattern is not None)
             warning = self._zero_shift_warning_text(pattern.id) if pattern else ""
             action_bar.zero_shift_warning_label.setText(warning)

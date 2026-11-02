@@ -57,6 +57,8 @@ def _number(value: float = 0.0, *, minimum: float = -1_000_000.0, maximum: float
 
 
 class InstrumentProfileEditor(QWidget):
+    calibrationRequested = Signal()
+
     def __init__(self, profile: InstrumentProfile | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._profile_id = ""
@@ -169,6 +171,12 @@ class InstrumentProfileEditor(QWidget):
 
     def _build_resolution_tab(self) -> None:
         form = self._add_form_tab("Resolution")
+        self.resolution_assumption = QLabel(
+            '! Instrument-only broadening. The calibration standard is assumed coarse grained, '
+            'with negligible crystallite-size and strain broadening.')
+        self.resolution_assumption.setWordWrap(True)
+        self.resolution_assumption.setProperty('uiRole', 'attention')
+        form.addRow(self.resolution_assumption)
         self.resolution_model = QComboBox()
         self.resolution_model.addItem("Constant FWHM", "constant_fwhm")
         self.resolution_model.addItem("TCH pseudo-Voigt", "tch")
@@ -196,6 +204,10 @@ class InstrumentProfileEditor(QWidget):
         form.addRow("Y", self.tch_y)
         self.resolution_preview = QLabel()
         form.addRow("Instrument FWHM at 30°", self.resolution_preview)
+        self.calibrate_profile_button = QPushButton('Calibrate from standard…')
+        self.calibrate_profile_button.setToolTip('Calculate U, V, W, X, Y from a measured standard and its CIF.')
+        self.calibrate_profile_button.clicked.connect(self.calibrationRequested.emit)
+        form.addRow(self.calibrate_profile_button)
         for control in (self.tch_u,self.tch_v,self.tch_w,self.tch_x,self.tch_y,self.constant_fwhm):
             control.valueChanged.connect(self._update_resolution_preview)
         self.tch_units.currentIndexChanged.connect(self._update_resolution_preview)
@@ -431,9 +443,17 @@ class InstrumentProfileDialog(ScreenBoundDialog):
         packaged_profile_ids: Iterable[str] = (),
         section: str = "identity",
         parent: QWidget | None = None,
+        calibration_pattern_path: str = '',
+        calibration_cif_path: str = '',
+        calibration_reference_library=None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Instrument profile")
+        self._calibration_dialog = None
+        self._calibration_pattern_path = calibration_pattern_path
+        self._calibration_cif_path = calibration_cif_path
+        self._calibration_reference_library = calibration_reference_library
+        self._close_after_calibration = False
         self.setMinimumSize(640, 560)
         self._profiles: dict[str, InstrumentProfile] = {}
         self._packaged_profile_ids = frozenset(packaged_profile_ids)
@@ -451,6 +471,7 @@ class InstrumentProfileDialog(ScreenBoundDialog):
         self.import_profile_button.clicked.connect(self._import_profile_file)
         self.export_profile_button.clicked.connect(self._export_profile_file)
         self.editor = InstrumentProfileEditor(profile)
+        self.editor.calibrationRequested.connect(self._open_calibration)
         self.editor.set_section(section)
         note = QLabel(
             "Laboratory tube spectra and synchrotron radiation are provided by CrIStMa. "
@@ -494,6 +515,49 @@ class InstrumentProfileDialog(ScreenBoundDialog):
         layout.addWidget(note)
         layout.addLayout(actions)
         self.set_profiles(profiles, current_profile=profile)
+
+    def _open_calibration(self):
+        if self._calibration_dialog is not None and self._calibration_dialog.isVisible():
+            self._calibration_dialog.raise_(); self._calibration_dialog.activateWindow(); return
+        if self._calibration_dialog is not None:
+            self._calibration_dialog.deleteLater()
+        try:
+            profile = self.editor.instrument_profile()
+        except ValueError as exc:
+            QMessageBox.warning(self, 'Instrument profile', str(exc)); return
+        from xrd_finder.ui.instrument_calibration_dialog import InstrumentCalibrationDialog
+        dialog = InstrumentCalibrationDialog(profile, pattern_path=self._calibration_pattern_path,
+            cif_path=self._calibration_cif_path, reference_library=self._calibration_reference_library, parent=self)
+        dialog.parametersReady.connect(self._accept_calibration)
+        self._calibration_dialog = dialog
+        dialog.show()
+
+    def _accept_calibration(self, draft):
+        from dataclasses import replace
+        names = {p.identity.name.casefold() for p in self._profiles.values()}
+        base = draft.identity.name; name = base; suffix = 2
+        while name.casefold() in names:
+            name = f'{base} ({suffix})'; suffix += 1
+        draft = replace(draft, identity=replace(draft.identity, name=name))
+        self._set_new_profile_draft(draft)
+        self.editor.set_section('identity')
+
+    def _defer_calibration_close(self):
+        dialog = self._calibration_dialog
+        if dialog is not None and dialog.busy:
+            if not self._close_after_calibration:
+                self._close_after_calibration = True
+                dialog.finished.connect(lambda *_: super(InstrumentProfileDialog, self).reject())
+            dialog.reject(); return True
+        if dialog is not None and dialog.isVisible(): dialog.reject()
+        return False
+
+    def reject(self):
+        if not self._defer_calibration_close(): super().reject()
+
+    def closeEvent(self, event):
+        if self._defer_calibration_close(): event.ignore()
+        else: super().closeEvent(event)
 
     def _export_profile_file(self) -> None:
         try:
@@ -561,6 +625,9 @@ class InstrumentProfileDialog(ScreenBoundDialog):
         draft = InstrumentProfile(
             identity=InstrumentIdentity(name="New instrument profile"),
         )
+        self._set_new_profile_draft(draft)
+
+    def _set_new_profile_draft(self, draft) -> None:
         key = f"__new__:{draft.profile_id}"
         self._profiles[key] = draft
         blocked = self.profile_selector.blockSignals(True)

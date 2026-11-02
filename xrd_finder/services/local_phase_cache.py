@@ -29,10 +29,10 @@ from xrd_finder.services.geometric_fingerprint import peak_geometric_hashes
 
 
 DEFAULT_CACHE_ROOT = default_phase_cache_root()
-DERIVED_CACHE_VERSION = 11
+DERIVED_CACHE_VERSION = 12
 # Old geometry may propose cards, but scoring must rebuild their intensity and
 # completeness contract from the local CIF before consuming the cached lines.
-REINDEXABLE_CACHE_VERSIONS = (9, 10)
+REINDEXABLE_CACHE_VERSIONS = (9, 10, 11)
 INCOMPLETE_SEARCH_MAX_AGE_SECONDS = 30 * 60
 TRANSFERABLE_LIBRARY_SOURCES = frozenset({"USER", "COD", "MP"})
 GEOMETRIC_FINGERPRINT_VERSION = 1
@@ -1565,7 +1565,7 @@ class LocalPhaseCache:
         support = self._stored_reference_support(entry)
         if support is None and legacy_geometry and entry.peaks_json:
             # Versions 9/10 stored Cu 5–120° geometry. It can retrieve cards
-            # without re-reading every CIF. Scoring still requires version 11
+            # without re-reading every CIF. Scoring still requires current
             # and validated native intensities, through the default contract.
             old_low, old_high = self._requested_d_range(CU_KA1_WAVELENGTH)
             support = {'d_min': old_low, 'd_max': old_high}
@@ -1722,11 +1722,27 @@ class LocalPhaseCache:
         except (OSError, ValueError, RuntimeError) as exc:
             # Preserve why a value is unavailable; never substitute a legacy
             # estimate or invalidate otherwise usable search/structural data.
-            return None, json.dumps({"signature": self.calculated_iic.signature,
+            try:fingerprint=hashlib.sha256(Path(path).read_bytes()).hexdigest()
+            except OSError:fingerprint=None
+            return None, json.dumps({"signature": self.calculated_iic.signature, "structure": fingerprint,
                                      "status": "unavailable", "reason": str(exc)}, sort_keys=True)
 
     def update_calculated_iic(self, source: str, entry_id: str, path: str | Path) -> CachedPhaseEntry | None:
+        path=Path(path)
+        try:fingerprint=hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:fingerprint=None
+        existing=self.get(source,entry_id)
+        try:record=json.loads(existing.iic_method) if existing else {}
+        except (ValueError,TypeError):record={}
+        if (existing is not None and str(path)==existing.cif_path
+                and record.get('structure')==fingerprint
+                and self.calculated_iic.value_current(existing.iic,existing.iic_method)):
+            return existing
         value, method = self._calculated_iic_record(Path(path))
+        try:after=hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:after=None
+        if after!=fingerprint:
+            raise ValueError('CIF changed during I/Ic calculation; retry the changed structure')
         with closing(self._connect()) as connection, connection:
             connection.execute(
                 "update phases set iic=?, iic_method=? where source=? and entry_id=? and cif_path=?",
@@ -1734,14 +1750,22 @@ class LocalPhaseCache:
             )
         return self.get(source, entry_id)
 
-    def outdated_iic_entries(self) -> list[CachedPhaseEntry]:
+    def outdated_iic_entries(self, keys=None) -> list[CachedPhaseEntry]:
+        if keys is not None:
+            keys=list(keys)
+        if keys is not None and not keys:
+            return []
         with closing(self._connect()) as connection:
-            rows = connection.execute(
-                "select source,entry_id,cif_path,iic,iic_method from phases p "
-                "where cif_path != '' and derived_version=? and exists("
-                "select 1 from phase_peaks pp where pp.source=p.source and pp.entry_id=p.entry_id)",
-                (DERIVED_CACHE_VERSION,),
-            ).fetchall()
+            rows=[]
+            batches=[None] if keys is None else [keys[offset:offset+400] for offset in range(0,len(keys),400)]
+            for batch in batches:
+                restriction='' if batch is None else ' and (source,entry_id) in ('+','.join('(?,?)' for _ in batch)+')'
+                rows.extend(connection.execute(
+                    "select source,entry_id,cif_path,iic,iic_method from phases p "
+                    "where cif_path != '' and derived_version=? and exists("
+                    "select 1 from phase_peaks pp where pp.source=p.source and pp.entry_id=p.entry_id)"+restriction,
+                    [DERIVED_CACHE_VERSION]+([] if batch is None else [value for key in batch for value in key]),
+                ).fetchall())
         return [CachedPhaseEntry(source=row['source'], entry_id=row['entry_id'],
                                  cif_path=row['cif_path'], iic_method=row['iic_method']) for row in rows
                 if not self.calculated_iic.value_current(row["iic"], row["iic_method"])]

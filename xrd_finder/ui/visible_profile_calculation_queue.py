@@ -6,7 +6,7 @@ from PySide6.QtCore import QObject, QTimer
 
 
 class VisibleProfileCalculationQueue(QObject):
-    """Run deferred visible-profile calculations one event-loop turn at a time."""
+    """Prepare project profiles one event-loop turn at a time, visible ones first."""
 
     def __init__(
         self,

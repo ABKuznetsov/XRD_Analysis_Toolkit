@@ -75,7 +75,11 @@ class SplitterLayoutState:
 
         help_button = QToolButton()
         help_button.setText("?")
-        help_button.setToolTip("Open quick help")
+        help_button.setObjectName('contextHelpButton')
+        help_button.setCheckable(True)
+        help_button.setAccessibleName('Context help')
+        help_button.setToolTip('Context help: turn on, then click a control to learn what it does. '
+                               'Esc or Help turns it off. Tutorials: Help → Learn Finder.')
         help_button.clicked.connect(help_callback)
 
         row.addWidget(pin_button)

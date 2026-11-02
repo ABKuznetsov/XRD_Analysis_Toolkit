@@ -35,7 +35,9 @@ from xrd_finder.services.calculated_pattern_service import (
     radiation_lines_from_wavelength,
 )
 from xrd_finder.services.element_masses import atomic_weight
-from xrd_finder.services.peak_cell_alignment import apply_peak_cell, estimate_peak_cell_alignment, improve_peak_cell_estimate
+from xrd_finder.services.peak_cell_alignment import apply_peak_cell
+from xrd_finder.services.refinement_budget import RefinementBudget
+from xrd_finder.services.scan_zero_alignment import PhasePositionInput, align_common_zero
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,8 +168,9 @@ class FinderService:
             (candidate, peaks)
             for candidate, _structure, peaks, _line_data in candidate_data
         ]
-        # Adding an impurity candidate must not move the instrument alignment
-        # already established by the primary phase.
+        # One shared deadline includes the initial seed and every accepted-cell
+        # proposal. A later valid phase may correct an unreliable first card.
+        position_budget = RefinementBudget(seconds=2.)
         primary_alignment_data = alignment_data[:1]
         global_zero = self.estimate_zero_shift(
             primary_alignment_data[0][1] if primary_alignment_data else [],
@@ -179,39 +182,18 @@ class FinderService:
                 primary_alignment_data, observed.peaks)
             if trusted_zero is not None:
                 global_zero = float(trusted_zero)
+        positions = align_common_zero([
+            PhasePositionInput(self._candidate_key(candidate),tuple(peaks),
+                structure.cell if structure is not None else candidate.initial_cell)
+            for candidate,structure,peaks,_line_data in candidate_data
+        ], observed.peaks,wavelength=context.primary_wavelength,zero_shift=global_zero,
+            refine_zero=finder_input.refine_scan_zero,budget=position_budget)
+        global_zero = positions.zero_shift_deg
         prepared_profiles = []
         for candidate_index, (candidate, structure, peaks, line_data) in enumerate(candidate_data):
-            cell_estimate = None
-            if structure is None and candidate.reference_lines is not None:
-                # The accepted-phase fast path has indexed d spacings but no CIF
-                # object. Estimate its metric without recalculating intensities.
-                alignment = estimate_peak_cell_alignment(
-                    self._shift_peaks(peaks, global_zero),
-                    observed.peaks,
-                    wavelength=context.primary_wavelength,
-                    zero_shift=global_zero,
-                    initial_cell=candidate.initial_cell,
-                    refine_scan_zero=candidate_index == 0 and finder_input.refine_scan_zero,
-                )
-                cell_estimate = alignment.estimate
-                if cell_estimate is not None:
-                    if candidate_index == 0 and finder_input.refine_scan_zero:
-                        global_zero = float(cell_estimate.zero_shift_deg)
-                    peaks = self._shift_peaks(list(alignment.peaks), -global_zero)
+            alignment = positions.alignments[self._candidate_key(candidate)]
+            cell_estimate = alignment.estimate
             if self._has_indexed_cell(structure, peaks):
-                cell_estimate = self.cell_parameter_estimator.estimate(
-                    initial_cell=structure.cell,
-                    calculated_peaks=peaks,
-                    observed_peaks=observed.peaks,
-                    wavelength=context.primary_wavelength,
-                    zero_shift_deg=global_zero,
-                    tolerance_deg=self.heuristics.cell_parameter_peak_tolerance,
-                    refine_zero_shift=candidate_index == 0 and finder_input.refine_scan_zero,
-                )
-                cell_estimate = improve_peak_cell_estimate(peaks, observed.peaks,
-                    baseline_estimate=cell_estimate, initial_cell=structure.cell,
-                    wavelength=context.primary_wavelength, zero_shift=global_zero,
-                    refine_scan_zero=candidate_index == 0 and finder_input.refine_scan_zero)
                 if cell_estimate is not None:
                     try:
                         if candidate.cif_path:
@@ -229,18 +211,20 @@ class FinderService:
                             if positioned is None:
                                 raise ValueError("Invalid estimated peak metric")
                             peaks = list(positioned)
-                        if candidate_index == 0 and finder_input.refine_scan_zero:
-                            global_zero = float(cell_estimate.zero_shift_deg)
                     except Exception:
                         cell_estimate = None
+            else:
+                # Cached reference lines already carry native intensities;
+                # only their common-zero/metric geometry changes here.
+                peaks = self._shift_peaks(list(alignment.peaks),-global_zero)
             # Indexed CIF phases keep their crystallographic metric. Applying one
             # scalar to every d-spacing makes distinct anisotropic cells converge
             # to the same apparent pattern. Their independent a/b/c/angles are
-            # estimated below from matched hkl values instead.
+            # estimated from matched hkl values in the bounded position step.
             cell_scale = (
                 1.0
                 if candidate.reference_lines is not None or self._has_indexed_cell(structure, peaks)
-                else self._estimate_phase_cell_scale(
+                else 1.0 if position_budget.expired else self._estimate_phase_cell_scale(
                     peaks,
                     observed.peak_positions,
                     global_zero,
@@ -520,6 +504,7 @@ class FinderService:
             sample_broadening_requested=finder_input.refine_sample_broadening,
             quantification_error='; '.join(quantification_errors),
             candidate_failures=candidate_failures,
+            position_refinement=positions.diagnostics,
         )
 
     @staticmethod

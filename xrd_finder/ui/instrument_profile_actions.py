@@ -202,12 +202,38 @@ class PhaseFinderInstrumentProfileActionsMixin:
 
     def _open_instrument_profile_editor(self, section: str = "identity") -> None:
         profile = self._active_instrument_profile()
+        pattern = self._active_pattern()
+        phase_ids = set(getattr(pattern, 'linked_phase_ids', ()))
+        phases = [phase for phase in self.project.phases if phase.id in phase_ids]
+        if not phases and len(self.project.phases) == 1:
+            phases = list(self.project.phases)
+        from xrd_finder.services.calibration_references import CalibrationReferenceLibrary, STRUCTURE_SOURCES
+        from xrd_finder.services.security_mode import offline_mode_enabled
+        online = not offline_mode_enabled()
+        options = replace(self._candidate_search_options(include_observed_peaks=False),
+            local_sources=sorted(STRUCTURE_SOURCES), required_elements=[], optional_elements=[], excluded_elements=[],
+            restrict_to_selected_elements=False, material_class_allowed=lambda _formula: True,
+            structural_data_enabled=True, reference_patterns_enabled=False, rruff_enabled=False, match_pdf2_enabled=False,
+            defer_candidate_preparation=True, observed_peak_positions=[],
+            cod_online_enabled=online and self._source_enabled('sources/cod_online', True),
+            materials_project_enabled=online and self._source_enabled('materials_project/enabled',False)
+                and bool(getattr(self.materials_project,'api_key','')),
+            aflow_enabled=online and self._source_enabled('sources/aflow',False),
+            oqmd_enabled=online and self._source_enabled('sources/oqmd',False))
+        references = CalibrationReferenceLibrary(self.local_phase_cache,
+            search_service=self.candidate_search_service, options=options, resolver=self._candidate_cif_path,
+            project_rows=[dict(Source='PROJECT', Entry=phase.id, Formula=phase.formula,
+                Phase=phase.name, _Path=phase.source_path) for phase in self.project.phases if phase.source_path])
         dialog = InstrumentProfileDialog(
             profile,
             profiles=self.instrument_profile_library.list_profiles(),
             packaged_profile_ids=PACKAGED_PROFILE_IDS,
             section=section,
             parent=self,
+            calibration_pattern_path=(getattr(pattern, 'source_path', '')
+                if getattr(pattern, 'input_kind', '') != 'peak_list' else ''),
+            calibration_cif_path=phases[0].source_path if len(phases) == 1 else '',
+            calibration_reference_library=references,
         )
         dialog.saveAsRequested.connect(self._save_instrument_profile_as_new)
         dialog.updateRequested.connect(self._update_instrument_profile)
@@ -239,7 +265,7 @@ class PhaseFinderInstrumentProfileActionsMixin:
 
     def _save_instrument_profile_as_new(self, profile: InstrumentProfile) -> None:
         existing = self._matching_saved_instrument_profile(profile)
-        if existing is not None:
+        if existing is not None and replace(profile, profile_id=existing.profile_id) == existing:
             self._selected_instrument_profile_id = existing.profile_id
             self.settings.setValue("instrument/active_profile_id", existing.profile_id)
             QMessageBox.information(
@@ -257,7 +283,7 @@ class PhaseFinderInstrumentProfileActionsMixin:
         saved = replace(profile, profile_id=f"instrument-{uuid4()}")
         try:
             self.instrument_profile_library.save_profile(saved)
-        except ValueError as exc:
+        except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "Instrument profile", str(exc))
             return
         self._selected_instrument_profile_id = saved.profile_id
@@ -349,13 +375,13 @@ class PhaseFinderInstrumentProfileActionsMixin:
         dialog.exec()
         return dialog.clickedButton() is apply
 
-    def _apply_instrument_profile(self, profile: InstrumentProfile, *, selected: bool) -> None:
+    def _apply_instrument_profile(self, profile: InstrumentProfile, *, selected: bool, refresh: bool = True) -> bool:
         patterns = self._patterns_for_instrument_profile(selected=selected)
         if not patterns:
-            return
+            return False
         if not self._confirm_instrument_profile_widths(profile, patterns):
             self._refresh_instrument_profile_selector()
-            return
+            return False
         queue = getattr(self, "visible_profile_calculation_queue", None)
         if queue is not None:
             queue.clear()
@@ -377,10 +403,13 @@ class PhaseFinderInstrumentProfileActionsMixin:
             state = getattr(self, "profile_states", {}).get(getattr(pattern, "id", ""), {})
             if isinstance(state, dict):
                 state.pop("result_snapshot", None)
-        self._invalidate_match_profile_cache()
+            self._invalidate_match_profile_cache(pattern.id)
         self.project.touch()
         self.project_changed.emit()
         self._refresh_instrument_profile_selector()
         self._refresh_observed_pattern_plot()
-        self._recalculate_match_profile()
-        self._rerank_loaded_candidates_for_instrument_change()
+        if refresh:
+            self._recalculate_match_profile()
+            self._rerank_loaded_candidates_for_instrument_change()
+        self._schedule_project_profiles()
+        return True

@@ -364,6 +364,11 @@ class PhaseFinderSelectedPhasesActionsMixin:
             ])
         self.match_table.set_rows(rows)
         for row, candidate in enumerate(self.match_candidates):
+            le_bail = candidate.get('_LeBailMessage', '')
+            if le_bail:
+                item = self.match_table.item(row, 2)
+                if item is not None:
+                    item.setToolTip(le_bail)
             reason = candidate.get('_QuantificationError', '')
             if reason:
                 item = self.match_table.item(row, 3)

@@ -152,7 +152,8 @@ class PhaseFinderCandidateSearchActionsMixin:
             return False
         started = time.perf_counter()
         self._set_candidate_rows(rows)
-        self.candidate_search_service.queue_iic_updates(rows, session_token=search_token)
+        from xrd_finder.ui.iic_cache_job import schedule_iic_cache_refresh
+        schedule_iic_cache_refresh(self,rows)
         elapsed = time.perf_counter() - started
         if count > 0 and elapsed > 0.0:
             measured = elapsed / count
@@ -288,7 +289,8 @@ class PhaseFinderCandidateSearchActionsMixin:
         )
         self.cod_server_alert.connect(self._set_candidate_search_notice)
         self.candidate_prepared.connect(self._refresh_calculated_iic)
-        QTimer.singleShot(0, self.candidate_search_service.queue_iic_updates)
+        from xrd_finder.ui.iic_cache_job import schedule_iic_cache_refresh
+        schedule_iic_cache_refresh(self)
 
     def _selected_peak_candidate_prepared(self, notice) -> None:
         if getattr(self, '_search_mode', 'search') != 'peaks':
@@ -317,7 +319,6 @@ class PhaseFinderCandidateSearchActionsMixin:
                 if (self._candidate_source(candidate), candidate.get("Entry", "")) == (entry.source, entry.entry_id):
                     changed = self._apply_cached_iic(candidate, entry) or changed
         if changed:
-            self._gain_preparation_revision = int(getattr(self, "_gain_preparation_revision", 0)) + 1
             self._update_match_table()
 
     @staticmethod
@@ -438,6 +439,14 @@ class PhaseFinderCandidateSearchActionsMixin:
             controller.mark_search_complete(search_token, error=error)
 
     def _auto_search_candidates(self) -> None:
+        if self._active_pattern() is None:
+            self.finder_top_toolbar.set_search_mode(self._search_mode)
+            QMessageBox.information(self, 'Identify phases', 'Import or select an XRD pattern first.')
+            return
+        from xrd_finder.ui.auto_search_setup import show_auto_search_setup
+        show_auto_search_setup(self)
+
+    def _start_auto_search(self) -> None:
         if getattr(self._active_pattern(), 'input_kind', '') == 'peak_list':
             self._search_selected_peaks()
             return
@@ -597,6 +606,8 @@ class PhaseFinderCandidateSearchActionsMixin:
                 if not self.match_candidates:
                     self._auto_search_ranked_rows = [list(row) for row in ranked_rows]
                     self._auto_search_scored_keys = set(ranking_result.scored_keys)
+                    from xrd_finder.io.score_cache import save_match_scores
+                    save_match_scores(self,ranking_result)
                 if getattr(self, "scoring_status_label", None) is not None:
                     self.scoring_status_label.setText(
                         f"{self._scoring_source_status_text()} | "

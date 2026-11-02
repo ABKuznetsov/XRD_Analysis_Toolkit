@@ -7,6 +7,13 @@ _PIXEL = re.compile('(?<![\\w.])([0-9]+(?:\\.[0-9]+)?)px')
 def scaled_style(style, factor):
     return _PIXEL.sub(lambda match: f'{(max(1, round(float(match.group(1)) * factor)) if float(match.group(1)) else 0)}px', style)
 
+def independent_ui_scale(widget):
+    while widget is not None:
+        if widget.property('independentUiScale'):
+            return True
+        widget=widget.parentWidget()
+    return False
+
 class UiDensity:
 
     def __init__(self):
@@ -24,6 +31,8 @@ class UiDensity:
         plot = getattr(root, 'match_plot', None)
         widgets = [root, *root.findChildren(QWidget)]
         for widget in widgets:
+            if independent_ui_scale(widget):
+                continue
             if plot is not None and (widget is plot or plot.isAncestorOf(widget)):
                 continue
             style = widget.styleSheet()
@@ -66,6 +75,8 @@ class UiDensity:
         managed = {getattr(root, name, None) for name in ('match_plot', 'plot_canvas', 'cursor_status_panel')}
         skipped = {widget.layout() for widget in managed if widget is not None and widget.layout() is not None}
         for layout in root.findChildren(QLayout):
+            if independent_ui_scale(layout.parentWidget()):
+                continue
             if layout in skipped:
                 continue
             if isinstance(layout, (QGridLayout, QFormLayout)):

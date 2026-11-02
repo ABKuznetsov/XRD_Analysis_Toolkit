@@ -6,7 +6,7 @@
       "app_id": "xrd_finder",
       "name": "XRD Phase Finder",
       "description": "Identify and interpret crystalline phases in powder X-ray diffraction patterns.",
-      "version": "1.6.7",
+      "version": "1.6.9",
       "icon": "icon.png",
       "announcement_revision": 0,
       "platforms": [
@@ -20,13 +20,13 @@
       ],
       "update_manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/launcher/updates/xrd_finder.json",
       "installer": {
-        "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.7/XRD_Phase_Finder_Setup_v1_6_7.exe",
-        "filename": "XRD_Phase_Finder_Setup_v1_6_7.exe",
-        "size_bytes": 5459614,
-        "sha256": "4dfd063556f55478c9e215480e46a1fe4ccb8673e9f166e0fb089374f34ec3f7"
+        "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_Setup_v1_6_9.exe",
+        "filename": "XRD_Phase_Finder_Setup_v1_6_9.exe",
+        "size_bytes": 5522549,
+        "sha256": "791573e089f3012f8371716f969b3cd783ff7bb010bee888dbdc26138300e078"
       },
       "platform_versions": {
-        "windows": "1.6.7",
+        "windows": "1.6.9",
         "macos": "1.6.7",
         "linux": "1.6.7"
       }

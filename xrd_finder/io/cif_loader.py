@@ -415,6 +415,8 @@ def _read_structure_from_cif(path: Path) -> Structure:
     structure = Structure.create(name=str(name), source_path=str(path), origin="original")
     structure.formula = _normalize_formula(str(formula))
     structure.metadata.update(metadata)
+    if crystal.metadata.get('source_representation'):
+        structure.metadata['source_representation']=crystal.metadata['source_representation']
     structure.space_group = (
         _cif_value(block, "_symmetry_space_group_name_H-M", "_space_group_name_H-M_alt")
         if block is not None

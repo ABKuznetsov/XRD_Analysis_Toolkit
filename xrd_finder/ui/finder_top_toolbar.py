@@ -227,6 +227,7 @@ class FinderTopToolBar(QWidget):
                 'QWidget#finderTopToolBar QToolButton:checked { background: #176b5b; color: #ffffff; border-color: #37b89c; }'
                 'QWidget#finderTopToolBar QToolButton:focus { border-color: #21b99a; }'
                 'QWidget#finderTopToolBar QToolButton#editLayoutButton:checked { background: #a62e45; color: #ffffff; border-color: #d05b70; }'
+                'QWidget#finderTopToolBar QToolButton#contextHelpButton:checked { background: #7c3aed; color: #ffffff; border-color: #a78bfa; }'
                 f'QWidget#finderTopToolBar QToolButton:disabled {{ background: transparent; color: {muted}; border-color: transparent; }}'
                 'QWidget#finderTopToolBar QToolButton::menu-indicator { image: none; width: 0px; }'
                 + search_mode_button_style('QWidget#finderTopToolBar QToolButton', checked=True)
@@ -240,6 +241,7 @@ class FinderTopToolBar(QWidget):
             for button in self._buttons:
                 mode = button.property('searchMode')
                 color = SEARCH_MODE_COLORS[mode][2] if mode in SEARCH_MODE_COLORS and button.isChecked() else text
+                if button.objectName()=='contextHelpButton' and button.isChecked():color='#ffffff'
                 button.setIcon(toolbar_icon(button.property('toolbarIcon'), color, muted))
             self._sync_overflow_actions()
         finally:

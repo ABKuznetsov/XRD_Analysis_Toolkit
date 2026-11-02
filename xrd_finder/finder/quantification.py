@@ -9,9 +9,9 @@ from pathlib import Path
 
 import numpy as np
 from scipy.optimize import nnls
-import cristma
 
 from xrd_finder.io.cif_loader import create_phase_from_cif
+from xrd_finder.io.native_cif_session import read_native_cif
 from xrd_finder.services.cristma_powder_adapter import CristmaPowderAdapter
 from xrd_finder.services.calculated_pattern_service import HKLPeak
 from xrd_finder.finder.sample_broadening import broaden_profile, fit_sample_broadening
@@ -83,7 +83,7 @@ def unit_cell_mass(structure) -> float:
 def _cif_metadata(path: str, modified_ns: int, size: int) -> tuple[float,float]:
     # Resolve exactly the native setting used for diffraction; a CIF can omit
     # the explicit symmetry-operation loop and still have a nontrivial group.
-    read_result=cristma.read(path)
+    read_result=read_native_cif(path)
     # Collapsing explicitly repeated symmetry mates preserves the occupied
     # structure; it is not parser recovery or a loss of physical metadata.
     if any(

@@ -281,7 +281,14 @@ class PhaseFinderObservedPatternActionsMixin:
             self._multi_legend_layout_pending = False
             self._fit_multi_pattern_legends_to_canvas()
 
-        QTimer.singleShot(0, finish)
+        timer = getattr(self, '_multi_legend_layout_timer', None)
+        if timer is None:
+            # A global singleShot retains the Python window after Qt has
+            # destroyed its ViewBox. An owned timer dies with the window.
+            timer = self._multi_legend_layout_timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(finish)
+        timer.start(0)
 
     def _fit_multi_pattern_legends_to_canvas(self) -> None:
         if not getattr(self, "show_all_selected_patterns", False):

@@ -142,3 +142,4 @@ class FinderResult:
     sample_broadening_requested: bool = False
     quantification_error: str = ''
     candidate_failures: list[FinderCandidateFailure] = field(default_factory=list)
+    position_refinement: dict = field(default_factory=dict)

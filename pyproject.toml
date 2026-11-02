@@ -1,11 +1,11 @@
 [project]
 name = "xrd-phase-finder"
-version = "1.6.7"
+version = "1.6.9"
 description = "Cross-platform XRD phase finder for powder diffraction search-match workflows."
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "certifi",
-    "cristma==0.1.0b13",
+    "cristma==0.1.0b14",
     "numpy",
     "packaging",
     "pyqtgraph==0.14.0",

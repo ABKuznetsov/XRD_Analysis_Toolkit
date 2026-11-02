@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from time import monotonic
 
 import numpy as np
 
@@ -39,15 +40,18 @@ class ObservedSearchResult:
     corrected: np.ndarray
     records: list[ObservedLineRecord]
     preprocessing: AutoPreprocessingResult | None
+    timings: dict[str, float] = field(default_factory=dict)
 
 
 def prepare_observed_search(inputs: ObservedSearchInput, *, cancelled=lambda: False,
-                            refine_peaks: bool = True) -> ObservedSearchResult:
+                            refine_peaks: bool = True, progress=None) -> ObservedSearchResult:
     def check_cancelled():
         if cancelled():
             raise ObservedSearchCancelled()
 
     check_cancelled()
+    started = monotonic()
+    if progress:progress('Preparing background...',0,2)
     x, y = inputs.observed[:, 0], inputs.observed[:, 1]
     preprocessing = None
     if inputs.preprocess_auto:
@@ -60,6 +64,8 @@ def prepare_observed_search(inputs: ObservedSearchInput, *, cancelled=lambda: Fa
     else:
         corrected = y - estimate_background(x, y, degree=10, method='auto')
     check_cancelled()
+    background_seconds = monotonic()-started
+    if progress:progress('Measuring experimental peaks...',1,2)
     # Position selection can reuse the radiation-aware detector without paying
     # for individual profile fits. Existing Match/Gain preparation is unchanged.
     options = {} if refine_peaks else {'refine_peak': lambda *_args, **_kwargs: None}
@@ -69,4 +75,8 @@ def prepare_observed_search(inputs: ObservedSearchInput, *, cancelled=lambda: Fa
         **options,
     )
     check_cancelled()
-    return ObservedSearchResult(x, corrected, records, preprocessing)
+    total_seconds = monotonic()-started
+    if progress:progress('Experimental peaks ready',2,2)
+    return ObservedSearchResult(x, corrected, records, preprocessing, dict(
+        background_seconds=background_seconds, peaks_seconds=total_seconds-background_seconds,
+        total_seconds=total_seconds))

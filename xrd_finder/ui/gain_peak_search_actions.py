@@ -18,6 +18,8 @@ def clear_gain_column(rows):
 
 
 def build_window_peak_gain_context(window):
+    snapshot_reader = getattr(window, '_gain_accepted_profile_snapshot', None)
+    accepted_fit = snapshot_reader() if snapshot_reader is not None else None
     adapter = getattr(window, '_gain_observation', None)
     if adapter is not None:
         observed, saved_background, finder_observed, background_removed = adapter()
@@ -32,18 +34,25 @@ def build_window_peak_gain_context(window):
             finder_observed = window._pattern_finder_observed_data(pattern)
             if finder_observed is not None and len(finder_observed):
                 observed = finder_observed
-    if observed is None or not len(observed):
+    if accepted_fit is None and (observed is None or not len(observed)):
         window._last_gain_debug = 'Gain: no observed data'
         return None
-    x = np.asarray(observed[:, 0], dtype=float)
-    y = np.asarray(observed[:, 1], dtype=float)
-    if saved_background is not None:
-        background = np.interp(x, saved_background[:, 0], saved_background[:, 1])
-        signal = y-background
-    elif getattr(window, '_scoring_source', 'Auto') == 'Auto' or background_removed:
-        signal = y.copy()
+    if accepted_fit is not None:
+        # Auto capture carries the original counts alongside a coherent fitted
+        # snapshot. Its target is already background-corrected; using the raw
+        # counts here would give Gain different peak areas from accepted fitting.
+        x = np.asarray(accepted_fit[0], dtype=float)
+        signal = np.asarray(accepted_fit[1], dtype=float)
     else:
-        signal = y-np.asarray(window._estimate_background(x, y), dtype=float)
+        x = np.asarray(observed[:, 0], dtype=float)
+        y = np.asarray(observed[:, 1], dtype=float)
+        if saved_background is not None:
+            background = np.interp(x, saved_background[:, 0], saved_background[:, 1])
+            signal = y-background
+        elif getattr(window, '_scoring_source', 'Auto') == 'Auto' or background_removed:
+            signal = y.copy()
+        else:
+            signal = y-np.asarray(window._estimate_background(x, y), dtype=float)
     if not np.all(np.isfinite(x)) or np.any(np.diff(x) <= 0) or not np.any(np.isfinite(signal)):
         window._last_gain_debug = 'Gain: invalid experimental grid'
         return None

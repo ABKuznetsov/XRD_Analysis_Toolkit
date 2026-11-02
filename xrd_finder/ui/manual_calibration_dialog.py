@@ -24,7 +24,7 @@ class ManualCalibrationDialog(ScreenBoundDialog):
         hint.setWordWrap(True)
         layout.addWidget(hint)
         self.correction = QDoubleSpinBox()
-        self.correction.setDecimals(4)
+        self.correction.setDecimals(3)
         self.correction.setRange(-125., 125.)
         self.correction.setSingleStep(.01)
         self.correction.setSuffix(' °')
