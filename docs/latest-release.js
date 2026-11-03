@@ -1,6 +1,6 @@
 (function(){
  'use strict';
- const endpoint='https://api.github.com/repos/ABKuznetsov/XRD_Analysis_Toolkit/releases/latest';
+ const endpoint='https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/launcher/updates/xrd_finder.json';
  const classifiers={mac:name=>/\.pkg$/i.test(name),windows:name=>/\.exe$/i.test(name),linux:name=>/amd64\.deb$/i.test(name)};
  function apply(assets){
   for(const link of document.querySelectorAll('[data-platform],a[data-eid^="installer-link-"]')){
@@ -16,6 +16,6 @@
  let assets=[];
  new MutationObserver(()=>{if(assets.length)apply(assets)}).observe(document.body,{childList:true,subtree:true});
  fetch(endpoint,{signal:controller.signal,headers:{Accept:'application/vnd.github+json'},credentials:'omit',referrerPolicy:'no-referrer'})
-  .then(response=>response.ok?response.json():null).then(release=>{assets=release?.assets||[];apply(assets)})
+  .then(response=>response.ok?response.json():null).then(release=>{assets=(release?.assets||[]).map(asset=>({...asset,browser_download_url:asset.url}));apply(assets)})
   .catch(()=>{}).finally(()=>clearTimeout(timer));
 })();

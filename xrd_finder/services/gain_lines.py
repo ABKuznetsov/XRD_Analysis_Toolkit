@@ -19,6 +19,12 @@ def candidate_cif_fingerprint(path: Path) -> tuple[str, bytes]:
 class GainLineMixin:
     """Existing local diffraction-line resolution shared with the Gain worker."""
 
+    def _candidate_reference_range(self):
+        from xrd_finder.services.reference_preparation import reference_scan_range
+        inputs = getattr(self,'inputs',None)
+        observed = getattr(inputs,'observed',None) if inputs is not None else (self._active_observed_data() if hasattr(self,'_active_observed_data') else None)
+        return reference_scan_range(observed) or (5.,120.)
+
     def _structure_cell_signature(self, structure) -> tuple[object, ...] | None:
         if structure is None:
             return None
@@ -84,10 +90,12 @@ class GainLineMixin:
         instrument = (self._gain_instrument_profile() if hasattr(self, "_gain_instrument_profile")
                       else self._instrument_profile_for_pattern(self._active_pattern()))
         wavelength = instrument.radiation.components[0].wavelength_angstrom
-        if not self.local_phase_cache.reference_range_covered(source, entry_id, wavelength=wavelength):
+        low,high = self._candidate_reference_range()
+        if not self.local_phase_cache.reference_range_covered(source,entry_id,wavelength=wavelength,
+                two_theta_min=low,two_theta_max=high):
             return []
         cache_key = (source, entry_id, entry.derived_version,
-            hashlib.sha256(entry.peaks_json.encode('utf-8')).digest(), instrument.calculation_key())
+            hashlib.sha256(entry.peaks_json.encode('utf-8')).digest(),instrument.calculation_key(),low,high)
         cached = self._candidate_json_peak_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -97,7 +105,7 @@ class GainLineMixin:
                 records=json.loads(entry.peaks_json))
         except (ValueError,TypeError):
             return []
-        context = CalculationContext(wavelength,wavelength,.18,5.,120.,(0,0.,0.,0),
+        context = CalculationContext(wavelength,wavelength,.18,low,high,(0,0.,0.,0),
             include_kalpha2=False,instrument_profile_key=instrument.calculation_key())
         peaks = self.finder_service.profile_calculator.peaks_from_reference_lines(
             lines,context,instrument_profile=instrument)
@@ -171,7 +179,8 @@ class GainLineMixin:
         instrument = (self._gain_instrument_profile() if hasattr(self, "_gain_instrument_profile")
                       else self._instrument_profile_for_pattern(self._active_pattern()))
         primary_wavelength = float(instrument.radiation.components[0].wavelength_angstrom)
-        resolution = provider.resolve(candidate, wavelength=primary_wavelength)
+        low,high = self._candidate_reference_range()
+        resolution = provider.resolve(candidate,wavelength=primary_wavelength,two_theta_min=low,two_theta_max=high)
         if resolution.line_set is None:
             return []
         wavelength = float(self._active_wavelength())
@@ -179,8 +188,8 @@ class GainLineMixin:
             wavelength=wavelength,
             primary_wavelength=float(primary_wavelength),
             fwhm=0.18,
-            two_theta_min=5.0,
-            two_theta_max=120.0,
+            two_theta_min=low,
+            two_theta_max=high,
             x_grid_fingerprint=(0, 0.0, 0.0, 0),
             include_kalpha2=False,
         )

@@ -13,6 +13,9 @@ def is_dark_theme(widget: QWidget) -> bool:
     return palette.color(QPalette.ColorRole.Window).lightness() < 128
 
 
+FINDER_BRAND_BLUE = '#2c6492'
+
+
 SEMANTIC_COLORS = dict(match='#e5f0fc', gain='#e2f4eb', warning='#fff0cf',
                        error='#fce8ed', semantic_text='#202124')
 

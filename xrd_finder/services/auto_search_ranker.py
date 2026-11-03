@@ -269,12 +269,14 @@ def create_local_reference_peak_loader(
                                if instrument_profile is not None else primary_wavelength)
         # The worker expands the d range before scoring, including old local
         # cards. Returning an incomplete but READY Cu line set is not safe.
+        reference_min,reference_max = two_theta_range if two_theta_range is not None else (5.,120.)
         if prepared_only:
-            low, high = cache._requested_d_range(requested_wavelength)
+            low, high = cache._requested_d_range(requested_wavelength,reference_min,reference_max)
             support = cache._reference_prefix_entry(source, entry_id, entry, connection=connection)
             if not cache._entry_covers_reference_range(support, low, high, False):
                 return []
-        elif not cache.ensure_reference_range(source, entry_id, wavelength=requested_wavelength):
+        elif not cache.ensure_reference_range(source,entry_id,wavelength=requested_wavelength,
+                two_theta_min=reference_min,two_theta_max=reference_max):
             return []
         columns = ("d,two_theta,intensity,norm_intensity,raw_intensity,h,k,l,intrinsic_intensity,intensity_origin"
                    if match_only else "*")

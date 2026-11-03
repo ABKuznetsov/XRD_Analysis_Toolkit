@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from xrd_finder.ui.theme import glass_button_style, is_dark_theme, theme_colors
+from xrd_finder.services.ccdc_service import CCDC_WEB_ENABLED, CCDC_WEB_UNAVAILABLE_MESSAGE
 
 
 class DatabasePanelWidget(QWidget):
@@ -26,10 +27,15 @@ class DatabasePanelWidget(QWidget):
     rebuildUserIndexRequested = Signal()
     rebuildLocalPeakIndexRequested = Signal()
     auditLocalCompositionRequested = Signal()
+    exportPreparedLibraryRequested = Signal()
+    importPreparedLibraryRequested = Signal()
     clearUserLibraryRequested = Signal()
     indexCodFolderRequested = Signal()
     indexCodZipRequested = Signal()
     downloadCodArchiveRequested = Signal()
+    prepareCodInorganicRequested = Signal()
+    ccdcAccountRequested = Signal()
+    ccdcPortalRequested = Signal()
     exportCodRequested = Signal()
     importCodRequested = Signal()
     clearCodRequested = Signal()
@@ -187,6 +193,8 @@ class DatabasePanelWidget(QWidget):
                 [
                     ("Check CIF composition", self.auditLocalCompositionRequested),
                     ("Recalculate CIF patterns", self.rebuildLocalPeakIndexRequested),
+                    ("Export prepared library…", self.exportPreparedLibraryRequested),
+                    ("Import prepared library…", self.importPreparedLibraryRequested),
                 ],
             )
         )
@@ -197,12 +205,21 @@ class DatabasePanelWidget(QWidget):
                     ("Update from folder", self.indexCodFolderRequested),
                     ("Update from ZIP", self.indexCodZipRequested),
                     ("Download archive", self.downloadCodArchiveRequested),
+                    ("Download inorganic COD…", self.prepareCodInorganicRequested),
                     ("Export", self.exportCodRequested),
                     ("Import", self.importCodRequested),
                     ("Clear", self.clearCodRequested),
                 ],
             )
         )
+        ccdc_row = self._management_row('CCDC Access Structures' if CCDC_WEB_ENABLED else 'CCDC Access Structures — temporarily unavailable',[
+            ('Sign in to CCDC…',self.ccdcAccountRequested),
+            ('Open CCDC',self.ccdcPortalRequested),
+        ])
+        ccdc_row.setToolTip(CCDC_WEB_UNAVAILABLE_MESSAGE if not CCDC_WEB_ENABLED else '')
+        for button in ccdc_row.findChildren(QPushButton):
+            button.setEnabled(CCDC_WEB_ENABLED)
+        layout.addWidget(ccdc_row)
         layout.addWidget(
             self._management_row(
                 "RRUFF powder",

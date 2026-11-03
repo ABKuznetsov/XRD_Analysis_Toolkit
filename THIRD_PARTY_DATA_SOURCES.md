@@ -10,6 +10,8 @@ The Crystallography Open Database is an open collection of crystallographic stru
 
 XRD Phase Finder can search COD online, download individual CIF entries selected by the user, and index a local COD CIF collection when the user provides one. COD data and metadata belong to COD and its contributors. Users should follow the COD terms, citation guidance and attribution requirements when using COD-derived data in publications.
 
+Finder also includes an identifier-only inorganic selection (77,812 COD identifiers, selection date 2026-06-02) based on the COD inorganic collection listed on the [Match! downloads page](https://www.crystalimpact.com/match/download.htm). The bundled list contains no structures or calculated patterns. Original CIF files are downloaded from COD only when the user starts preparation.
+
 Project website: https://www.crystallography.net/cod/
 
 ## Materials Project

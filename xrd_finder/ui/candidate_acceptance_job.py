@@ -30,9 +30,12 @@ def prepare_acceptance(inputs, candidate, path, evidence):
     _phase, structure = create_phase_from_cif(path)
     if inputs.cache_root and candidate.get('Source') in {'COD','MP','USER','CCDC','OQMD','AFLOW'}:
         from xrd_finder.services.local_phase_cache import LocalPhaseCache
+        from xrd_finder.services.reference_preparation import reference_scan_range
+        low,high = reference_scan_range(inputs.observed) or (5.,120.)
         LocalPhaseCache(inputs.cache_root).ensure_reference_range(
             candidate['Source'], candidate.get('Entry',''),
-            wavelength=inputs.instrument_profile.radiation.components[0].wavelength_angstrom)
+            wavelength=inputs.instrument_profile.radiation.components[0].wavelength_angstrom,
+            two_theta_min=low,two_theta_max=high)
     if evidence is None and inputs.candidates:
         from xrd_finder.services.gain_calculation import GainComputation
         from xrd_finder.ui.gain_scoring import GainStage, build_gain_indexed_evidence

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.10 - 2026-11-03
+
+- Download and prepare the inorganic COD selection with separate download/calculation progress and time estimates.
+- Reuse downloaded CIFs and compatible prepared reflections instead of repeating completed work.
+- Export and import prepared libraries as .xpflib archives for transfer between laboratory computers.
+- Check reference coverage against the measured scan range to avoid unnecessary recalculation.
+- Use blue toolbar frames matching the Finder icon.
+- Prevent common phase-legend layout from repeatedly scheduling itself during its own range and resize updates.
+- Temporarily disable the CCDC web-search controls; manually downloaded CIF files can still be imported.
+
 ## 1.6.9 - 2026-11-02
 
 - Contextual Help explains controls directly in the main window.

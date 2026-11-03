@@ -1223,9 +1223,11 @@ class CandidateSearchService(CandidateRowFormatter):
         session_token: int | None = None,
         cancelled: Callable[[], bool] | None = None,
         wavelength: float = CU_KA1_WAVELENGTH,
+        two_theta_range: tuple[float,float] | None = None,
     ) -> int:
         """Queue CIF preparation only after a broad manual search is accepted."""
 
+        reference_low,reference_high = two_theta_range or (5.,120.)
         queued = 0
         seen: set[tuple[str, str]] = set()
         normalized_rows = [normalize_candidate_row(row) for row in rows]
@@ -1248,17 +1250,17 @@ class CandidateSearchService(CandidateRowFormatter):
             seen.add(key)
             cached = states.get(key)
             if cached is not None and cached.ready and self.local_phase_cache.reference_range_covered(
-                    source, entry_id, wavelength=wavelength):
+                    source,entry_id,wavelength=wavelength,two_theta_min=reference_low,two_theta_max=reference_high):
                 continue
             cached_path = Path(cached.cif_path) if cached is not None and cached.cif_path else None
             existing_path = cached_path if cached_path is not None and cached_path.exists() else None
             if cached is not None and not self.local_phase_cache.reference_range_covered(
-                    source, entry_id, wavelength=wavelength):
+                    source,entry_id,wavelength=wavelength,two_theta_min=reference_low,two_theta_max=reference_high):
                 existing = self.local_phase_cache.cif_path(source,entry_id)
                 if existing is not None:
                     queued += int(self._queue_candidate_preparation(source=source,entry_id=entry_id,
                         fetch=lambda: None,existing_path=existing,session_token=session_token,
-                        reference_wavelength=wavelength))
+                        reference_wavelength=wavelength,reference_two_theta_range=two_theta_range))
                     continue
             formula = normalized[2].strip()
             name = normalized[3].strip()
@@ -1281,7 +1283,7 @@ class CandidateSearchService(CandidateRowFormatter):
                     fallback=fallback,
                     session_token=session_token,
                     cached_states=states,
-                    reference_wavelength=wavelength,
+                    reference_wavelength=wavelength,reference_two_theta_range=two_theta_range,
                 ))
             elif source == "MP" and self.materials_project is not None:
                 target_dir = self.local_phase_cache.root / "materials_project_cif"
@@ -1295,7 +1297,7 @@ class CandidateSearchService(CandidateRowFormatter):
                     existing_path=target if target.is_file() else existing_path,
                     session_token=session_token,
                     cached_states=states,
-                    reference_wavelength=wavelength,
+                    reference_wavelength=wavelength,reference_two_theta_range=two_theta_range,
                 ))
             elif source in {"AFLOW", "OQMD"}:
                 service = self.aflow if source == "AFLOW" else self.oqmd
@@ -1316,7 +1318,7 @@ class CandidateSearchService(CandidateRowFormatter):
                     existing_path=existing_path,
                     session_token=session_token,
                     cached_states=states,
-                    reference_wavelength=wavelength,
+                    reference_wavelength=wavelength,reference_two_theta_range=two_theta_range,
                 ))
         return queued
 
@@ -1426,13 +1428,16 @@ class CandidateSearchService(CandidateRowFormatter):
         session_token: int | None = None,
         cached_states: dict[tuple[str, str], CachedPreparationState] | None = None,
         reference_wavelength: float = CU_KA1_WAVELENGTH,
+        reference_two_theta_range: tuple[float,float] | None = None,
     ) -> bool:
+        reference_low,reference_high = reference_two_theta_range or (5.,120.)
         cached = self.local_phase_cache.get(source, entry_id)
         if (
             cached is not None
             and int(getattr(cached, "derived_version", 0)) == DERIVED_CACHE_VERSION
             and self.local_phase_cache.peak_records(source, entry_id)
-            and self.local_phase_cache.reference_range_covered(source, entry_id, wavelength=reference_wavelength)
+            and self.local_phase_cache.reference_range_covered(source,entry_id,wavelength=reference_wavelength,
+                two_theta_min=reference_low,two_theta_max=reference_high)
         ):
             return False
         if existing_path is None and cached is not None and cached.cif_path:
@@ -1449,7 +1454,7 @@ class CandidateSearchService(CandidateRowFormatter):
                     source=source,
                     entry_id=entry_id,
                     fallback=fallback,
-                    reference_wavelength=reference_wavelength,
+                    reference_wavelength=reference_wavelength,reference_two_theta_range=reference_two_theta_range,
                 ),
             ),
             session_token=session_token,
@@ -1463,13 +1468,14 @@ class CandidateSearchService(CandidateRowFormatter):
         entry_id: str,
         fallback: CodEntry | None = None,
         reference_wavelength: float = CU_KA1_WAVELENGTH,
+        reference_two_theta_range: tuple[float,float] | None = None,
     ):
         self.local_phase_cache.index_cif(
             path,
             source=source,
             entry_id=entry_id,
             fallback=fallback,
-            reference_range=(reference_wavelength, 5., 120.),
+            reference_range=(reference_wavelength,*(reference_two_theta_range or (5.,120.))),
         )
         cached = self.local_phase_cache.get(source, entry_id)
         if (

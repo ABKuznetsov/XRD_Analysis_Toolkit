@@ -50,6 +50,7 @@ def _run_gui() -> int:
     args = parser.parse_args()
 
     configure_app_settings_storage()
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     with trace_operation('startup.qt', slow_ms=0):
         app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("XRD Phase Finder")

@@ -1,21 +1,21 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.6.9",
+  "version": "1.6.10",
   "channel": "stable",
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
-  "published_at": "2026-11-02",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_Setup_v1_6_9.exe",
-  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.9",
+  "published_at": "2026-11-03",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.10/XRD_Phase_Finder_Setup_v1_6_10.exe",
+  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.10",
   "assets": [
     {
-      "name": "XRD_Phase_Finder_Setup_v1_6_9.exe",
+      "name": "XRD_Phase_Finder_Setup_v1_6_10.exe",
       "type": "installer",
       "platform": "windows",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_Setup_v1_6_9.exe",
-      "sha256": "791573e089f3012f8371716f969b3cd783ff7bb010bee888dbdc26138300e078",
-      "size_bytes": 5522549
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.10/XRD_Phase_Finder_Setup_v1_6_10.exe",
+      "sha256": "344b38454f78c2f642b61285aeec642331e1e468b595c6fe09a42f6049c87771",
+      "size_bytes": 5578276
     },
     {
       "name": "XRD_Phase_Finder_macOS_1.6.9.pkg",
@@ -35,25 +35,25 @@
     }
   ],
   "summary": [
-    "Contextual Help explains controls directly in the main window.",
-    "Guided workflows, a quick overview and an optional isolated training example are available from Help.",
-    "Search setup includes instrument selection and optional Le Bail adjustment.",
-    "Instrumental broadening can be calibrated from a standard measurement and CIF.",
-    "XPFF projects retain validated profiles, assignments and search results for faster reopening.",
-    "Background reference preparation and relative workspace sizing have been improved."
+    "Download and prepare the inorganic COD selection with separate download/calculation progress and time estimates.",
+    "Reuse downloaded CIFs and compatible prepared reflections instead of repeating completed work.",
+    "Export and import prepared libraries as .xpflib archives for transfer between laboratory computers.",
+    "Check reference coverage against the measured scan range to avoid unnecessary recalculation.",
+    "Use blue toolbar frames matching the Finder icon.",
+    "Temporarily disable the CCDC web-search controls; manually downloaded CIF files can still be imported."
   ],
-  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_Setup_v1_6_9.exe",
-  "installer_sha256": "791573e089f3012f8371716f969b3cd783ff7bb010bee888dbdc26138300e078",
-  "installer_filename": "XRD_Phase_Finder_Setup_v1_6_9.exe",
-  "installer_size_bytes": 5522549,
+  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.10/XRD_Phase_Finder_Setup_v1_6_10.exe",
+  "installer_sha256": "344b38454f78c2f642b61285aeec642331e1e468b595c6fe09a42f6049c87771",
+  "installer_filename": "XRD_Phase_Finder_Setup_v1_6_10.exe",
+  "installer_size_bytes": 5578276,
   "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_macOS_1.6.9.pkg",
   "macos_installer_sha256": "7856d6e174f269189d12e0a858de24509efc184d8900dc0f9a6d19be39af255c",
   "platform_versions": {
-    "windows": "1.6.9",
+    "windows": "1.6.10",
     "macos": "1.6.9",
     "linux": "1.6.9"
   },
-  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.9",
+  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.10",
   "linux_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_1.6.9_amd64.deb",
   "linux_installer_sha256": "2e602c7c099dcacdfa70335143c8ddcd33065fdb9f3eb29ace0abd8bdaada61a"
 }

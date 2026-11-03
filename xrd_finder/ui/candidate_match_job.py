@@ -44,7 +44,7 @@ class CandidateMatchQueue:
             scan_range = (float(observed.x.min()), float(observed.x.max()))
             prepare_reference_rows(LocalPhaseCache(root), rows,
                 wavelength=profile.radiation.components[0].wavelength_angstrom,
-                progress=progress, cancelled=cancel.is_set)
+                two_theta_range=scan_range,progress=progress, cancelled=cancel.is_set)
             with create_local_reference_peak_loader(root, pdf2 or None, wavelength,
                     instrument_profile=profile, prepared_only=True, match_only=True,
                     two_theta_range=scan_range) as loader:

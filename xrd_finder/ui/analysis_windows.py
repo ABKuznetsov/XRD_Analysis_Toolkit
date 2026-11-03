@@ -1358,6 +1358,8 @@ class PhaseFinderWindow(
         le_bail = self._le_bail_enabled_for_pattern(pattern)
         background = bool(background or le_bail)
         instrument = self._instrument_profile_for_pattern(pattern)
+        from xrd_finder.services.reference_preparation import reference_scan_range
+        reference_low,reference_high = reference_scan_range(self._pattern_finder_observed_data(pattern)) or (5.,120.)
         candidate_build = build_finder_candidate_inputs(
             candidates,
             self._candidate_cif_path,
@@ -1365,7 +1367,8 @@ class PhaseFinderWindow(
             self._candidate_phase_name,
             self._candidate_source,
             line_resolver=lambda candidate: self.candidate_line_provider.resolve(candidate,
-                wavelength=float(instrument.radiation.components[0].wavelength_angstrom)),
+                wavelength=float(instrument.radiation.components[0].wavelength_angstrom),
+                two_theta_min=reference_low,two_theta_max=reference_high),
             cell_resolver=lambda candidate: resolve_candidate_initial_cell(
                 candidate, self.match_structures.get(self._candidate_key(candidate))),
             quantification_cif_path=self._candidate_local_cif_path,
@@ -1803,6 +1806,12 @@ class PhaseFinderWindow(
                 event.ignore()
                 return
         self._preparation_close_confirmed = True
+        portal = getattr(self,'_ccdc_portal_controller',None)
+        if portal is not None:portal.shutdown()
+        for name in ('_cod_inorganic_controller','_prepared_library_transfer'):
+            controller = getattr(self,name,None)
+            if controller is not None:
+                controller.cancel()
         self._close_learning_guide()
         legend_timer = getattr(self, '_multi_legend_layout_timer', None)
         if legend_timer is not None:

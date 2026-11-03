@@ -11,7 +11,9 @@ from xrd_finder.services.network import create_ssl_context, ensure_online_allowe
 
 
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.IGNORECASE)
-CCDC_SEARCH_URL = "https://www.ccdc.cam.ac.uk/structures/Search?Doi={doi}"
+CCDC_WEB_ENABLED = False
+CCDC_WEB_UNAVAILABLE_MESSAGE = "CCDC web search is temporarily unavailable. Download a CIF from the CCDC website and import it manually."
+CCDC_SEARCH_URL = "https://www.ccdc.cam.ac.uk/structures/Search?Doi={doi}&DatabaseToSearch=Published"
 
 
 def extract_doi(text: str) -> str:

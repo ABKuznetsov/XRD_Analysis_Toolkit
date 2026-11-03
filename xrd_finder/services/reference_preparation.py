@@ -5,11 +5,13 @@ from pathlib import Path
 from xrd_finder.services.local_phase_cache import LocalPhaseCache, DERIVED_CACHE_VERSION, REINDEXABLE_CACHE_VERSIONS
 
 
-def prepare_reference_rows(cache, rows, *, wavelength, progress=None, cancelled=lambda: False):
+def prepare_reference_rows(cache, rows, *, wavelength, two_theta_range=None, progress=None, cancelled=lambda: False):
     structural_sources = {'COD', 'USER', 'MP', 'CCDC', 'AFLOW', 'OQMD'}
     keys = list(dict.fromkeys((str(row[0]).upper(), str(row[1])) for row in rows
         if len(row) > 1 and str(row[0]).upper() in structural_sources and row[1]))
-    coverage = cache.reference_range_coverage(keys, wavelength=wavelength, cancelled=cancelled)
+    low,high = two_theta_range if two_theta_range is not None else (5.,120.)
+    coverage = cache.reference_range_coverage(keys,wavelength=wavelength,
+        two_theta_min=low,two_theta_max=high,cancelled=cancelled)
     pending = [key for key in keys if not coverage[key]]
     # Catalog-only cards have nothing to calculate locally. Keep them visible
     # as unavailable without spawning interpreters or hydrating their JSON.
@@ -23,18 +25,18 @@ def prepare_reference_rows(cache, rows, *, wavelength, progress=None, cancelled=
     # Small fixtures and frozen binaries retain the same sequential contract.
     import sys
     if len(pending) >= 8 and not getattr(sys, 'frozen', False):
-        return unavailable + _prepare_parallel(cache, pending, wavelength, progress, cancelled)
+        return unavailable + _prepare_parallel(cache, pending, wavelength, progress, cancelled, (low,high))
     for index, (source, entry_id) in enumerate(pending):
         if cancelled():
             raise CancelledError('Reference preparation cancelled')
         if progress:
             progress('Preparing validated reference lines', index+1, len(pending))
-        if not cache.ensure_reference_range(source, entry_id, wavelength=wavelength):
+        if not cache.ensure_reference_range(source,entry_id,wavelength=wavelength,two_theta_min=low,two_theta_max=high):
             unavailable.append((source, entry_id))
     return unavailable
 
 
-def _prepare_parallel(cache, keys, wavelength, progress, cancelled):
+def _prepare_parallel(cache, keys, wavelength, progress, cancelled, two_theta_range=None):
     import json
     import os
     from pathlib import Path
@@ -61,7 +63,7 @@ def _prepare_parallel(cache, keys, wavelength, progress, cancelled):
                 while queue and len(running) < count:
                     # Small batches keep progress and cancellation granular.
                     chunk = queue[:8]; del queue[:8]
-                    request = {'root':str(cache.root), 'keys':chunk, 'wavelength':float(wavelength)}
+                    request = {'root':str(cache.root), 'keys':chunk, 'wavelength':float(wavelength),'two_theta_range':two_theta_range}
                     label = str(completed) + '-' + str(len(queue))
                     input_path = Path(folder)/(label+'.input')
                     output_path = Path(folder)/(label+'.output')
@@ -112,4 +114,19 @@ def prepare_gain_references(inputs, *, progress=None, cancelled=lambda: False):
                 sources))
     return prepare_reference_rows(cache, rows,
         wavelength=inputs.instrument_profile.radiation.components[0].wavelength_angstrom,
-        progress=progress, cancelled=cancelled)
+        two_theta_range=reference_scan_range(inputs.observed),progress=progress, cancelled=cancelled)
+
+
+def reference_scan_range(observed):
+    """Use measured angles for readiness, never an unrelated full-plot range."""
+    if observed is None:
+        return None
+    import numpy as np
+    values = np.asarray(observed,dtype=float)
+    if values.ndim!=2 or not len(values) or values.shape[1]<1:
+        return None
+    angles = values[:,0]
+    angles = angles[np.isfinite(angles)&(angles>0.)&(angles<180.)]
+    if len(angles)<2 or float(angles.min())>=float(angles.max()):
+        return None
+    return float(angles.min()),float(angles.max())

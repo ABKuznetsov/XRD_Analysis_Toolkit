@@ -65,6 +65,11 @@ class PhaseFinderDatabaseActionsMixin:
         self.database_panel.indexCodFolderRequested.connect(self._index_cod_cif_folder)
         self.database_panel.indexCodZipRequested.connect(self._index_cod_zip_archive)
         self.database_panel.downloadCodArchiveRequested.connect(self._download_cod_archive_from_url)
+        self.database_panel.prepareCodInorganicRequested.connect(self._prepare_cod_inorganic_library)
+        self.database_panel.ccdcAccountRequested.connect(lambda:self._open_ccdc_portal(login=True))
+        self.database_panel.ccdcPortalRequested.connect(self._open_ccdc_portal)
+        self.database_panel.exportPreparedLibraryRequested.connect(lambda:self._transfer_prepared_library(False))
+        self.database_panel.importPreparedLibraryRequested.connect(lambda:self._transfer_prepared_library(True))
         self.database_panel.exportCodRequested.connect(lambda: self._export_phase_cache_sources(["COD"], "COD local/bulk", "xrd_cod_cache.json"))
         self.database_panel.importCodRequested.connect(lambda: self._import_phase_cache_sources(["COD"], "COD local/bulk"))
         self.database_panel.clearCodRequested.connect(self._clear_cod_cache)
@@ -433,6 +438,20 @@ class PhaseFinderDatabaseActionsMixin:
             success,
             lambda message, _details: QMessageBox.warning(self, "Index COD ZIP failed", message),
         )
+
+    def _transfer_prepared_library(self, importing: bool) -> None:
+        from xrd_finder.ui.prepared_library_transfer import PreparedLibraryTransfer
+        controller = getattr(self,'_prepared_library_transfer',None)
+        if controller is None:
+            controller = self._prepared_library_transfer = PreparedLibraryTransfer(self)
+        controller.start(importing)
+
+    def _prepare_cod_inorganic_library(self) -> None:
+        from xrd_finder.ui.cod_inorganic_dialog import CodInorganicController
+        controller = getattr(self, '_cod_inorganic_controller', None)
+        if controller is None:
+            controller = self._cod_inorganic_controller = CodInorganicController(self)
+        controller.show()
 
     def _download_cod_archive_from_url(self) -> None:
         url, ok = QInputDialog.getText(

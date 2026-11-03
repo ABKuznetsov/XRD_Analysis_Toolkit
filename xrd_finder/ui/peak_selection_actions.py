@@ -54,6 +54,12 @@ class PhaseFinderPeakSelectionActionsMixin:
         self._set_search_mode("peaks")
 
     def _search_candidates_in_current_mode(self) -> None:
+        from xrd_finder.services.ccdc_service import CCDC_WEB_ENABLED
+        entry = getattr(self,'ccdc_doi_input',None)
+        query = entry.text().strip() if CCDC_WEB_ENABLED and entry is not None else ''
+        if query:
+            self._open_ccdc_portal(query)
+            return
         if self._search_mode == "peaks":
             self._search_selected_peaks()
         elif self._search_mode == "auto":

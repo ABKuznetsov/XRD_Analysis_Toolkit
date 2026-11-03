@@ -86,13 +86,15 @@ class CodOnlineService:
         return f"{self._active_base_url}/{cod_id}.cif"
 
     def download_cif(self, cod_id: str, target_dir: str | Path, timeout: float = 20.0) -> Path:
+        from xrd_finder.services.cod_cif_store import atomic_save_cif, lock_cifs
         target = Path(target_dir)
         target.mkdir(parents=True, exist_ok=True)
         output_path = target / f"{cod_id}.cif"
-        if output_path.exists() and output_path.stat().st_size > 0:
-            return output_path
-        output_path.write_bytes(self._request_bytes(f"/{cod_id}.cif", timeout=timeout))
-        return output_path
+        with lock_cifs([output_path]):
+            if output_path.exists() and output_path.stat().st_size > 0:
+                return output_path
+            data = self._request_bytes(f"/{cod_id}.cif", timeout=timeout)
+            return atomic_save_cif(output_path, data)
 
     def _search(self, params: dict[str, str], limit: int, timeout: float) -> list[CodEntry]:
         payload = self._request_bytes(

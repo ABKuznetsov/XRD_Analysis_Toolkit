@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Protocol
 
 from PySide6.QtCore import QSettings
+from xrd_finder.services.ccdc_service import CCDC_WEB_ENABLED, CCDC_WEB_UNAVAILABLE_MESSAGE
 
 
 class StatusLike(Protocol):
@@ -93,9 +94,9 @@ def database_rows(
         match_pdf2_row,
         [
             "CCDC / CSD",
-            "Ready" if ccdc_status.configured else "Not configured",
-            ccdc_status.label,
-            "CSD Python API / ccdc.cam.ac.uk",
+            ("Local API + web" if CCDC_WEB_ENABLED else "Local API") if ccdc_status.configured else ("Web access" if CCDC_WEB_ENABLED else "Temporarily unavailable"),
+            ccdc_status.label if ccdc_status.configured else ("Free Simple Search; optional CCDC sign-in; local API is not required" if CCDC_WEB_ENABLED else CCDC_WEB_UNAVAILABLE_MESSAGE),
+            "ccdc.cam.ac.uk/structures",
         ],
         [
             "AFLOW",

@@ -16,6 +16,7 @@ from xrd_finder.services.candidate_search_service import (
     CandidateSearchOptions,
     normalize_candidate_row,
 )
+from xrd_finder.services.calculated_pattern_service import CU_KA1_WAVELENGTH
 from xrd_finder.services.cod_online_service import formula_elements
 from xrd_finder.services.local_phase_cache import LocalPhaseSearchError
 from xrd_finder.services.network import offline_mode_enabled
@@ -137,12 +138,15 @@ class PhaseFinderCandidateSearchActionsMixin:
                 )
             return False
 
+        from xrd_finder.services.reference_preparation import reference_scan_range
+        scan_range = reference_scan_range(self._active_observed_data())
         try:
             self.candidate_search_service.queue_candidate_rows(
                 rows,
                 session_token=search_token,
                 wavelength=float(self._instrument_profile_for_pattern(
-                    self._active_pattern()).radiation.components[0].wavelength_angstrom),
+                    self._active_pattern()).radiation.components[0].wavelength_angstrom) if scan_range else CU_KA1_WAVELENGTH,
+                two_theta_range=scan_range,
             )
         except LocalPhaseSearchError as exc:
             controller = getattr(self, "_candidate_batch_updates", None)
@@ -208,9 +212,11 @@ class PhaseFinderCandidateSearchActionsMixin:
         options = self._candidate_search_options()
         if not options.local_sources or not options.structural_data_enabled:
             return True
+        from xrd_finder.services.reference_preparation import reference_scan_range
+        scan_range = reference_scan_range(self._active_observed_data())
         cache = self.local_phase_cache
         sources, excluded = tuple(options.local_sources), tuple(options.excluded_elements)
-        prefix = (float(options.wavelength), sources, excluded)
+        prefix = (float(options.wavelength),sources,excluded,scan_range)
         key = (*prefix, cache.reference_revision(sources))
         if getattr(self, '_gain_reference_range_ready', None) == key:
             return True
@@ -240,7 +246,7 @@ class PhaseFinderCandidateSearchActionsMixin:
                                               sources=list(sources), limit=2_147_483_647,
                                               strict=True, deduplicate=False, summary_only=True)
                 unavailable = prepare_reference_rows(worker_cache,
-                    [[entry.source, entry.entry_id] for entry in entries], wavelength=wavelength)
+                    [[entry.source, entry.entry_id] for entry in entries],wavelength=wavelength,two_theta_range=scan_range)
                 if worker_cache.reference_revision(sources) == revision:
                     # Unavailable cards stay blank through the guarded loaders;
                     # a malformed CIF must not block all other valid candidates.
@@ -577,7 +583,7 @@ class PhaseFinderCandidateSearchActionsMixin:
                 from xrd_finder.services.local_phase_cache import LocalPhaseCache
                 prepare_reference_rows(LocalPhaseCache(cache_root), ranking_rows,
                     wavelength=ranking_instrument.radiation.components[0].wavelength_angstrom,
-                    progress=progress, cancelled=cancel.is_set)
+                    two_theta_range=scan_range,progress=progress, cancelled=cancel.is_set)
                 with create_local_reference_peak_loader(
                     cache_root,
                     pdf2_root or None,
@@ -750,14 +756,32 @@ class PhaseFinderCandidateSearchActionsMixin:
             show_progress_dialog=False,
         )
 
+    def _open_ccdc_portal(self, query: str = '', *, login: bool = False) -> None:
+        from xrd_finder.services.ccdc_service import CCDC_WEB_ENABLED
+        if not CCDC_WEB_ENABLED:
+            return
+        from xrd_finder.ui.ccdc_portal import CcdcPortalController
+        controller = getattr(self,'_ccdc_portal_controller',None)
+        if controller is None:
+            controller = self._ccdc_portal_controller = CcdcPortalController(self)
+        try:
+            if query:
+                from xrd_finder.services.ccdc_lookup import ccdc_query
+                ccdc_query(query)
+                self._cancel_candidate_search_jobs()
+                self._set_search_mode('search')
+                self._prepare_candidate_database_search()
+            controller.open(query,login=login)
+        except Exception as error:
+            QMessageBox.warning(self,'CCDC Access Structures',str(error))
+
     def _search_from_controls(self, *, elements_only: bool = False) -> None:
         self._cancel_candidate_search_jobs()
         self._set_search_mode("search")
-        ccdc_query = self.ccdc_doi_input.text().strip() if self.ccdc_doi_input is not None and not elements_only else ""
+        from xrd_finder.services.ccdc_service import CCDC_WEB_ENABLED
+        ccdc_query = self.ccdc_doi_input.text().strip() if CCDC_WEB_ENABLED and self.ccdc_doi_input is not None and not elements_only else ""
         if ccdc_query:
-            if self.search_input is not None:
-                self.search_input.setText(ccdc_query)
-            self._search_pdf2_text()
+            self._open_ccdc_portal(ccdc_query)
             return
         if not self.selected_elements:
             query = self.search_input.text().strip() if self.search_input is not None else ""

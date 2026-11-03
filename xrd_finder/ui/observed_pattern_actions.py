@@ -278,8 +278,11 @@ class PhaseFinderObservedPatternActionsMixin:
         self._multi_legend_layout_pending = True
 
         def finish() -> None:
-            self._multi_legend_layout_pending = False
-            self._fit_multi_pattern_legends_to_canvas()
+            try:
+                # Internal range/resize signals must not queue another pass.
+                self._fit_multi_pattern_legends_to_canvas()
+            finally:
+                self._multi_legend_layout_pending = False
 
         timer = getattr(self, '_multi_legend_layout_timer', None)
         if timer is None:

@@ -14,11 +14,11 @@ The nine horizontal slides introduce capabilities, data sources, libraries, inst
 
 ## Download
 
-- [Windows installer (1.6.9): XRD_Phase_Finder_Setup_v1_6_9.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_Setup_v1_6_9.exe)
+- [Windows installer (1.6.10): XRD_Phase_Finder_Setup_v1_6_10.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.10/XRD_Phase_Finder_Setup_v1_6_10.exe)
 - [macOS package (1.6.9): XRD_Phase_Finder_macOS_1.6.9.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_macOS_1.6.9.pkg)
 - [Ubuntu / Debian package (1.6.9): XRD_Phase_Finder_1.6.9_amd64.deb](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_1.6.9_amd64.deb)
 
-Windows, macOS and Linux amd64 installers are available on the [XRD Phase Finder 1.6.9 release page](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.9).
+The [Windows 1.6.10 release](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.10) is available now. macOS and Linux packages remain at 1.6.9; their direct download links are listed above.
 
 ## Main window
 
@@ -44,7 +44,7 @@ The project tree (A) contains imported patterns and structures. The toolbar (B) 
 
 ### Windows
 
-Download and run `XRD_Phase_Finder_Setup_v1_6_9.exe`. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
+Download and run `XRD_Phase_Finder_Setup_v1_6_10.exe`. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
 
 On first launch, the launcher checks the per-user scientific Python runtime and offers to install or repair missing packages. User projects, settings and database caches are stored in the user profile.
 
@@ -87,6 +87,14 @@ Download and run the current `.pkg` from the release page. For a direct source r
 7. Save the interpretation as an `.xpff` project.
 
 Use the toolbar **Help** toggle for explanations of controls, **Help -> Learn Finder** for guided workflows, or **Help -> Open example project** for the bundled demonstration project.
+
+## Prepare and transfer a local library
+
+Open **Manage databases -> Download inorganic COD… -> Download and prepare SQL**. Finder downloads original CIF files from COD and prepares them in parallel. Separate progress bars show downloads and calculations, with estimated time remaining. Existing downloads and compatible prepared entries are reused; completed work remains available after cancellation.
+
+Use **Manage databases -> Export prepared library…** to save a `.xpflib` archive. On another computer running a compatible Finder version, choose **Import prepared library…**. The archive transfers CIFs, calculated reflections and search indexes so compatible entries do not need recalculation. User libraries are stored separately from the application and are not bundled with the installer.
+
+CCDC web search is temporarily disabled in 1.6.10. You can still import CIF files downloaded manually from CCDC.
 
 ## Offline use
 

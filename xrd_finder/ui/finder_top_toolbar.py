@@ -4,7 +4,7 @@ from PySide6.QtCore import QEvent, QSize, Signal, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLayout, QMenu, QSizePolicy, QToolButton, QWidget
 
-from xrd_finder.ui.theme import is_dark_theme, theme_colors, search_mode_button_style, SEARCH_MODE_COLORS
+from xrd_finder.ui.theme import is_dark_theme, theme_colors, search_mode_button_style, SEARCH_MODE_COLORS, FINDER_BRAND_BLUE
 from xrd_finder.ui.toolbar_icons import toolbar_icon
 
 
@@ -218,8 +218,8 @@ class FinderTopToolBar(QWidget):
                 (colors['bg'], colors['panel'], colors['border'], colors['text'], colors['hover'], '#82909f') if dark else
                 ('#f4f7fa', '#ffffff', '#dce3eb', '#334155', '#edf2f7', '#94a3b8'))
             self.setStyleSheet(
-                f'QWidget#finderTopToolBar {{ background: {bg}; border: 1px solid {border}; border-radius: 10px; }}'
-                f'QFrame#toolbarGroup {{ background: {group}; border: 1px solid {border}; border-radius: 8px; }}'
+                f'QWidget#finderTopToolBar {{ background: {bg}; border: 1px solid {FINDER_BRAND_BLUE}; border-radius: 10px; }}'
+                f'QFrame#toolbarGroup {{ background: {group}; border: 1px solid {FINDER_BRAND_BLUE}; border-radius: 8px; }}'
                 f'QWidget#finderTopToolBar QToolButton {{ background: transparent; color: {text}; '
                 'border: 1px solid transparent; border-radius: 6px; padding: 4px 9px; font-weight: 500; }'
                 f'QWidget#finderTopToolBar QToolButton:hover {{ background: {hover}; }}'

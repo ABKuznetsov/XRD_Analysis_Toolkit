@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QLineEdit, QPushBu
 from xrd_finder.ui.element_filter import PeriodicTableWidget
 from xrd_finder.ui.layout_state import SplitterLayoutState
 from xrd_finder.ui.wrapping_layout import WrappingLayout
+from xrd_finder.services.ccdc_service import CCDC_WEB_ENABLED, CCDC_WEB_UNAVAILABLE_MESSAGE
 
 
 class CompositionPanel(QWidget):
@@ -89,7 +90,10 @@ class CompositionPanel(QWidget):
         self.formula_sum_input.hide()
         controls_layout.addWidget(self.element_gate_label)
 
-        self.ccdc_doi_input.setPlaceholderText("CCDC DOI / CSD refcode")
+        self.ccdc_doi_input.setClearButtonEnabled(True)
+        self.ccdc_doi_input.setEnabled(CCDC_WEB_ENABLED)
+        self.ccdc_doi_input.setPlaceholderText("CCDC number / CSD refcode / DOI" if CCDC_WEB_ENABLED else "CCDC search — temporarily unavailable")
+        self.ccdc_doi_input.setToolTip('Search published CCDC structures using your saved web session. Sign in under Manage databases; no local CSD Python API is required.' if CCDC_WEB_ENABLED else CCDC_WEB_UNAVAILABLE_MESSAGE)
         self.ccdc_doi_input.returnPressed.connect(self.searchRequested)
         controls_layout.addWidget(self.ccdc_doi_input)
 
