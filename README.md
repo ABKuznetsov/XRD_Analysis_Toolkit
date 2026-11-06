@@ -15,10 +15,10 @@ The nine horizontal slides introduce capabilities, data sources, libraries, inst
 ## Download
 
 - [Windows installer (1.7.0): XRD_Phase_Finder_Setup_v1_7_0.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_Setup_v1_7_0.exe)
-- [macOS package (1.6.10): XRD_Phase_Finder_macOS_1.6.10.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.10/XRD_Phase_Finder_macOS_1.6.10.pkg)
+- [macOS package (1.7.0): XRD_Phase_Finder_macOS_1.7.0.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_macOS_1.7.0.pkg)
 - [Ubuntu / Debian package (1.6.9): XRD_Phase_Finder_1.6.9_amd64.deb](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_1.6.9_amd64.deb)
 
-The [Windows 1.7.0 release](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.0) is available now. macOS remains at 1.6.10 and Linux at 1.6.9; their direct download links are listed above.
+The [Windows and macOS 1.7.0 release](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.0) is available now. Linux remains at 1.6.9; direct download links are listed above.
 
 ## Main window
 

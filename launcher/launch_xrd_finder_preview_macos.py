@@ -22,7 +22,6 @@ MACOS_UPDATE_MANIFEST_URL = (
     "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/"
     "main/launcher/updates/xrd_finder_macos.json"
 )
-MIN_VISIBLE_STEP_SECONDS = 1.0
 
 
 def env_flag(name: str, default: bool = False) -> bool:
@@ -185,7 +184,7 @@ class PreviewApp:
         self.env_root = self.sci_root / f"env-{self.runtime_arch}"
         self.apps_root = self.sci_root / "apps"
         self.finder_root = self.apps_root / "xrd_phase_finder"
-        self.data_root = self.finder_root / "data"
+        self.data_root = Path(os.environ.get("XRD_FINDER_DATA_DIR") or self.finder_root / "data").expanduser()
         self.logs_root = self.sci_root / "logs"
         self.update_root = self.sci_root / "updates"
         self.matplotlib_root = self.finder_root / "matplotlib"
@@ -517,72 +516,20 @@ class PreviewApp:
             return False
 
     def launch_main_app(self) -> None:
-        self.set_step(4, "Opening...", "Preparing main application window")
-        ready_file = self.logs_root / "xrd_finder_ready.flag"
-        prepared_file = self.logs_root / "xrd_finder_prepared.flag"
-        show_signal_file = self.logs_root / "xrd_finder_show.signal"
-        for path in [ready_file, prepared_file, show_signal_file]:
-            path.unlink(missing_ok=True)
-
-        env = os.environ.copy()
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
-        env["PYTHONPATH"] = str(self.app_root) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-        env["XRD_FINDER_DATA_DIR"] = str(self.data_root)
-        env["XRD_FINDER_PREPARED_FILE"] = str(prepared_file)
-        env["XRD_FINDER_SHOW_SIGNAL_FILE"] = str(show_signal_file)
-        env["XRD_FINDER_READY_FILE"] = str(ready_file)
-        env["MPLCONFIGDIR"] = str(self.matplotlib_root)
-        env["QT_MAC_WANTS_LAYER"] = "1"
-        if self.secure_mode:
-            env["XRD_FINDER_OFFLINE"] = "1"
-
-        diagnostics_value = os.environ.get("XRD_FINDER_DIAGNOSTICS", "1").strip().casefold()
-        diagnostics = diagnostics_value not in {"0", "false", "no", "off"}
-        log_file = self.logs_root / "xrd_finder_console.log"
-        if diagnostics:
-            log_handle = log_file.open("w", encoding="utf-8")
-            log_handle.write(f"[{time.ctime()}] Starting XRD Phase Finder on {platform.platform()}\n")
-            log_handle.flush()
-            output_target = log_handle
-        else:
-            log_handle = None
-            output_target = subprocess.DEVNULL
-        self.app_process = subprocess.Popen(
-            [str(self.python), "-m", self.entry_module],
-            cwd=str(self.app_root),
-            env=env,
-            stdout=output_target,
-            stderr=subprocess.STDOUT,
-        )
-        time.sleep(0.8)
-        show_signal_file.write_text("show", encoding="utf-8")
-        deadline = time.monotonic() + 120.0
-        while time.monotonic() < deadline:
-            if ready_file.exists():
-                self.set_step(4, "OK", "XRD Phase Finder window is ready", "green")
-                self._close_preview_soon(400)
-                return
-            if self.app_process.poll() is not None:
-                if log_handle is not None:
-                    raise RuntimeError(f"XRD Phase Finder closed during startup. Log: {log_file}")
-                raise RuntimeError("XRD Phase Finder closed during startup.")
-            self.set_step(4, "Starting...", "Waiting for the main application window")
-            time.sleep(0.5)
-        self.set_step(4, "OK", "Application is running; startup is taking longer than expected", "green")
-        self._close_preview_soon(900)
+        from fast_start import launch
+        self.set_step(4, "Opening...", "Opening the main application window")
+        code = launch(self.app_root, self.data_root, self.logs_root, sys.argv[1:], python=self.python)
+        if code:
+            raise RuntimeError(f"Finder could not open. Log: {self.logs_root / 'xrd_finder_console.log'}")
+        self.set_step(4, "OK", "XRD Phase Finder window is ready", "green")
+        self._close_preview_soon(0)
 
     def run_checks(self) -> None:
         try:
             self.ensure_folders()
-            time.sleep(MIN_VISIBLE_STEP_SECONDS)
             self.ensure_runtime()
-            time.sleep(MIN_VISIBLE_STEP_SECONDS)
-            self.check_databases()
-            time.sleep(MIN_VISIBLE_STEP_SECONDS)
-            update_started = self.check_updates()
-            if update_started:
-                return
-            time.sleep(MIN_VISIBLE_STEP_SECONDS)
+            self.set_step(2, "Ready", "Local library opens in Finder", "green")
+            self.set_step(3, "Later", "Updates are checked after Finder opens", "muted")
             self.launch_main_app()
         except Exception as exc:
             self.set_step(4, "Failed", str(exc), "red")
@@ -598,6 +545,13 @@ class PreviewApp:
 
 
 def main() -> int:
+    startup_error = os.environ.get("XRD_FINDER_STARTUP_ERROR")
+    if startup_error:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("Finder could not open", f"See the startup log for details:\n{startup_error}", parent=root)
+        root.destroy()
+        return 1
     PreviewApp().start()
     return 0
 

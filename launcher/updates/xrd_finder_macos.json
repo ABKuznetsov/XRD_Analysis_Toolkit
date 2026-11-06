@@ -1,35 +1,34 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.6.10",
+  "version": "1.7.0",
   "channel": "stable",
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
-  "published_at": "2026-11-04",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.10/XRD_Phase_Finder_macOS_1.6.10.pkg",
-  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.10",
+  "published_at": "2026-11-06",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_macOS_1.7.0.pkg",
+  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.0",
   "assets": [
     {
-      "name": "XRD_Phase_Finder_macOS_1.6.10.pkg",
+      "name": "XRD_Phase_Finder_macOS_1.7.0.pkg",
       "type": "installer",
       "platform": "macos",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.10/XRD_Phase_Finder_macOS_1.6.10.pkg",
-      "sha256": "12ab7c426d25f727350a7522cc96b23abc49313ab1380114b08685e7db3e5b31",
-      "size_bytes": 5310087
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_macOS_1.7.0.pkg",
+      "sha256": "590c6d291325c33dd659a771a211b6f440e557f6ca37b42984f17f193bd5a807",
+      "size_bytes": 5364029
     }
   ],
   "summary": [
-    "Download and prepare the inorganic COD selection with separate download/calculation progress and time estimates.",
-    "Reuse downloaded CIFs and compatible prepared reflections instead of repeating completed work.",
-    "Export and import prepared libraries as .xpflib archives for transfer between laboratory computers.",
-    "Check reference coverage against the measured scan range to avoid unnecessary recalculation.",
-    "Use blue toolbar frames matching the Finder icon.",
-    "Temporarily disable the CCDC web-search controls; manually downloaded CIF files can still be imported."
+    "Reuse prepared reference libraries with compact SQLite storage and portable library archives.",
+    "Improve startup and keep initial preparation outside the main window.",
+    "Restore saved profiles and peak assignments consistently, including Le Bail results.",
+    "Preserve existing calculated I/Ic values and calculate eligible missing values despite noncritical CIF warnings.",
+    "Improve peak-marker and hkl-label placement."
   ],
-  "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.10/XRD_Phase_Finder_macOS_1.6.10.pkg",
-  "macos_installer_sha256": "12ab7c426d25f727350a7522cc96b23abc49313ab1380114b08685e7db3e5b31",
+  "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_macOS_1.7.0.pkg",
+  "macos_installer_sha256": "590c6d291325c33dd659a771a211b6f440e557f6ca37b42984f17f193bd5a807",
   "platform_versions": {
-    "macos": "1.6.10"
+    "macos": "1.7.0"
   },
-  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.10"
+  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.0"
 }

@@ -19,11 +19,11 @@
       "installer_sha256": "317bb6b23b64d1faec9b4fc2377f2c85b3a7580b74b678db6a371b297e7c25ce",
       "installer_filename": "XRD_Phase_Finder_Setup_v1_7_0.exe",
       "installer_size_bytes": 5615189,
-      "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.10/XRD_Phase_Finder_macOS_1.6.10.pkg",
-      "macos_installer_sha256": "12ab7c426d25f727350a7522cc96b23abc49313ab1380114b08685e7db3e5b31",
+      "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_macOS_1.7.0.pkg",
+      "macos_installer_sha256": "590c6d291325c33dd659a771a211b6f440e557f6ca37b42984f17f193bd5a807",
       "platform_versions": {
         "windows": "1.7.0",
-        "macos": "1.6.10",
+        "macos": "1.7.0",
         "linux": "1.6.9"
       },
       "linux_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_1.6.9_amd64.deb",

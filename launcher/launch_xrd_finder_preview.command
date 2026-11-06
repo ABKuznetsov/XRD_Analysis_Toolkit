@@ -12,12 +12,25 @@ else
 fi
 
 SCI_ENV="$SCI_ROOT/env-$SCI_ARCH"
-XRD_FINDER_USER_ROOT="$SCI_ROOT/XRD_Finder"
+XRD_FINDER_USER_ROOT="$SCI_ROOT/apps/xrd_phase_finder"
 SCI_LOGS="$SCI_ROOT/logs"
-READY_FILE="$SCI_ROOT/xrd_finder_ready"
 PREVIEW_SCRIPT="$APP_ROOT/launcher/launch_xrd_finder_preview_macos.py"
 
 mkdir -p "$SCI_ROOT" "$XRD_FINDER_USER_ROOT" "$SCI_LOGS"
+
+# A prepared runtime goes straight to Finder. No Tk window, network request,
+# scientific imports in a probe, or minimum splash-screen display time.
+if [ -x "$SCI_ENV/bin/python" ] && [ -f "$APP_ROOT/launcher/fast_start.py" ]; then
+    if /usr/bin/arch "-$SCI_ARCH" "$SCI_ENV/bin/python" "$APP_ROOT/launcher/fast_start.py" \
+        --data-root "$XRD_FINDER_USER_ROOT/data" --logs-root "$SCI_LOGS" "$@"; then
+        exit 0
+    else
+        START_STATUS=$?
+    fi
+    if [ "$START_STATUS" -ne 75 ]; then
+        export XRD_FINDER_STARTUP_ERROR="${XRD_FINDER_LOG_DIR:-$SCI_LOGS}/xrd_finder_console.log"
+    fi
+fi
 
 find_preview_python() {
     for candidate in \
@@ -47,74 +60,22 @@ if [ -n "$PREVIEW_PYTHON" ] && [ -f "$PREVIEW_SCRIPT" ]; then
     exec /usr/bin/arch "-$SCI_ARCH" "$PREVIEW_PYTHON" "$PREVIEW_SCRIPT" "$@"
 fi
 
-echo "XRD Phase Finder startup preview"
-echo "Application root: $APP_ROOT"
-echo
-
-if [ ! -x "$SCI_ENV/bin/python" ]; then
-    echo "1/4 Installing scientific Python environment..."
-    "$APP_ROOT/launcher/setup_sci_env.command"
-else
-    echo "1/4 Environment ready."
+# Only first installation/repair reaches this fallback when Tk is unavailable.
+if [ -n "${XRD_FINDER_STARTUP_ERROR:-}" ]; then
+    echo "Finder could not open. See: $XRD_FINDER_STARTUP_ERROR" >&2
+    exit 1
 fi
-
 case "${XRD_FINDER_OFFLINE:-}" in
     1|true|TRUE|yes|YES|on|ON)
-        OFFLINE_MODE=1
-        ;;
-    *)
-        OFFLINE_MODE=0
+        echo "Offline mode is enabled. Install the Sci runtime before launching Finder." >&2
+        exit 1
         ;;
 esac
-
-if [ "$OFFLINE_MODE" = "1" ]; then
-    echo "2/4 Auto-update skipped: offline mode is enabled."
-elif [ -d "$APP_ROOT/.git" ] && command -v git >/dev/null 2>&1; then
-    echo "2/4 Checking GitHub updates..."
-    (
-        cd "$APP_ROOT"
-        git fetch origin >/dev/null 2>&1 || exit 0
-        LOCAL_REV="$(git rev-parse @ 2>/dev/null || true)"
-        UPSTREAM_REV="$(git rev-parse @{u} 2>/dev/null || git rev-parse origin/main 2>/dev/null || true)"
-        BASE_REV="$(git merge-base @ "$UPSTREAM_REV" 2>/dev/null || true)"
-        if [ -n "$LOCAL_REV" ] && [ -n "$UPSTREAM_REV" ] && [ "$LOCAL_REV" != "$UPSTREAM_REV" ] && [ "$LOCAL_REV" = "$BASE_REV" ]; then
-            echo "   Updating source..."
-            git pull --ff-only >/dev/null
-            "$APP_ROOT/launcher/setup_sci_env.command"
-        else
-            echo "   Already up to date."
-        fi
-    ) || echo "   Auto-update skipped. Use update_macos.command for details."
-else
-    echo "2/4 Auto-update skipped: this is not a Git checkout or git is unavailable."
+if [ -f "${XRD_FINDER_DATA_DIR:-$XRD_FINDER_USER_ROOT/data}/settings/security.json" ] && \
+    grep -Eq '"offline_mode"[[:space:]]*:[[:space:]]*true' "${XRD_FINDER_DATA_DIR:-$XRD_FINDER_USER_ROOT/data}/settings/security.json"; then
+    echo "Offline mode is enabled. Install the Sci runtime before launching Finder." >&2
+    exit 1
 fi
-
-echo "3/4 Starting XRD Phase Finder..."
-export PYTHONDONTWRITEBYTECODE=1
-export PYTHONPATH="$APP_ROOT${PYTHONPATH+:$PYTHONPATH}"
-export XRD_FINDER_DATA_DIR="$XRD_FINDER_USER_ROOT/data"
-export MPLCONFIGDIR="$XRD_FINDER_USER_ROOT/matplotlib"
-export XRD_FINDER_READY_FILE="$READY_FILE"
-export QT_MAC_WANTS_LAYER=1
-rm -f "$READY_FILE"
-
-/usr/bin/arch "-$SCI_ARCH" "$SCI_ENV/bin/python" -m xrd_finder.apps.finder_gui "$@" &
-APP_PID="$!"
-
-echo "4/4 Waiting for application window..."
-for _ in {1..120}; do
-    if [ -f "$READY_FILE" ]; then
-        echo "XRD Phase Finder is running."
-        exit 0
-    fi
-    if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
-        echo
-        echo "XRD Phase Finder exited during startup."
-        read "?Press Enter to close..."
-        exit 1
-    fi
-    sleep 1
-done
-
-echo "Startup is taking longer than expected. The app may still be opening."
-read "?Press Enter to close..."
+"$APP_ROOT/launcher/setup_sci_env.command"
+exec /usr/bin/arch "-$SCI_ARCH" "$SCI_ENV/bin/python" "$APP_ROOT/launcher/fast_start.py" \
+    --data-root "$XRD_FINDER_USER_ROOT/data" --logs-root "$SCI_LOGS" "$@"
