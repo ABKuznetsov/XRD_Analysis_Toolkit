@@ -215,8 +215,7 @@ class FinderTopToolBar(QWidget):
             dark = is_dark_theme(self)
             colors = theme_colors(dark)
             bg, group, border, text, hover, muted = (
-                (colors['bg'], colors['panel'], colors['border'], colors['text'], colors['hover'], '#82909f') if dark else
-                ('#f4f7fa', '#ffffff', '#dce3eb', '#334155', '#edf2f7', '#94a3b8'))
+                colors[key] for key in ('bg','panel','border','text','hover','muted'))
             self.setStyleSheet(
                 f'QWidget#finderTopToolBar {{ background: {bg}; border: 1px solid {FINDER_BRAND_BLUE}; border-radius: 10px; }}'
                 f'QFrame#toolbarGroup {{ background: {group}; border: 1px solid {FINDER_BRAND_BLUE}; border-radius: 8px; }}'

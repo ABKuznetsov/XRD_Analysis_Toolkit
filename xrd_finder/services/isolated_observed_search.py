@@ -28,7 +28,7 @@ def run_observed_search_isolated(inputs, *, progress=None, cancelled=lambda:Fals
         previous=None
         def report():
             nonlocal previous
-            try:update=json.loads((root/'progress.json').read_text())
+            try:update=json.loads((root/'progress.json').read_text(encoding='utf-8'))
             except (OSError,ValueError):return
             if update != previous:
                 previous=update
@@ -58,9 +58,23 @@ def run_observed_search_isolated(inputs, *, progress=None, cancelled=lambda:Fals
         finally:
             if process is not None and process.poll() is None:
                 process.terminate()
-                try:process.wait(timeout=.1)
+                try:process.wait(timeout=3.)
                 except subprocess.TimeoutExpired:
-                    process.kill();process.wait(timeout=.1)
+                    process.kill();process.wait()
+
+
+def _publish_progress(root, values):
+    temporary=root/'progress.pending'
+    # Progress is advisory. A Windows reader or scanner holding this file must
+    # not discard a completed peak calculation; leave the last complete update.
+    for attempt in range(4):
+        try:
+            temporary.write_text(json.dumps(values), encoding='utf-8')
+            temporary.replace(root/'progress.json')
+            return
+        except PermissionError:
+            if attempt < 3:
+                time.sleep(.005*(attempt+1))
 
 
 def main(root):
@@ -68,9 +82,7 @@ def main(root):
     root=Path(root)
     inputs=pickle.loads((root/'input.pickle').read_bytes())
     def progress(*values):
-        temporary=root/'progress.pending'
-        temporary.write_text(json.dumps(values))
-        temporary.replace(root/'progress.json')
+        _publish_progress(root, values)
     result=prepare_observed_search(inputs,progress=progress)
     (root/'result.pickle').write_bytes(pickle.dumps(result))
 

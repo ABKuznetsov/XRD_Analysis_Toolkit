@@ -26,7 +26,8 @@ def accepted_profile_snapshot(window, pattern) -> dict:
     if not cache:
         return {}
     result = cache.get(window._finder_cache_key(pattern, window.match_candidates))
-    if result is None or not getattr(result, "sample_broadening_requested", False):
+    if (result is None or not getattr(result, "sample_broadening_requested", False)
+            or result.position_refinement.get('requires_confirmation')):
         return {}
     by_key = {candidate.candidate_key: candidate for candidate in result.candidates}
     keys = [window._candidate_key(candidate) for candidate in window.match_candidates]
@@ -73,7 +74,9 @@ def capture_gain_job(window) -> tuple[tuple, GainJobInput]:
         cache_root=str(window.local_phase_cache.root),
         pdf2_root=str(window.match_pdf2.root) if window.match_pdf2.is_configured() else "",
         embedded_paths=getattr(window.project.finder_state, "candidate_cif_paths", {}) or {},
-        project_phases=window.project.phases,
+        # The worker resolves only this scan's linked phases. Other scans must
+        # not invalidate a running result or its saved scientific signature.
+        project_phases=[phase for phase in window.project.phases if phase.id in linked_ids],
         project_structures=[structure for structure in window.project.structures
                             if structure.id in linked_structures or structure.phase_id in linked_ids],
         linked_phase_ids=list(getattr(pattern, "linked_phase_ids", []) or []),

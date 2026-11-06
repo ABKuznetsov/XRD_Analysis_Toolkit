@@ -284,9 +284,11 @@ def _polish_peak_alignment(original, observed, selected, initial_cell, *, wavele
     try:
         error(zero_shift)
         if refine_scan_zero:
-            lower, upper = max(-.5, zero_shift-.15), min(.5, zero_shift+.15)
-            # Keep an explicitly supplied outside-window seed; an empty
-            # intersection is not a scalar optimization domain.
+            lower, upper = zero_shift-.15, zero_shift+.15
+            if abs(zero_shift)<=.5:
+                lower, upper = max(-.5, lower), min(.5, upper)
+            # A larger Match start gets the same bounded local refinement;
+            # common-zero validation still rejects unsupported hypotheses.
             if lower < upper:
                 minimize_scalar(error, bounds=(lower, upper),
                     method='bounded', options={'maxiter':16, 'xatol':.0005})

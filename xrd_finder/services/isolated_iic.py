@@ -55,9 +55,9 @@ def prepare_iic_cache_isolated(cache_root, *, keys=None, ready=None, progress=No
         finally:
             if process is not None and process.poll() is None:
                 process.terminate()
-                try:process.wait(timeout=.1)
+                try:process.wait(timeout=3.)
                 except subprocess.TimeoutExpired:
-                    process.kill();process.wait(timeout=.1)
+                    process.kill();process.wait()
 
 
 def main(root):

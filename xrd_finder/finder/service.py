@@ -187,7 +187,8 @@ class FinderService:
                 structure.cell if structure is not None else candidate.initial_cell)
             for candidate,structure,peaks,_line_data in candidate_data
         ], observed.peaks,wavelength=context.primary_wavelength,zero_shift=global_zero,
-            refine_zero=finder_input.refine_scan_zero,budget=position_budget)
+            refine_zero=finder_input.refine_scan_zero,
+            allow_uncertain_zero=finder_input.allow_uncertain_zero,budget=position_budget)
         global_zero = positions.zero_shift_deg
         prepared_profiles = []
         for candidate_index, (candidate, structure, peaks, line_data) in enumerate(candidate_data):

@@ -26,6 +26,10 @@ from xrd_finder.services.cache_paths import default_phase_cache_root
 from xrd_finder.services.calculated_iic import CalculatedIic
 from xrd_finder.services.cod_online_service import CodEntry, CodOnlineService, formula_elements
 from xrd_finder.services.geometric_fingerprint import peak_geometric_hashes
+from xrd_finder.services.cache_json import pack_json, unpack_json, peak_prefix
+from xrd_finder.services.cache_storage import storage_policy, storage_version, compact_indexes, COMPACT_STORAGE_VERSION, CURRENT_STORAGE_VERSION
+from xrd_finder.services.normalized_reflections import normalized_reflections, normalize_reflections, range_join, ordered_card_query, indexed_card_count
+from xrd_finder.services.sql_reflection_storage import is_sql_peaks, pack_sql_peaks, unpack_sql_peaks, SqlPeakTextCache
 
 
 DEFAULT_CACHE_ROOT = default_phase_cache_root()
@@ -142,14 +146,20 @@ class LocalPhaseCache:
         cache.root = Path(root)
         cache.cif_dir = cache.root / "cif"
         cache.index_path = cache.root / "index.sqlite"
+        cache.compact_storage = storage_policy(cache.index_path)
+        cache.storage_version = storage_version(cache.index_path)
+        cache._peak_text_cache = SqlPeakTextCache(cache.index_path)
         cache._read_only = True
         cache.calculated_iic = CalculatedIic(cache.root / "references")
         return cache
 
-    def __init__(self, root: str | Path = DEFAULT_CACHE_ROOT) -> None:
+    def __init__(self, root: str | Path = DEFAULT_CACHE_ROOT, *, compact_storage: bool | None = None) -> None:
         self.root = Path(root)
         self.cif_dir = self.root / "cif"
         self.index_path = self.root / "index.sqlite"
+        self.compact_storage = storage_policy(self.index_path, compact_storage,recover=True)
+        self.storage_version = storage_version(self.index_path,recover=True) if self.compact_storage else 0
+        self._peak_text_cache = SqlPeakTextCache(self.index_path)
         self.cif_dir.mkdir(parents=True, exist_ok=True)
         self._calculated_pattern_service = CalculatedPatternService()
         self.calculated_iic = CalculatedIic(self.root / "references")
@@ -185,7 +195,7 @@ class LocalPhaseCache:
 
     def peak_indexed_count(self) -> int:
         with closing(self._connect()) as connection, connection:
-            return int(connection.execute("select count(distinct source || ':' || entry_id) from phase_peaks").fetchone()[0])
+            return indexed_card_count(connection)
 
     def search_is_fresh(self, source: str, query_key: str, max_age_seconds: float = 7 * 24 * 60 * 60) -> bool:
         with closing(self._connect()) as connection, connection:
@@ -504,8 +514,7 @@ class LocalPhaseCache:
                                pp.peak_index, pp.top_rank, max(pp.norm_intensity, 0.0) as norm_intensity,
                                max(pp.intensity, 0.0) as intensity, abs(pp.d - q.query_d) as delta
                         from query_peaks q
-                        cross join phase_peaks pp indexed by idx_phase_peaks_d
-                        join phases p on p.source = pp.source and p.entry_id = pp.entry_id
+                        cross join {range_join(connection)}
                         where pp.d is not null
                           and pp.d between q.query_d - q.query_tolerance_d and q.query_d + q.query_tolerance_d
                           and {" and ".join(where)}
@@ -906,7 +915,9 @@ class LocalPhaseCache:
         return self.cif_path("COD", cache_id)
 
     def get(self, source: str, entry_id: str) -> CachedPhaseEntry | None:
+        generation = self._peak_text_cache._generation()
         with closing(self._connect()) as connection, connection:
+            connection.execute('begin')
             row = connection.execute(
                 """
                 select source, entry_id, formula, name, spacegroup, source_text, cif_path, elements,
@@ -916,7 +927,7 @@ class LocalPhaseCache:
                 """,
                 (source, entry_id),
             ).fetchone()
-        return self._row_to_entry(row) if row else None
+            return self._row_to_entry(row,connection=connection,peak_generation=generation) if row else None
 
     def iic_entries(
         self, keys: Iterable[tuple[str, str]],
@@ -986,13 +997,8 @@ class LocalPhaseCache:
     def peak_records(self, source: str, entry_id: str) -> list[dict[str, object]]:
         with closing(self._connect()) as connection, connection:
             rows = connection.execute(
-                """
-                select peak_index, two_theta, d, intensity, norm_intensity, top_rank,
-                       raw_intensity, h, k, l, multiplicity, intrinsic_intensity, intensity_origin
-                from phase_peaks
-                where source = ? and entry_id = ?
-                order by peak_index
-                """,
+                ordered_card_query(connection,('peak_index','two_theta','d','intensity','norm_intensity',
+                    'top_rank','raw_intensity','h','k','l','multiplicity','intrinsic_intensity','intensity_origin')),
                 (str(source or "").upper(), str(entry_id or "")),
             ).fetchall()
         return [dict(row) for row in rows]
@@ -1098,104 +1104,25 @@ class LocalPhaseCache:
     def export_user_library(self, path: str | Path) -> int:
         return self.export_phase_library(path, sources=["USER"], library_name="user_phase_library")
 
-    def import_user_library(self, path: str | Path) -> int:
-        return self.import_phase_library(path, allowed_sources=["USER"])
+    def import_user_library(self, path: str | Path, *, progress=None, cancelled=lambda:False) -> int:
+        return self.import_phase_library(path, allowed_sources=["USER"],progress=progress,cancelled=cancelled)
 
     def export_phase_library(
-        self,
-        path: str | Path,
-        *,
-        sources: list[str] | tuple[str, ...],
-        library_name: str = "phase_library",
+        self, path: str | Path, *, sources: list[str] | tuple[str, ...],
+        library_name: str = "phase_library", progress=None, cancelled=lambda:False,
     ) -> int:
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        normalized_sources = [str(source or "").upper() for source in sources if str(source or "").strip()]
-        if not normalized_sources:
-            raise ValueError("At least one source is required for export.")
-        placeholders = ", ".join("?" for _ in normalized_sources)
-        with closing(self._connect()) as connection, connection:
-            rows = connection.execute(
-                f"""
-                select source, entry_id, formula, name, spacegroup, source_text, cif_path, elements,
-                       a, b, c, alpha, beta, gamma, volume, atoms_json, iic, iic_method, peaks_json, top_peaks_json, derived_version
-                from phases
-                where source in ({placeholders})
-                order by source, name, entry_id
-                """,
-                normalized_sources,
-            ).fetchall()
-        entries = []
-        for row in rows:
-            entry = dict(row)
-            cif_text = ""
-            cif_path = Path(str(entry.get("cif_path") or ""))
-            if cif_path.is_file():
-                try:
-                    cif_text = cif_path.read_text(encoding="utf-8", errors="replace")
-                except OSError:
-                    cif_text = ""
-            entry["cif_text"] = cif_text
-            entry.pop("cif_path", None)
-            entries.append(entry)
-        payload = {
-            "schema_version": 1,
-            "application": "XRD Phase Finder",
-            "library": library_name,
-            "sources": normalized_sources,
-            "entries": entries,
-        }
-        target.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
-        return len(entries)
+        from xrd_finder.services.phase_library_json import export_phase_json
+        return export_phase_json(self,path,sources=sources,library_name=library_name,
+                                 progress=progress,cancelled=cancelled)
 
     def import_phase_library(
-        self,
-        path: str | Path,
-        *,
+        self, path: str | Path, *,
         allowed_sources: list[str] | tuple[str, ...] | None = None,
+        progress=None, cancelled=lambda:False,
     ) -> int:
-        source_path = Path(path)
-        payload = json.loads(source_path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict) or payload.get("library") not in {"user_phase_library", "phase_library"}:
-            raise ValueError("Unsupported phase library file")
-        entries = payload.get("entries")
-        if not isinstance(entries, list):
-            raise ValueError("Phase library file does not contain entries")
-        allowed = {
-            str(source or "").upper()
-            for source in (allowed_sources or TRANSFERABLE_LIBRARY_SOURCES)
-            if str(source or "").strip()
-        }
-        imported = 0
-        for index, entry in enumerate(entries):
-            if not isinstance(entry, dict):
-                continue
-            source = str(entry.get("source") or "").upper()
-            if source not in allowed or source not in TRANSFERABLE_LIBRARY_SOURCES:
-                continue
-            cif_text = str(entry.get("cif_text") or "")
-            if not cif_text.strip():
-                continue
-            entry_id = str(entry.get("entry_id") or f"user_phase_{index + 1}").strip() or f"user_phase_{index + 1}"
-            safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", entry_id).strip("._") or f"user_phase_{index + 1}"
-            import_dir = self._transfer_import_dir(source)
-            import_dir.mkdir(parents=True, exist_ok=True)
-            temporary_path = import_dir / f"{safe_id}.cif"
-            counter = 1
-            while temporary_path.exists() and temporary_path.read_text(encoding="utf-8", errors="replace") != cif_text:
-                temporary_path = import_dir / f"{safe_id}_{counter}.cif"
-                counter += 1
-            temporary_path.write_text(cif_text, encoding="utf-8")
-            before = self.get(source, entry_id)
-            cached_entry = self._entry_from_transfer_payload(entry, source, entry_id, temporary_path)
-            with closing(self._connect()) as connection, connection:
-                self._upsert(connection, cached_entry, keep_cif=False)
-            if before is None:
-                imported += 1
-        return imported
+        from xrd_finder.services.phase_library_json import import_phase_json
+        return import_phase_json(self,path,allowed_sources=allowed_sources,
+                                 progress=progress,cancelled=cancelled)
 
     def _entry_from_transfer_payload(
         self,
@@ -1451,7 +1378,7 @@ class LocalPhaseCache:
     @staticmethod
     def _stored_reference_support(entry):
         try:
-            text = entry.peaks_json.lstrip()
+            text = peak_prefix(entry.peaks_json).lstrip()
             if not text.startswith('['):
                 return None
             offset = 1
@@ -1502,7 +1429,7 @@ class LocalPhaseCache:
         return self._reference_prefix_entry(source, entry_id, row)
 
     def _reference_prefix_entry(self, source, entry_id, row, *, connection=None):
-        text = row['first_lines'] or ''
+        text = peak_prefix(row['first_lines'] or '')
         stripped = text.lstrip()
         if stripped.startswith('['):
             offset = len(text)-len(stripped)+1
@@ -1520,7 +1447,7 @@ class LocalPhaseCache:
                         'select derived_version,peaks_json from phases where source=? and entry_id=?',
                         (source, entry_id)).fetchone()
                     return (CachedPhaseEntry(source, entry_id, derived_version=full['derived_version'],
-                                             peaks_json=full['peaks_json']) if full is not None else None)
+                                             peaks_json=unpack_sql_peaks(full['peaks_json'],connection,source,entry_id)) if full is not None else None)
         return CachedPhaseEntry(source, entry_id, derived_version=row['derived_version'], peaks_json=text)
 
     def reference_range_coverage(self, keys, *, wavelength=CU_KA1_WAVELENGTH,
@@ -1691,6 +1618,7 @@ class LocalPhaseCache:
         return json.dumps(rows, ensure_ascii=True, separators=(",", ":"))
 
     def _top_peaks_json_from_peaks_json(self, peaks_json: str, limit: int = 10) -> str:
+        peaks_json = unpack_json(peaks_json)
         if not peaks_json:
             return ""
         try:
@@ -1781,6 +1709,8 @@ class LocalPhaseCache:
             raise CancelledError('Peak index preparation cancelled')
         columns=['d','source','entry_id','peak_index','top_rank','norm_intensity','intensity']
         with closing(self._connect()) as connection:
+            if normalized_reflections(connection):
+                return False  # The 1702 covering index is built at conversion.
             stored=[row['name'] for row in connection.execute('pragma index_info(idx_phase_peaks_d)')]
             if stored==columns or getattr(self,'_read_only',False):
                 return False
@@ -2007,16 +1937,22 @@ class LocalPhaseCache:
             connection.execute("create index if not exists idx_phases_formula_key on phases(formula_key)")
             connection.execute("create index if not exists idx_phases_elements on phases(elements)")
             connection.execute("create index if not exists idx_phase_elements_element on phase_elements(element, source, entry_id)")
-            connection.execute("create index if not exists idx_phase_peaks_twotheta on phase_peaks(two_theta, source, entry_id)")
-            connection.execute("create index if not exists idx_phase_peaks_d on phase_peaks(d, source, entry_id, peak_index, top_rank, norm_intensity, intensity)")
-            connection.execute("create index if not exists idx_phase_peaks_phase on phase_peaks(source, entry_id)")
-            connection.execute("create index if not exists idx_phase_peaks_top_rank on phase_peaks(top_rank, two_theta, source, entry_id)")
+            if not self.compact_storage:
+                connection.execute("create index if not exists idx_phase_peaks_twotheta on phase_peaks(two_theta, source, entry_id)")
+            if not normalized_reflections(connection):
+                connection.execute("create index if not exists idx_phase_peaks_d on phase_peaks(d, source, entry_id, peak_index, top_rank, norm_intensity, intensity)")
+            if self.compact_storage:
+                compact_indexes(connection)
+                connection.execute(f'pragma user_version={self.storage_version}')
+            else:
+                connection.execute("create index if not exists idx_phase_peaks_phase on phase_peaks(source, entry_id)")
+                connection.execute("create index if not exists idx_phase_peaks_top_rank on phase_peaks(top_rank, two_theta, source, entry_id)")
             connection.execute("create index if not exists idx_phase_fingerprints_hash on phase_fingerprints(hash, source, entry_id)")
             element_count = connection.execute("select count(*) from phase_elements").fetchone()[0]
             if not element_count:
                 for row in connection.execute("select source, entry_id, elements from phases").fetchall():
                     self._replace_phase_elements(connection, row["source"], row["entry_id"], row["elements"])
-            peak_count = connection.execute("select count(*) from phase_peaks").fetchone()[0]
+            peak_count = connection.execute("select exists(select 1 from phase_peaks)").fetchone()[0]
             if rebuild_peak_index or not peak_count:
                 connection.execute("delete from phase_peaks")
                 for row in connection.execute("select source, entry_id, peaks_json from phases where peaks_json != ''").fetchall():
@@ -2026,6 +1962,8 @@ class LocalPhaseCache:
                         (self._top_peaks_json_from_peaks_json(row["peaks_json"]), row["source"], row["entry_id"]),
                     )
             self._ensure_chemical_index(connection)
+            if self.storage_version >= CURRENT_STORAGE_VERSION:
+                normalize_reflections(connection)
 
     def _connect(self) -> sqlite3.Connection:
         if getattr(self, "_read_only", False):
@@ -2069,8 +2007,24 @@ class LocalPhaseCache:
         keep_cif: bool,
         *,
         insert_only: bool = False,
+        skip_unchanged: bool = False,
     ) -> bool:
         old_cif = ""
+        # Own the complete read/compare/write sequence, not just the final
+        # INSERT. A second worker must not replace the primary rows midway.
+        own_write = not connection.in_transaction
+        generation = self._peak_text_cache._generation()
+        if own_write:
+            connection.execute('begin immediate')
+        def decode_peaks(value):
+            if own_write and is_sql_peaks(value):
+                return self._peak_text_cache.read(value,connection,entry.source,entry.entry_id,generation=generation)
+            return unpack_sql_peaks(value,connection,entry.source,entry.entry_id)
+        preserved_payloads = {}
+        reuse_prepared_index = False
+        row = None
+        entry.atoms_json = unpack_json(entry.atoms_json)
+        entry.peaks_json = decode_peaks(entry.peaks_json)
         if keep_cif:
             row = connection.execute(
                 """
@@ -2092,7 +2046,9 @@ class LocalPhaseCache:
                     for field in ('formula', 'spacegroup', 'a', 'b', 'c', 'alpha', 'beta', 'gamma',
                                   'volume', 'atoms_json', 'iic', 'iic_method', 'peaks_json',
                                   'top_peaks_json', 'derived_version'):
-                        setattr(entry, field, row[field])
+                        setattr(entry, field, (decode_peaks(row[field])
+                            if field=='peaks_json' else unpack_json(row[field]) if field=='atoms_json' else row[field]))
+                    preserved_payloads = {field:row[field] for field in ('atoms_json','peaks_json')}
                 copy_iic = entry.iic is None
                 for field in ("a", "b", "c", "alpha", "beta", "gamma", "volume", "iic"):
                     if getattr(entry, field) is None:
@@ -2101,10 +2057,69 @@ class LocalPhaseCache:
                     entry.iic_method = row["iic_method"]
                 for field in ("atoms_json", "peaks_json", "top_peaks_json"):
                     if not getattr(entry, field):
-                        setattr(entry, field, row[field])
+                        setattr(entry, field, (decode_peaks(row[field])
+                            if field=='peaks_json' else unpack_json(row[field]) if field=='atoms_json' else row[field]))
                 if getattr(entry, "derived_version", 0) == 0:
                     setattr(entry, "derived_version", row["derived_version"])
         cif_path = old_cif or entry.cif_path
+        previous = row if keep_cif else connection.execute(
+            'select atoms_json,peaks_json,derived_version from phases where source=? and entry_id=?',
+            (entry.source,entry.entry_id),
+        ).fetchone()
+        if previous is not None:
+            for field in ('atoms_json','peaks_json'):
+                if field in preserved_payloads:
+                    continue
+                try:
+                    unchanged = (decode_peaks(previous[field])
+                        if field=='peaks_json' else unpack_json(previous[field]))==getattr(entry,field)
+                except ValueError:
+                    # An explicit fresh preparation can replace damaged old data.
+                    unchanged = False
+                if unchanged:
+                    preserved_payloads[field] = previous[field]
+            if ('peaks_json' in preserved_payloads and entry.derived_version>0
+                    and previous['derived_version']==entry.derived_version):
+                indexed_count = connection.execute(
+                    'select count(*) from phase_peaks where source=? and entry_id=? '
+                    'and exists(select 1 from phase_fingerprint_state where source=? and entry_id=? and version=?)',
+                    (entry.source,entry.entry_id,entry.source,entry.entry_id,GEOMETRIC_FINGERPRINT_VERSION),
+                ).fetchone()[0]
+                try:
+                    stored_peaks = json.loads(entry.peaks_json)
+                    reuse_prepared_index = isinstance(stored_peaks,list) and indexed_count==len(stored_peaks) and indexed_count>0
+                except (ValueError,TypeError):
+                    reuse_prepared_index = False
+
+        if (skip_unchanged and not keep_cif and reuse_prepared_index
+                and 'atoms_json' in preserved_payloads):
+            # Legacy re-import may otherwise churn secondary B-trees despite
+            # identical payloads. This opt-in leaves normal refresh semantics
+            # alone and never skips repairing an absent/incomplete peak index.
+            fields = ('formula','name','spacegroup','source_text','cif_path','a','b','c',
+                      'alpha','beta','gamma','volume','iic','iic_method','top_peaks_json')
+            expected = {field:getattr(entry,field) for field in fields}
+            expected['top_peaks_json'] = entry.top_peaks_json or self._top_peaks_json_from_peaks_json(entry.peaks_json)
+            elements = formula_elements(entry.formula)
+            expected['elements'] = ' '.join(sorted(elements))
+            expected['formula_key'] = self._formula_key(entry.formula)
+            metadata = connection.execute('select '+','.join(expected)+' from phases where source=? and entry_id=?',
+                                          (entry.source,entry.entry_id)).fetchone()
+            if all(metadata[field]==value for field,value in expected.items()):
+                from xrd_finder.finder.composition_validation import chemical_search_key
+                chemistry = connection.execute('select formula,chemical_key,version from phase_chemistry '
+                    'where source=? and entry_id=?',(entry.source,entry.entry_id)).fetchone()
+                indexed_elements = {item[0] for item in connection.execute('select element from phase_elements '
+                    'where source=? and entry_id=?',(entry.source,entry.entry_id))}
+                if (indexed_elements==elements and chemistry is not None
+                        and tuple(chemistry)==(entry.formula,chemical_search_key(entry.formula),1)):
+                    return False
+
+        def stored_json(field, *, peaks=False):
+            if field in preserved_payloads:
+                return preserved_payloads[field]
+            value = getattr(entry,field)
+            return pack_json(value,peaks=peaks) if self.compact_storage else value
         conflict_clause = (
             "on conflict(source, entry_id) do nothing"
             if insert_only
@@ -2133,6 +2148,7 @@ class LocalPhaseCache:
                 updated_at = excluded.updated_at
             """
         )
+        pending_peaks = stored_json('peaks_json',peaks=True)
         cursor = connection.execute(
             f"""
             insert into phases(
@@ -2159,10 +2175,10 @@ class LocalPhaseCache:
                 entry.beta,
                 entry.gamma,
                 entry.volume,
-                entry.atoms_json,
+                stored_json('atoms_json'),
                 entry.iic,
                 entry.iic_method,
-                entry.peaks_json,
+                pending_peaks,
                 entry.top_peaks_json or self._top_peaks_json_from_peaks_json(entry.peaks_json),
                 entry.derived_version,
                 time.time(),
@@ -2172,7 +2188,13 @@ class LocalPhaseCache:
             return False
         self._save_chemical_key(connection,entry.source,entry.entry_id,entry.formula)
         self._replace_phase_elements(connection, entry.source, entry.entry_id, " ".join(sorted(formula_elements(entry.formula))))
-        self._replace_phase_peaks(connection, entry.source, entry.entry_id, entry.peaks_json)
+        if not reuse_prepared_index:
+            self._replace_phase_peaks(connection, entry.source, entry.entry_id, entry.peaks_json)
+        if self.storage_version >= COMPACT_STORAGE_VERSION and not is_sql_peaks(preserved_payloads.get('peaks_json')):
+            payload = pack_sql_peaks(entry.peaks_json,connection,entry.source,entry.entry_id,fallback=pending_peaks)
+            connection.execute('update phases set peaks_json=? where source=? and entry_id=?',
+                               (payload,entry.source,entry.entry_id))
+        self._peak_text_cache.clear()
         return True
 
     def _replace_phase_elements(
@@ -2200,6 +2222,7 @@ class LocalPhaseCache:
         entry_id: str,
         peaks_json: str,
     ) -> None:
+        peaks_json = unpack_sql_peaks(peaks_json,connection,source,entry_id)
         connection.execute("delete from phase_peaks where source = ? and entry_id = ?", (source, entry_id))
         connection.execute("delete from phase_fingerprints where source = ? and entry_id = ?", (source, entry_id))
         connection.execute("delete from phase_fingerprint_state where source = ? and entry_id = ?", (source, entry_id))
@@ -2309,16 +2332,21 @@ class LocalPhaseCache:
 
     def rebuild_peak_index(self) -> int:
         with closing(self._connect()) as connection, connection:
-            connection.execute("delete from phase_peaks")
             connection.execute("delete from phase_fingerprints")
             connection.execute("delete from phase_fingerprint_state")
-            rows = connection.execute("select source, entry_id, peaks_json from phases where peaks_json != ''").fetchall()
-            for row in rows:
-                self._replace_phase_peaks(connection, row["source"], row["entry_id"], row["peaks_json"])
-                connection.execute(
-                    "update phases set top_peaks_json = ? where source = ? and entry_id = ?",
-                    (self._top_peaks_json_from_peaks_json(row["peaks_json"]), row["source"], row["entry_id"]),
-                )
+            cursor = connection.execute("select source, entry_id, peaks_json from phases order by rowid")
+            while rows := cursor.fetchmany(16):
+                for row in rows:
+                    # These rows are now primary data, not a disposable index.
+                    # Decode each card before its own rows are replaced.
+                    text = unpack_sql_peaks(row['peaks_json'],connection,row['source'],row['entry_id'])
+                    self._replace_phase_peaks(connection, row['source'], row['entry_id'], text)
+                    connection.execute(
+                        'update phases set top_peaks_json=? where source=? and entry_id=?',
+                        (self._top_peaks_json_from_peaks_json(text),row['source'],row['entry_id']))
+            connection.execute('delete from phase_peaks where not exists '
+                               '(select 1 from phases p where p.source=phase_peaks.source and p.entry_id=phase_peaks.entry_id)')
+        self._peak_text_cache.clear()
         return self.peak_indexed_count()
 
     @staticmethod
@@ -2343,7 +2371,14 @@ class LocalPhaseCache:
     def _row_to_summary(row: sqlite3.Row) -> CachedPhaseSummary:
         return CachedPhaseSummary(**{name: row[name] for name in CachedPhaseSummary.__dataclass_fields__})
 
-    def _row_to_entry(self, row: sqlite3.Row) -> CachedPhaseEntry:
+    def _row_to_entry(self, row: sqlite3.Row, *, connection=None, peak_generation=None) -> CachedPhaseEntry:
+        if is_sql_peaks(row['peaks_json']) and connection is None:
+            # Full search rows may have outlived their connection. Reread all
+            # card metadata with its primary reflections in one snapshot.
+            entry = self.get(row['source'],row['entry_id'])
+            if entry is None:
+                raise LocalPhaseSearchError(sqlite3.OperationalError('Prepared card changed while reading; retry the search'))
+            return entry
         return CachedPhaseEntry(
             source=row["source"],
             entry_id=row["entry_id"],
@@ -2359,10 +2394,11 @@ class LocalPhaseCache:
             beta=row["beta"],
             gamma=row["gamma"],
             volume=row["volume"],
-            atoms_json=row["atoms_json"],
+            atoms_json=unpack_json(row["atoms_json"]),
             iic=row["iic"],
             iic_method=row["iic_method"],
-            peaks_json=row["peaks_json"],
+            peaks_json=(self._peak_text_cache.read(row['peaks_json'],connection,row['source'],row['entry_id'],generation=peak_generation)
+                        if is_sql_peaks(row['peaks_json']) else unpack_json(row['peaks_json'])),
             top_peaks_json=row["top_peaks_json"] if "top_peaks_json" in row.keys() else "",
             derived_version=row["derived_version"],
         )

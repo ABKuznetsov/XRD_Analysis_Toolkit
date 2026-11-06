@@ -1,37 +1,36 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.6.10",
+  "version": "1.7.0",
   "channel": "stable",
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
-  "published_at": "2026-11-03",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.10/XRD_Phase_Finder_Setup_v1_6_10.exe",
-  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.10",
+  "published_at": "2026-11-06",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_Setup_v1_7_0.exe",
+  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.0",
   "assets": [
     {
-      "name": "XRD_Phase_Finder_Setup_v1_6_10.exe",
+      "name": "XRD_Phase_Finder_Setup_v1_7_0.exe",
       "type": "installer",
       "platform": "windows",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.10/XRD_Phase_Finder_Setup_v1_6_10.exe",
-      "sha256": "344b38454f78c2f642b61285aeec642331e1e468b595c6fe09a42f6049c87771",
-      "size_bytes": 5578276
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_Setup_v1_7_0.exe",
+      "sha256": "0d0cba40d69e958c4818be188a58282ef45c7c4c9790631e095c2f4abc0f2e41",
+      "size_bytes": 5613063
     }
   ],
   "summary": [
-    "Download and prepare the inorganic COD selection with separate download/calculation progress and time estimates.",
-    "Reuse downloaded CIFs and compatible prepared reflections instead of repeating completed work.",
-    "Export and import prepared libraries as .xpflib archives for transfer between laboratory computers.",
-    "Check reference coverage against the measured scan range to avoid unnecessary recalculation.",
-    "Use blue toolbar frames matching the Finder icon.",
-    "Temporarily disable the CCDC web-search controls; manually downloaded CIF files can still be imported."
+    "Reuse prepared reference libraries with compact SQLite storage and portable library archives.",
+    "Improve startup and keep initial preparation outside the main window.",
+    "Restore saved profiles and peak assignments consistently, including Le Bail results.",
+    "Preserve existing calculated I/Ic values and calculate eligible missing values despite noncritical CIF warnings.",
+    "Handle transient Windows worker-file locks without losing completed results."
   ],
-  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.10/XRD_Phase_Finder_Setup_v1_6_10.exe",
-  "installer_sha256": "344b38454f78c2f642b61285aeec642331e1e468b595c6fe09a42f6049c87771",
-  "installer_filename": "XRD_Phase_Finder_Setup_v1_6_10.exe",
-  "installer_size_bytes": 5578276,
+  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_Setup_v1_7_0.exe",
+  "installer_sha256": "0d0cba40d69e958c4818be188a58282ef45c7c4c9790631e095c2f4abc0f2e41",
+  "installer_filename": "XRD_Phase_Finder_Setup_v1_7_0.exe",
+  "installer_size_bytes": 5613063,
   "platform_versions": {
-    "windows": "1.6.10"
+    "windows": "1.7.0"
   },
-  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.10"
+  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.0"
 }

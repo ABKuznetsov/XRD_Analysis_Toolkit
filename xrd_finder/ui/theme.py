@@ -24,14 +24,14 @@ def theme_colors(dark: bool = False, widget: QWidget | None = None) -> dict[str,
     if widget is not None:
         dark = is_dark_theme(widget)
     if dark:
-        return dict(bg='#10141a', panel='#161c24', alt='#1c2430', text='#e3eaf2',
-                    muted='#9aaabb', border='#303c4b', selected='#173e38', input='#111821',
-                    header='#1c2632', hover='#242f3d', link='#6cdac1', accent='#087f69',
-                    cell_border='#415166', attention_text='#ff8791', **SEMANTIC_COLORS)
-    return dict(bg='#f4f7fa', panel='#ffffff', alt='#f7f9fc', text='#334155',
-                muted='#64748b', border='#dce3eb', selected='#e0f2ed', input='#ffffff',
-                header='#edf2f7', hover='#edf2f7', link='#087f69', accent='#087f69',
-                cell_border='#c3cfdc', attention_text='#b42336', **SEMANTIC_COLORS)
+        return dict(bg='#070f20', panel='#0c1930', alt='#12223c', text='#e6edf7',
+                    muted='#a0b1cb', border='#2b4263', selected='#173e38', input='#081428',
+                    header='#152947', hover='#1b3152', link='#6cdac1', accent='#087f69',
+                    cell_border='#3a5378', attention_text='#ff8791', **SEMANTIC_COLORS)
+    return dict(bg='#f5f8ff', panel='#ffffff', alt='#f0f5ff', text='#263752',
+                muted='#60718c', border='#d4deef', selected='#e0f2ed', input='#ffffff',
+                header='#eaf0fb', hover='#e6eefb', link='#087f69', accent='#087f69',
+                cell_border='#bdcce3', attention_text='#b42336', **SEMANTIC_COLORS)
 
 
 def _asset(name: str) -> str:
@@ -108,6 +108,8 @@ def window_style(dark: bool = False) -> str:
     return f'''
         QDialog {{ background: {c['bg']}; color: {c['text']}; font-size: 13px; }}
         QWidget {{ color: {c['text']}; }}
+        QWidget#databaseSettingsBody, QWidget#instrumentProfileBody,
+        QWidget#instrumentProfileEditor, QWidget#instrumentProfilePage {{ background: {c['panel']}; }}
         QLabel {{ background: transparent; }}
         QLabel[uiRole="sectionTitle"] {{ color: {c['text']}; font-weight: 600; padding: 4px 0; }}
         QLabel[uiRole="muted"], QLabel#processingPlaceholder {{ color: {c['muted']}; }}

@@ -69,6 +69,8 @@ def check_runtime(mode: str = "gui") -> None:
 
     _check_cristma_powder_api()
 
+    if mode == "core":
+        return
     if mode == "gui":
         from xrd_finder.ui.analysis_windows import PhaseFinderWindow  # noqa: F401
     elif mode == "cli":
@@ -79,7 +81,7 @@ def check_runtime(mode: str = "gui") -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate the XRD Phase Finder runtime")
-    parser.add_argument("--mode", choices=("gui", "cli"), default="gui")
+    parser.add_argument("--mode", choices=("core", "gui", "cli"), default="gui")
     args = parser.parse_args()
     check_runtime(args.mode)
     print(f"XRD Phase Finder {args.mode} runtime is ready")

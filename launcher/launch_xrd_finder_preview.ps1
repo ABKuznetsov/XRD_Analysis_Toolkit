@@ -572,14 +572,6 @@ function Set-ProgressText {
 }
 
 $appRoot = Resolve-AppRoot
-$associationScript = Join-Path $appRoot "launcher\register_xpff_file_type.ps1"
-if (Test-Path -LiteralPath $associationScript) {
-    try {
-        & $associationScript -AppRoot $appRoot -Quiet
-    } catch {
-        # File association repair must never block application startup.
-    }
-}
 $sciRoot = Join-Path $env:LOCALAPPDATA "Sci"
 $envRoot = Join-Path $sciRoot "env"
 $appsRoot = Join-Path $sciRoot "apps"
@@ -613,6 +605,40 @@ if (Test-Path -LiteralPath $appManifestPath) {
         if ($earlyAppManifest.version) { $localVersion = [string]$earlyAppManifest.version }
         if ($earlyAppManifest.entry_module) { $entryModule = [string]$earlyAppManifest.entry_module }
     } catch {
+    }
+}
+# A healthy installation opens Finder directly. Keep the WinForms bootstrap
+# only for first installation/repair, not for every ordinary application start.
+$fastStartScript = Join-Path $appRoot "launcher\fast_start.py"
+if ((Test-Path -LiteralPath $pythonExe) -and (Test-Path -LiteralPath $fastStartScript)) {
+    $fastInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $fastInfo.FileName = $pythonExe
+    $fastInfo.Arguments = "`"$fastStartScript`" --data-root `"$dataRoot`" --logs-root `"$logsRoot`""
+    if ($ProjectPath) {
+        $escapedProjectPath = $ProjectPath.Replace('"', '\"')
+        $fastInfo.Arguments += " --project `"$escapedProjectPath`""
+    }
+    $fastInfo.WorkingDirectory = $appRoot
+    $fastInfo.UseShellExecute = $false
+    $fastInfo.CreateNoWindow = $true
+    $fastProcess = [System.Diagnostics.Process]::Start($fastInfo)
+    $fastProcess.WaitForExit()
+    $fastCode = $fastProcess.ExitCode
+    $fastProcess.Dispose()
+    if ($fastCode -eq 0) { exit 0 }
+    if ($fastCode -ne 75) {
+        Add-Type -AssemblyName System.Windows.Forms
+        [System.Windows.Forms.MessageBox]::Show("Finder could not open. See the startup log: " + (Join-Path $logsRoot "xrd_finder_console.log"), "Finder could not open") | Out-Null
+        exit $fastCode
+    }
+}
+
+$associationScript = Join-Path $appRoot "launcher\register_xpff_file_type.ps1"
+if (Test-Path -LiteralPath $associationScript) {
+    try {
+        & $associationScript -AppRoot $appRoot -Quiet
+    } catch {
+        # File association repair must never block application startup.
     }
 }
 Add-Type -AssemblyName System.Windows.Forms
@@ -727,7 +753,6 @@ try {
     Ensure-Folder (Join-Path $finderRoot "matplotlib")
     Set-Step 0 "OK" "User data and cache folders are ready" "Green"
 
-    Pause-PreviewStep
     $script:ActiveStep = 1
     Set-ProgressText 28 "Preparing runtime"
     Set-Step 1 "Checking..." "Testing Python and required scientific packages" "Blue"
@@ -865,7 +890,6 @@ try {
     }
 
 
-    Pause-PreviewStep
     $script:ActiveStep = 2
     Set-ProgressText 48 "Checking sources"
     if ($secureMode) {
@@ -875,126 +899,7 @@ try {
         Set-Step 2 "OK" "Configured sources are available" "Green"
     }
 
-    Pause-PreviewStep
-    $script:ActiveStep = 3
-    Set-ProgressText 68 "Checking for updates"
-    Set-Step 3 "Checking..." ("Current version: " + $localVersion) "Blue"
-    $offlineMode = $secureMode
-    if (Test-Path -LiteralPath $appManifestPath) {
-        $appManifest = Get-Content -LiteralPath $appManifestPath -Raw | ConvertFrom-Json
-        if ($appManifest.version) { $localVersion = [string]$appManifest.version }
-        if ($appManifest.entry_module) { $entryModule = [string]$appManifest.entry_module }
-        $versionLabel.Text = "Version $localVersion"
-        Set-Step 3 "Checking..." ("Current version: " + $localVersion) "Blue"
-    }
-    if (Test-Path -LiteralPath $manifestPath) {
-        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-        $appInfo = $manifest.apps.$AppId
-        if ($appInfo.manifest_url) { $manifestUrl = [string]$appInfo.manifest_url }
-        if ($appInfo.update_manifest_url) { $updateManifestUrl = [string]$appInfo.update_manifest_url }
-        if ($appInfo.windows_update_manifest_url) { $updateManifestUrl = [string]$appInfo.windows_update_manifest_url }
-        if (-not $updateManifestUrl) { $updateManifestUrl = $WindowsUpdateManifestUrl }
-        if ($appInfo.installer_url) { $installerUrl = [string]$appInfo.installer_url }
-        if ($appInfo.installer_sha256) { $installerSha256 = [string]$appInfo.installer_sha256 }
-        if ($appInfo.release_url) { $releaseUrl = [string]$appInfo.release_url }
-    }
-
-    $updateStatus = [ordered]@{
-        checked_at = (Get-Date).ToString("s")
-        app_id = $AppId
-        current_version = $localVersion
-        latest_version = $localVersion
-        update_available = $false
-        release_url = $releaseUrl
-        release_page_url = $releaseUrl
-        installer_url = $installerUrl
-        installer_sha256 = $installerSha256
-        error = $null
-    }
-    if ($offlineMode) {
-        Set-Step 3 "Secure" "Secure/offline mode enabled; update check skipped" "Muted"
-    } elseif ($manifestUrl -or $updateManifestUrl) {
-        try {
-            $remoteUrl = $manifestUrl
-            if ($updateManifestUrl) { $remoteUrl = $updateManifestUrl }
-            $remote = Invoke-RestMethod -Uri $remoteUrl -UseBasicParsing -TimeoutSec 5
-            if ($remote -is [string]) { $remote = $remote | ConvertFrom-Json }
-            $remoteApp = $remote
-            if ($remote.apps -and $remote.apps.$AppId) { $remoteApp = $remote.apps.$AppId }
-            $remoteVersion = $remoteApp.version
-            if ($remoteApp.platform_versions -and $remoteApp.platform_versions.windows) {
-                $remoteVersion = $remoteApp.platform_versions.windows
-            }
-            if ($remoteVersion) {
-                $latestVersion = [string]$remoteVersion
-                $updateStatus.latest_version = $latestVersion
-                if ((Compare-VersionText $latestVersion $localVersion) -gt 0) {
-                    $updateStatus.update_available = $true
-                    if ($remoteApp.release_page_url) { $updateStatus.release_page_url = [string]$remoteApp.release_page_url }
-                    elseif ($remoteApp.release_url) { $updateStatus.release_page_url = [string]$remoteApp.release_url }
-                    if ($remoteApp.release_url) { $updateStatus.release_url = [string]$remoteApp.release_url }
-                    if ($remoteApp.installer_url) { $updateStatus.installer_url = [string]$remoteApp.installer_url }
-                    if ($remoteApp.installer_sha256) { $updateStatus.installer_sha256 = [string]$remoteApp.installer_sha256 }
-                    if ($remoteApp.assets -and $remoteApp.assets.Count -gt 0) {
-                        $asset = $remoteApp.assets | Where-Object {
-                            $platform = ([string]$_.platform).ToLowerInvariant()
-                            $name = ([string]$_.name).ToLowerInvariant()
-                            $platform -like "*windows*" -or $name.EndsWith(".exe")
-                        } | Select-Object -First 1
-                        if ($asset.url) { $updateStatus.installer_url = [string]$asset.url }
-                        if ($asset.sha256) { $updateStatus.installer_sha256 = [string]$asset.sha256 }
-                    }
-                    Set-Step 3 "Update" ("$localVersion -> $latestVersion") "Blue"
-                    $summaryLines = New-Object System.Collections.Generic.List[string]
-                    if ($remoteApp.summary) {
-                        foreach ($line in $remoteApp.summary) {
-                            $textLine = [string]$line
-                            if ($textLine.Trim()) { $summaryLines.Add("- " + $textLine.Trim()) | Out-Null }
-                        }
-                    }
-                    if ($summaryLines.Count -eq 0) {
-                        $summaryLines.Add("- See the release notes for details.") | Out-Null
-                    }
-                    $message = "A new XRD Phase Finder version is available: $latestVersion.`r`nCurrent version: $localVersion`r`n`r`nWhat changed:`r`n" + ($summaryLines -join "`r`n") + "`r`n`r`nDownload and start the installer now?"
-                    $choice = Show-OwnedQuestion $message "XRD Phase Finder update available"
-                    if ($choice -eq [System.Windows.Forms.DialogResult]::Yes) {
-                        $downloadTarget = $updateStatus.installer_url
-                        if (-not $downloadTarget) { $downloadTarget = $updateStatus.release_url }
-                        try {
-                            Download-And-RunUpdate $downloadTarget $updateStatus.installer_sha256 $latestVersion
-                            $updateStatus.update_started = $true
-                            Stop-PreparedApplication $appProcess
-                            ($updateStatus | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath (Join-Path $updateRoot "$AppId.json") -Encoding UTF8
-                            $script:Form.Close()
-                            return
-                        } catch {
-                            $fallbackMessage = "The automatic update download failed:`r`n" + $_.Exception.Message + "`r`n`r`nOpen the release page instead?"
-                            $fallbackChoice = Show-OwnedQuestion $fallbackMessage "XRD Phase Finder update"
-                            $fallbackPage = $updateStatus.release_page_url
-                            if (-not $fallbackPage) { $fallbackPage = $updateStatus.release_url }
-                            if ($fallbackChoice -eq [System.Windows.Forms.DialogResult]::Yes -and $fallbackPage) {
-                                Start-Process $fallbackPage | Out-Null
-                                $script:Form.Close()
-                                return
-                            }
-                        }
-                    }
-                } else {
-                    Set-Step 3 "OK" ("No update available. Current version: $localVersion") "Green"
-                }
-            } else {
-                Set-Step 3 "OK" ("No update available. Current version: $localVersion") "Green"
-            }
-        } catch {
-            $updateStatus.error = $_.Exception.Message
-            Set-Step 3 "Offline" "Update check unavailable" "Muted"
-        }
-    } else {
-        Set-Step 3 "OK" "No update source configured" "Muted"
-    }
-    ($updateStatus | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath (Join-Path $updateRoot "$AppId.json") -Encoding UTF8
-
-    Pause-PreviewStep
+    Set-Step 3 "Later" "Updates are checked after Finder opens" "Muted"
     $script:ActiveStep = 4
     Set-ProgressText 88 "Opening application"
     Set-Step 4 "Opening..." "Showing the main application window" "Blue"

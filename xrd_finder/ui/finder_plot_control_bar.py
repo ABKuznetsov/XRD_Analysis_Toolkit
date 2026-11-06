@@ -47,7 +47,7 @@ class FinderPlotControlBar(QWidget):
         self._bar_layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         self._bar_layout.setContentsMargins(8, 5, 8, 5)
         self._bar_layout.setSpacing(6)
-        self._controls = QWidget()
+        self._controls = QWidget(self)
         layout = WrappingLayout(self._controls)
         self._flow_layout = layout
 
@@ -99,7 +99,7 @@ class FinderPlotControlBar(QWidget):
         self.pattern_offset_slider.valueChanged.connect(self._set_offset_value)
         self.pattern_offset_slider.valueChanged.connect(self.patternOffsetPercentChanged)
 
-        self.cursor_position_status_label = QLabel()
+        self.cursor_position_status_label = QLabel(self)
         self.cursor_position_status_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )

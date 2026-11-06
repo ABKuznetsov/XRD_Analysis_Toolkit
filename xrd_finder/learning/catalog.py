@@ -243,7 +243,7 @@ CHAPTERS = (
  C('instrument', '9 · Instrument and profile improvements', 'Set radiation/widths and understand calibration and limited Le Bail.', (
   S('instrument.saved', 'Choose and save a profile',
     'Reuse one consistent instrument description.', 'Instrument settings',
-    'Open Instrument settings, select the correct saved profile or create a new one, and complete its identity information. Review what measurements the dialog will apply to before applying. Save a reusable profile rather than retyping its parameters for every sample.',
+    'Open Instrument settings and manage reusable profiles through Profiles…. Create, save, import or export a profile there. This window does not change measurements. To change a measurement, open Processing → Instrument and radiation, choose the profile and its scope, then press Apply.',
     'The measurement and future search setup can use the intended saved profile.',
     'A similarly named profile may use a different wavelength or geometry. The demo profile is labelled synthetic and is not your instrument calibration.', 'instrument', 'instrument_open', keywords='instrument saved profile diffractometer apply selected'),
   S('instrument.radiation', 'Radiation components and instrumental widths',

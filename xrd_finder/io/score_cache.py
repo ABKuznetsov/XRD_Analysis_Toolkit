@@ -37,8 +37,8 @@ def _rows(rows):
 
 def _project_references(window,pattern):
     linked=set(getattr(pattern,'linked_phase_ids',[]) or [])
-    phases=getattr(window.project,'phases',[])
-    structure_ids={phase.structure_id for phase in phases if phase.id in linked}
+    phases=[phase for phase in getattr(window.project,'phases',[]) if phase.id in linked]
+    structure_ids={phase.structure_id for phase in phases}
     records=[]
     for item in [*phases,*[structure for structure in getattr(window.project,'structures',[])
                          if structure.id in structure_ids or structure.phase_id in linked]]:

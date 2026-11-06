@@ -37,6 +37,44 @@ def _note(baseline, status, message, **details):
     return result
 
 
+def refresh_le_bail_peak_evidence(result):
+    """Repair relative line strengths without changing the fitted count profile."""
+    note = result.position_refinement.get('le_bail', {})
+    if note.get('status') != 'applied' or note.get('peak_evidence') == 'visible-range-v1':
+        return result
+    from xrd_finder.finder.assignment_builder import AssignmentBuilder
+    from xrd_finder.finder.matching import search_match_result
+    from xrd_finder.services.calculated_pattern_service import HKLPeak
+
+    low, high = result.pattern_x[0], result.pattern_x[-1]
+    peak_sets = []
+    for candidate in result.candidates:
+        rows = list(zip(candidate.peak_two_theta, candidate.peak_intensity,
+                        candidate.peak_h, candidate.peak_k, candidate.peak_l, strict=True))
+        visible = [row for row in rows if low <= row[0] <= high]
+        if not visible or any(not math.isfinite(row[1]) or row[1] < 0. for row in visible):
+            raise ValueError('Le Bail has invalid visible reflection intensities.')
+        maximum = max(row[1] for row in visible)
+        if maximum <= 0.:
+            raise ValueError('An accepted phase has no observable Le Bail intensity.')
+        candidate.peak_intensity = [value/maximum*100. for _,value,*_ in rows]
+        peaks = [HKLPeak(h,k,l,0.,angle,value/maximum*100.)
+                 for angle,value,h,k,l in visible]
+        matched = search_match_result(peaks, [p.two_theta for p in result.observed_peaks])
+        for name in ('score','status','matched_peaks','total_peaks','mean_delta_two_theta'):
+            setattr(candidate,name,getattr(matched,name))
+        candidate.matched_reference_two_theta = [p.reference_two_theta for p in matched.matches]
+        candidate.matched_observed_two_theta = [p.observed_two_theta for p in matched.matches]
+        candidate.matched_delta_two_theta = [p.delta_two_theta for p in matched.matches]
+        peak_sets.append((candidate,peaks))
+    result.observed_peaks = AssignmentBuilder().assign_observed_peaks(
+        result.observed_peaks,peak_sets,tolerance=.25)
+    # Stored profiles remain reusable: only their derived line evidence changed.
+    result.position_refinement = {**result.position_refinement,
+        'le_bail': {**note, 'peak_evidence': 'visible-range-v1'}}
+    return result
+
+
 def _cif_paths(inputs, baseline):
     paths = [Path(item.cif_path or item.quantification_cif_path)
              if item.cif_path or item.quantification_cif_path else None for item in inputs.candidates]
@@ -110,10 +148,10 @@ def refine_accepted_le_bail(inputs, baseline, *, enabled=True, timeout_seconds=2
                 if process is not None and process.poll() is None:
                     process.terminate()
                     try:
-                        process.wait(timeout=.05)
+                        process.wait(timeout=3.)
                     except subprocess.TimeoutExpired:
                         process.kill()
-                        process.wait(timeout=.05)
+                        process.wait()
     except (OSError, ValueError, RuntimeError, pickle.UnpicklingError, subprocess.TimeoutExpired) as exc:
         return _note(baseline, 'unavailable', str(exc))
 
@@ -132,8 +170,6 @@ def _native_result(inputs, baseline, *, checkpoint=None, deadline=None):
     from cristma.diffraction import (LeBailExtractor, LeBailPhase, LeBailRefiner,
         PseudoVoigtProfile, ReflectionGenerator, TchProfile, UniformTwoThetaGrid)
     from xrd_finder.core.structure import CellParameters
-    from xrd_finder.finder.assignment_builder import AssignmentBuilder
-    from xrd_finder.finder.matching import search_match_result
     from xrd_finder.finder.profile_backend import instrument_profile_with_width_floor
     from xrd_finder.instrument.resolution import cristma_tch_profile
     from xrd_finder.services.calculated_pattern_service import HKLPeak
@@ -203,7 +239,6 @@ def _native_result(inputs, baseline, *, checkpoint=None, deadline=None):
             return _note(baseline, 'no_improvement', 'Le Bail did not improve profile agreement; structural fit retained.')
         result = deepcopy(baseline)
         final_cells = dict(native.cells)
-        peak_sets = []
         wavelength = float(spectrum.components[0].wavelength_angstrom)
         by_id = {p.phase.phase_id:p for p in extraction.phases}
         calculated_by_id = {p.phase.phase_id:values for p,values in zip(extraction.phases,profiles)}
@@ -225,9 +260,6 @@ def _native_result(inputs, baseline, *, checkpoint=None, deadline=None):
                 if isinstance(profile,TchProfile) else profile.fwhm_deg)
             candidate.profile_eta = None if isinstance(profile,TchProfile) else float(profile.eta)
             peaks = []
-            maximum = max((g.integrated_intensity for g in phase.intensity_groups),default=0.)
-            if maximum <= 0.:
-                raise ValueError('An accepted phase has no observable Le Bail intensity.')
             for group in phase.intensity_groups:
                 ratio = wavelength/(2.*group.d_spacing)
                 if not 0. < ratio < 1.:
@@ -237,7 +269,7 @@ def _native_result(inputs, baseline, *, checkpoint=None, deadline=None):
                     continue
                 hkl = group.representative_hkls[0]
                 peaks.append(HKLPeak(hkl.h,hkl.k,hkl.l,group.d_spacing,angle,
-                    100.*group.integrated_intensity/maximum,raw_intensity=group.integrated_intensity,
+                    group.integrated_intensity,raw_intensity=group.integrated_intensity,
                     intensity_origin='le_bail_integrated_counts'))
             peaks.sort(key=lambda p:p.two_theta)
             if not peaks:
@@ -248,17 +280,6 @@ def _native_result(inputs, baseline, *, checkpoint=None, deadline=None):
             candidate.peak_h = [p.h for p in peaks]
             candidate.peak_k = [p.k for p in peaks]
             candidate.peak_l = [p.l for p in peaks]
-            matched = search_match_result(peaks, [p.two_theta for p in result.observed_peaks])
-            for name in ('score','status','matched_peaks','total_peaks','mean_delta_two_theta'):
-                setattr(candidate,name,getattr(matched,name))
-            candidate.matched_reference_two_theta = [p.reference_two_theta for p in matched.matches]
-            candidate.matched_observed_two_theta = [p.observed_two_theta for p in matched.matches]
-            candidate.matched_delta_two_theta = [p.delta_two_theta for p in matched.matches]
-            candidate.cell_fit_peaks = matched.matched_peaks
-            candidate.cell_fit_rms_deg = (float(np.sqrt(np.mean(np.square(candidate.matched_delta_two_theta))))
-                                        if matched.matches else 0.)
-            peak_sets.append((candidate,peaks))
-        result.observed_peaks = AssignmentBuilder().assign_observed_peaks(result.observed_peaks,peak_sets,tolerance=.25)
         result.calculated_total = total.tolist()
         result.fwhm = float(np.median([p.fwhm for p in result.candidates]))
         result.profile_eta = (None if any(p.profile_eta is None for p in result.candidates)
@@ -271,7 +292,7 @@ def _native_result(inputs, baseline, *, checkpoint=None, deadline=None):
             grid_rounding_max_deg=round(rounding_error, 9),
             initial_residual_norm=initial_norm, residual_norm=final_norm,
             diagnostics=[str(d.message) for d in native.diagnostics])
-        return result
+        return refresh_le_bail_peak_evidence(result)
 
 
     # Start with all phases, then individually improve accepted phases while
@@ -343,12 +364,24 @@ def _native_result(inputs, baseline, *, checkpoint=None, deadline=None):
         note['stopped'] = stopped
     return best
 
+def _publish_checkpoint(root, result):
+    temporary = root/'checkpoint.pending'
+    # A checkpoint is optional; the final result has its own output file.
+    # Preserve the last complete checkpoint while Windows readers release it.
+    for attempt in range(4):
+        try:
+            temporary.write_bytes(pickle.dumps(result))
+            temporary.replace(root/'checkpoint.pickle')
+            return
+        except PermissionError:
+            if attempt < 3:
+                time.sleep(.005*(attempt+1))
+
+
 if __name__ == '__main__':
     root = Path(sys.argv[1])
     inputs, baseline, deadline = pickle.loads((root/'input.pickle').read_bytes())
     def checkpoint(result):
-        temporary = root/'checkpoint.pending'
-        temporary.write_bytes(pickle.dumps(result))
-        temporary.replace(root/'checkpoint.pickle')
+        _publish_checkpoint(root, result)
     result = run_native_le_bail(inputs, baseline, checkpoint=checkpoint, deadline=deadline)
     (root/'result.pickle').write_bytes(pickle.dumps(result))

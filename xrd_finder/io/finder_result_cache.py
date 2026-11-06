@@ -1,6 +1,7 @@
 """Portable, validated calculation results; project files contain JSON only."""
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict
 from functools import lru_cache
 import hashlib
@@ -20,7 +21,7 @@ from xrd_finder.finder.models import (
 
 RESULT_FORMAT_VERSION = 1
 # Bump when changing the scientific calculation without an application release.
-CALCULATION_REVISION = '2026-11-01-common-scan-zero-1'
+CALCULATION_REVISION = '2026-11-05-common-scan-zero-operator-decision-3'
 
 
 @lru_cache(maxsize=256)
@@ -69,12 +70,22 @@ def restore_result(record, portable_key: tuple) -> FinderResult | None:
     if not isinstance(record, dict) or record.get('format') != RESULT_FORMAT_VERSION:
         return None
     try:
-        if record.get('signature') != _digest((_engine_identity(), portable_key)):
-            return None
         payload = record['result']
+        if not isinstance(payload, dict) or not isinstance(payload.get('position_refinement', {}), dict):
+            return None
+        identity = _engine_identity()
+        if record.get('signature') != _digest((identity, portable_key)):
+            # This revision only adds an operator decision for previously
+            # rejected zero proposals. Already confirmed geometry is unchanged.
+            previous = (identity[0], '2026-11-05-common-scan-zero-large-seed-2', identity[2])
+            if (payload.get('position_refinement', {}).get('zero_confirmed') is not True
+                    or record.get('signature') != _digest((previous, portable_key))):
+                return None
         if record.get('result_sha256') != _digest(payload):
             return None
-        values = dict(payload)
+        # Live results are editable (for example, a zero-shift decision). They
+        # must never share mutable data with the signed, portable cache record.
+        values = deepcopy(payload)
         candidates = [FinderCandidateResult(**item) for item in values.pop('candidates')]
         observed = []
         for item in values.pop('observed_peaks', []):
@@ -99,6 +110,9 @@ def restore_result(record, portable_key: tuple) -> FinderResult | None:
                 return None
             if any(len(assignment.hkl) != 3 for assignment in peak.assignments):
                 return None
+        if result.position_refinement.get('le_bail', {}).get('status') == 'applied':
+            from xrd_finder.services.le_bail import refresh_le_bail_peak_evidence
+            result = refresh_le_bail_peak_evidence(result)
         return result
     except (KeyError, TypeError, ValueError, OverflowError):
         return None

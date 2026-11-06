@@ -206,6 +206,15 @@ def observed_peak_records(
         peak_indices = np.asarray(sorted(set(refined_indices)), dtype=int)
     else:
         peak_indices = _refine_peak_indices_on_raw(x_values, y, peak_indices)
+    # A smoothed maximum can move to the edge of the raw refinement window,
+    # onto a neighbouring peak's slope. Height SNR does not make that slope a
+    # peak. Keep actual raw maxima, allowing any sample on a flat peak top.
+    _, maxima = find_peaks(y, plateau_size=True)
+    groups = np.searchsorted(maxima['right_edges'], peak_indices)
+    inside = groups < len(maxima['left_edges'])
+    valid = np.zeros(len(peak_indices), dtype=bool)
+    valid[inside] = peak_indices[inside] >= maxima['left_edges'][groups[inside]]
+    peak_indices = peak_indices[valid]
     prominences = peak_prominences(y, peak_indices)[0]
     width_result = peak_widths(y, peak_indices, rel_height=0.5)
     widths = width_result[0]

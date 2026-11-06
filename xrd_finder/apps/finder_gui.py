@@ -60,6 +60,9 @@ def _run_gui() -> int:
     icon_path = Path(__file__).resolve().parents[2] / "icon.png"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
+    from xrd_finder.ui.startup_library_refresh import offer_startup_library_refresh
+    if not offer_startup_library_refresh():
+        return 0
     project_path = args.project or args.project_file
     load_error = ""
     project_loaded = False
@@ -112,6 +115,8 @@ def _run_gui() -> int:
             pass
     from xrd_finder.ui.learning_startup import schedule_learning_offer
     schedule_learning_offer(window)
+    from xrd_finder.ui.deferred_updates import schedule_update_check
+    schedule_update_check(window)
     return int(app.exec())
 
 

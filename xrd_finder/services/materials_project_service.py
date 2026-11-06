@@ -87,6 +87,12 @@ class MaterialsProjectService:
         optional = [element.strip() for element in optional_elements or [] if element.strip()]
         return self._search(formula=None, elements=selected, optional_elements=optional, limit=limit)
 
+    def download_cifs(self, material_ids, target_dir: str | Path, *, progress=None,
+                      cancelled=lambda:False,batch_size=100):
+        from xrd_finder.services.materials_project_bulk import download_mp_cifs
+        return download_mp_cifs(self,material_ids,target_dir,progress=progress,
+                                cancelled=cancelled,batch_size=batch_size)
+
     def download_cif(self, material_id: str, target_dir: str | Path) -> Path:
         target = Path(target_dir)
         target.mkdir(parents=True, exist_ok=True)
@@ -111,6 +117,8 @@ class MaterialsProjectService:
         )
         if not docs:
             raise ValueError(f"Materials Project structure was not found: {material_id}")
+        if len(docs)!=1 or str(docs[0].get('material_id') or '')!=material_id:
+            raise ValueError(f"Materials Project returned a different material identity: {material_id}")
         structure = docs[0].get("structure")
         if not isinstance(structure, dict):
             raise ValueError(f"Materials Project response has no structure for {material_id}")

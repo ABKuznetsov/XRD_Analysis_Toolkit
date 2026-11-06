@@ -29,6 +29,7 @@ class DatabasePanelWidget(QWidget):
     auditLocalCompositionRequested = Signal()
     exportPreparedLibraryRequested = Signal()
     importPreparedLibraryRequested = Signal()
+    optimizeLibraryStorageRequested = Signal()
     clearUserLibraryRequested = Signal()
     indexCodFolderRequested = Signal()
     indexCodZipRequested = Signal()
@@ -60,6 +61,8 @@ class DatabasePanelWidget(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setObjectName('databaseSettingsBody')
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.source_checkboxes: dict[str, QCheckBox] = {}
         self.database_table: QTableWidget | None = None
         self.materials_project_checkbox: QCheckBox | None = None
@@ -125,10 +128,10 @@ class DatabasePanelWidget(QWidget):
         layout.setSpacing(10)
 
         self.database_table = self._table(["Database", "Status", "Details"], rows)
-        self.database_table.setMinimumHeight(220)
-        self.database_table.setMaximumHeight(300)
+        self.database_table.setMinimumHeight(52 + 32 * len(rows))
+        self.database_table.setMaximumHeight(52 + 32 * len(rows))
         self.database_table.setWordWrap(True)
-        self.database_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.database_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.database_table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
         self.database_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.database_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -136,7 +139,15 @@ class DatabasePanelWidget(QWidget):
         self.database_table.setColumnWidth(2, 340)
         layout.addWidget(self.database_table)
 
-        layout.addWidget(self._section_title("Databases used for search"))
+        settings = QWidget()
+        settings_layout = QHBoxLayout(settings)
+        settings_layout.setContentsMargins(0, 0, 0, 0)
+        settings_layout.setSpacing(16)
+        search_controls = QVBoxLayout()
+        management_section = QVBoxLayout()
+        settings_layout.addLayout(search_controls, 1)
+        settings_layout.addLayout(management_section, 2)
+        search_controls.addWidget(self._section_title("Databases used for search"))
         source_box = QWidget()
         source_layout = QGridLayout(source_box)
         source_layout.setContentsMargins(0, 0, 0, 0)
@@ -154,15 +165,18 @@ class DatabasePanelWidget(QWidget):
             checkbox.toggled.connect(lambda checked, setting_key=key: self.sourceToggled.emit(setting_key, checked))
             self.source_checkboxes[key] = checkbox
             source_layout.addWidget(checkbox, row, column)
-        layout.addWidget(source_box)
+        search_controls.addWidget(source_box)
 
         self.materials_project_checkbox = QCheckBox("Use Materials Project in phase search")
         self.materials_project_checkbox.setChecked(materials_project_enabled)
         self.materials_project_checkbox.toggled.connect(self.materialsProjectToggled)
-        layout.addWidget(self.materials_project_checkbox)
+        self.materials_project_checkbox.setText("Use Materials Project")
+        self.materials_project_checkbox.setToolTip("Use Materials Project in phase search")
+        search_controls.addWidget(self.materials_project_checkbox)
 
         self.materials_project_status_label = QLabel(materials_project_status_text)
-        layout.addWidget(self.materials_project_status_label)
+        self.materials_project_status_label.setWordWrap(True)
+        search_controls.addWidget(self.materials_project_status_label)
 
         key_row = QWidget()
         key_layout = QHBoxLayout(key_row)
@@ -176,10 +190,19 @@ class DatabasePanelWidget(QWidget):
         save_key.clicked.connect(self.saveMaterialsProjectRequested)
         key_layout.addWidget(self.materials_project_api_key_input, 1)
         key_layout.addWidget(save_key)
-        layout.addWidget(key_row)
+        search_controls.addWidget(key_row)
+        search_controls.addStretch(1)
 
-        layout.addWidget(self._section_title("Database management"))
-        layout.addWidget(
+        management_section.addWidget(self._section_title("Database management"))
+        management = QWidget()
+        management_layout = QHBoxLayout(management)
+        management_layout.setContentsMargins(0, 0, 0, 0)
+        management_layout.setSpacing(16)
+        library_actions = QVBoxLayout()
+        source_actions = QVBoxLayout()
+        management_layout.addLayout(library_actions, 1)
+        management_layout.addLayout(source_actions, 1)
+        library_actions.addWidget(
             self._management_row(
                 "User phase library",
                 [
@@ -187,7 +210,7 @@ class DatabasePanelWidget(QWidget):
                 ],
             )
         )
-        layout.addWidget(
+        library_actions.addWidget(
             self._management_row(
                 "Local diffraction index",
                 [
@@ -195,10 +218,11 @@ class DatabasePanelWidget(QWidget):
                     ("Recalculate CIF patterns", self.rebuildLocalPeakIndexRequested),
                     ("Export prepared library…", self.exportPreparedLibraryRequested),
                     ("Import prepared library…", self.importPreparedLibraryRequested),
+                    ("Optimize library storage…", self.optimizeLibraryStorageRequested),
                 ],
             )
         )
-        layout.addWidget(
+        library_actions.addWidget(
             self._management_row(
                 "COD local/bulk",
                 [
@@ -219,8 +243,8 @@ class DatabasePanelWidget(QWidget):
         ccdc_row.setToolTip(CCDC_WEB_UNAVAILABLE_MESSAGE if not CCDC_WEB_ENABLED else '')
         for button in ccdc_row.findChildren(QPushButton):
             button.setEnabled(CCDC_WEB_ENABLED)
-        layout.addWidget(ccdc_row)
-        layout.addWidget(
+        source_actions.addWidget(ccdc_row)
+        source_actions.addWidget(
             self._management_row(
                 "RRUFF powder",
                 [
@@ -229,7 +253,7 @@ class DatabasePanelWidget(QWidget):
                 ],
             )
         )
-        layout.addWidget(
+        source_actions.addWidget(
             self._management_row(
                 "PDF-2",
                 [
@@ -239,7 +263,7 @@ class DatabasePanelWidget(QWidget):
                 ],
             )
         )
-        layout.addWidget(
+        source_actions.addWidget(
             self._management_row(
                 "AFLOW",
                 [
@@ -247,7 +271,7 @@ class DatabasePanelWidget(QWidget):
                 ],
             )
         )
-        layout.addWidget(
+        source_actions.addWidget(
             self._management_row(
                 "OQMD",
                 [
@@ -255,7 +279,7 @@ class DatabasePanelWidget(QWidget):
                 ],
             )
         )
-        layout.addWidget(
+        library_actions.addWidget(
             self._management_row(
                 "Materials Project",
                 [
@@ -266,6 +290,10 @@ class DatabasePanelWidget(QWidget):
                 ],
             )
         )
+        library_actions.addStretch(1)
+        source_actions.addStretch(1)
+        management_section.addWidget(management)
+        layout.addWidget(settings)
 
         help_label = QLabel(
             "Clear permanently deletes the selected local cache. This cannot be undone."
@@ -325,4 +353,4 @@ class DatabasePanelWidget(QWidget):
             background, border, foreground = '#087f69', '#119b7f', '#ffffff'
         else:
             background, border, foreground = colors['alt'], colors['border'], colors['text']
-        return glass_button_style(background, border, foreground, padding='6px 10px')
+        return glass_button_style(background, border, foreground, padding='4px 10px')

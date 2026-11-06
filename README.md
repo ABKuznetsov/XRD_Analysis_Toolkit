@@ -14,11 +14,11 @@ The nine horizontal slides introduce capabilities, data sources, libraries, inst
 
 ## Download
 
-- [Windows installer (1.6.10): XRD_Phase_Finder_Setup_v1_6_10.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.10/XRD_Phase_Finder_Setup_v1_6_10.exe)
+- [Windows installer (1.7.0): XRD_Phase_Finder_Setup_v1_7_0.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_Setup_v1_7_0.exe)
 - [macOS package (1.6.10): XRD_Phase_Finder_macOS_1.6.10.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.10/XRD_Phase_Finder_macOS_1.6.10.pkg)
 - [Ubuntu / Debian package (1.6.9): XRD_Phase_Finder_1.6.9_amd64.deb](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_1.6.9_amd64.deb)
 
-The [Windows and macOS 1.6.10 release](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.10) is available now. The Linux package remains at 1.6.9; its direct download link is listed above.
+The [Windows 1.7.0 release](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.0) is available now. macOS remains at 1.6.10 and Linux at 1.6.9; their direct download links are listed above.
 
 ## Main window
 
@@ -44,7 +44,7 @@ The project tree (A) contains imported patterns and structures. The toolbar (B) 
 
 ### Windows
 
-Download and run `XRD_Phase_Finder_Setup_v1_6_10.exe`. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
+Download and run `XRD_Phase_Finder_Setup_v1_7_0.exe`. The installer creates Start Menu and Desktop shortcuts and registers `.xpff` project files.
 
 On first launch, the launcher checks the per-user scientific Python runtime and offers to install or repair missing packages. User projects, settings and database caches are stored in the user profile.
 
@@ -94,7 +94,7 @@ Open **Manage databases -> Download inorganic COD… -> Download and prepare SQL
 
 Use **Manage databases -> Export prepared library…** to save a `.xpflib` archive. On another computer running a compatible Finder version, choose **Import prepared library…**. The archive transfers CIFs, calculated reflections and search indexes so compatible entries do not need recalculation. User libraries are stored separately from the application and are not bundled with the installer.
 
-CCDC web search is temporarily disabled in 1.6.10. You can still import CIF files downloaded manually from CCDC.
+CCDC web search is temporarily disabled. You can still import CIF files downloaded manually from CCDC.
 
 ## Offline use
 

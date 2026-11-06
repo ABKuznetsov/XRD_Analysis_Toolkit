@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import cached_property
+
 import json
 import ssl
 from collections.abc import Callable
@@ -37,7 +39,6 @@ class CodOnlineService:
         status_callback: Callable[[str], None] | None = None,
         alert_callback: Callable[[str], None] | None = None,
     ) -> None:
-        self._ssl_context = self._create_ssl_context()
         self._status_callback = status_callback
         self._alert_callback = alert_callback
         self._active_base_url = COD_BASE_URLS[0]
@@ -177,6 +178,11 @@ class CodOnlineService:
             spacegroup=spacegroup,
             source=source,
         )
+
+    @cached_property
+    def _ssl_context(self):
+        # Loading certificate authorities is needed only for an HTTPS request.
+        return self._create_ssl_context()
 
     def _create_ssl_context(self):
         return create_ssl_context()

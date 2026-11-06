@@ -166,6 +166,7 @@ def build_phase_finder_menu_bar(owner: QWidget) -> QMenuBar:
     _add_owner_action(help_menu, "Security and offline use", owner, "_show_security_info_dialog")
     _add_owner_action(help_menu, "Open example project", owner, "_open_example_project")
     _add_owner_action(help_menu, "Manual", owner, "_show_manual_from_menu")
+    owner.check_updates_action = _add_owner_action(help_menu, "Check for updates...", owner, "_check_for_updates")
     _add_owner_action(help_menu, "About XRD Phase Finder", owner, "_show_about_dialog")
 
     # PySide can release Python-created menus before the native menu bar is

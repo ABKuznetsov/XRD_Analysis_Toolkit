@@ -1,6 +1,6 @@
 [project]
 name = "xrd-phase-finder"
-version = "1.6.10"
+version = "1.7.0"
 description = "Cross-platform XRD phase finder for powder diffraction search-match workflows."
 requires-python = ">=3.11,<3.13"
 dependencies = [
@@ -18,18 +18,6 @@ dependencies = [
 [project.scripts]
 xrd-finder = "xrd_finder.apps.finder_cli:main"
 xrd-finder-gui = "xrd_finder.apps.finder_gui:main"
-
-[tool.ruff]
-exclude = [
-    ".git",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".venv",
-    "build",
-    "dist",
-    "data",
-]
 
 [build-system]
 requires = ["setuptools>=68"]

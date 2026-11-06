@@ -23,9 +23,9 @@ class AcceptedProfileQueue:
         return (pattern_id in self.pending or
                 self.current is not None and self.current[2] == pattern_id)
 
-    def request(self, pattern, key, inputs, *, preprocess_auto=False, le_bail=False):
+    def request(self, pattern, key, inputs, *, preprocess_auto=False, le_bail=False, prepared_result=None):
         w = self.window
-        job = (self.serial, id(w.project), pattern.id, key, deepcopy(inputs), bool(preprocess_auto), bool(le_bail))
+        job = (self.serial, id(w.project), pattern.id, key, deepcopy(inputs), bool(preprocess_auto), bool(le_bail), prepared_result)
         if self.failures.get(pattern.id) == key:
             return
         if self.current is not None and self.current[:4] == job[:4]:
@@ -42,7 +42,7 @@ class AcceptedProfileQueue:
         pattern_id = min(self.pending, key=lambda pid: (pid != active, pid not in visible))
         job = self.pending.pop(pattern_id)
         self.current = job
-        serial, project_id, pattern_id, key, inputs, preprocess_auto, le_bail = job
+        serial, project_id, pattern_id, key, inputs, preprocess_auto, le_bail, prepared_result = job
         w = self.window
         def current():
             if serial != self.serial or project_id != id(w.project):
@@ -54,9 +54,37 @@ class AcceptedProfileQueue:
             return bool(candidates) and w._finder_cache_key(pattern, candidates) == key
         def done(payload):
             result, prepared = payload
+            if current() and result.position_refinement.get('requires_confirmation'):
+                pattern = next(p for p in w.project.patterns if p.id == pattern_id)
+                if pattern_id not in {p.id for p in w._patterns_to_display()}:
+                    # Save an unapplied proposal; ask only when its scan is shown.
+                    w._store_calculated_result(pattern, w._profile_candidates_for_pattern(pattern), result,
+                                               snap_peak_positions=inputs.snap_peak_positions, pending=True)
+                    self.current = None
+                    self._start()
+                    return
+
+                def decided(accepted):
+                    if not current() or accepted is None:
+                        self.current = None
+                        self._start()
+                        return
+                    if accepted:
+                        result.position_refinement['requires_confirmation'] = False
+                        result.position_refinement['user_decision'] = 'continue'
+                        done((result, prepared))
+                    else:
+                        self.current = None
+                        self.request(pattern, key, replace(inputs, allow_uncertain_zero=False),
+                                     preprocess_auto=preprocess_auto, le_bail=le_bail)
+
+                w._confirm_position_alignment(pattern, result, decided)
+                return
             valid = current()
             self.current = None
             if valid:
+                if result.position_refinement.get('position_rejected'):
+                    result.position_refinement['user_decision'] = 'reject'
                 self.failures.pop(pattern_id, None)
                 w.match_profile_result_cache[key] = result
                 w._trim_match_profile_result_cache()
@@ -89,6 +117,8 @@ class AcceptedProfileQueue:
                     w.gain_job_controller.invalidate()
             self._start()
         def calculate():
+            if prepared_result is not None:
+                return prepared_result, None
             prepared = None
             working = inputs
             if preprocess_auto:

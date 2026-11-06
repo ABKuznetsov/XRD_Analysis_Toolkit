@@ -118,6 +118,56 @@ class PhaseFinderPreprocessingActionsMixin:
         extra = self.profile_states.get(pattern_id, {}).get("zero_shift_visual_deg")
         return self._pattern_zero_shift_deg(pattern_id) + (float(extra) if extra is not None else 0.)
 
+    def _position_alignment_signature(self, pattern) -> str:
+        from xrd_finder.io.finder_result_cache import _digest, _engine_identity
+        candidates = self._profile_candidates_for_pattern(pattern)
+        return _digest((_engine_identity(), self._finder_cache_key(pattern, candidates, portable=True)))
+
+    def _allow_uncertain_position_alignment(self, pattern) -> bool:
+        decision = self.profile_states.get(pattern.id, {}).get('position_alignment_decision', {})
+        return not (decision.get('signature') == self._position_alignment_signature(pattern)
+                    and decision.get('accepted') is False)
+
+    def _confirm_position_alignment(self, pattern, result, finished) -> None:
+        signature = self._position_alignment_signature(pattern)
+        state = self.profile_states.setdefault(pattern.id, {})
+        decision = state.get('position_alignment_decision', {})
+        if decision.get('signature') == signature and isinstance(decision.get('accepted'), bool):
+            finished(decision['accepted'])
+            return
+        project = self.project
+        sigma = float(result.position_refinement.get('zero_sigma_deg', 0.))
+        message = QMessageBox(self)
+        message.setWindowTitle('Confirm peak alignment')
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setText(
+            f'{pattern.name}\n\n'
+            f'Proposed zero shift: {result.global_zero_shift:+.3f} deg.\n'
+            f'Estimated zero uncertainty: {sigma:.3f} deg.\n\n'
+            'The matched lines support this alignment, but zero shift and cell '
+            'changes are not separated precisely enough for automatic acceptance.\n'
+            'Continue to apply the proposed shift and cell, or reject these changes. '
+            'Le Bail remains available as a separate action.')
+        proceed = message.addButton('Continue', QMessageBox.ButtonRole.AcceptRole)
+        reject = message.addButton('Reject', QMessageBox.ButtonRole.RejectRole)
+        message.setDefaultButton(reject)
+        message.setEscapeButton(reject)
+        message.setWindowModality(Qt.WindowModality.WindowModal)
+        message.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+        def decided(_code):
+            if self.project is not project or self._position_alignment_signature(pattern) != signature:
+                finished(None)
+                return
+            accepted = message.clickedButton() is proceed
+            self.profile_states.setdefault(pattern.id, {})['position_alignment_decision'] = {
+                'signature': signature, 'accepted': accepted,
+            }
+            finished(accepted)
+
+        message.finished.connect(decided)
+        message.open()
+
     def _record_pattern_zero_shift(self, pattern, result) -> None:
         state = self.profile_states.setdefault(pattern.id, {})
         state["zero_shift_auto_deg"] = float(result.global_zero_shift)
@@ -126,6 +176,10 @@ class PhaseFinderPreprocessingActionsMixin:
         state["zero_shift_observed_width_deg"] = float(np.median(widths)) if len(widths) >= 3 else None
         if pattern.id == self._current_profile_pattern_id():
             self._sync_zero_shift_controls()
+        if (abs(result.global_zero_shift)>0.5
+                and getattr(result, 'position_refinement', {}).get('user_decision') != 'continue' and any(
+                item.id == pattern.id for item in self._patterns_to_display())):
+            self._warn_large_zero_shift(pattern)
 
     def _zero_shift_warning_text(self, pattern_id: str) -> str:
         shift = self._pattern_zero_shift_deg(pattern_id)
@@ -135,8 +189,8 @@ class PhaseFinderPreprocessingActionsMixin:
                 "Check the phase alignment and instrument calibration. "
                 "The correction has not been clipped.")
 
-    def _warn_large_zero_shift(self) -> None:
-        pattern = self._active_pattern()
+    def _warn_large_zero_shift(self, pattern=None) -> None:
+        pattern = pattern if pattern is not None else self._active_pattern()
         if pattern is None:
             return
         text = self._zero_shift_warning_text(pattern.id)
@@ -151,8 +205,9 @@ class PhaseFinderPreprocessingActionsMixin:
         message = QMessageBox(self)
         message.setIcon(QMessageBox.Icon.Warning)
         message.setWindowTitle("Check zero correction")
-        message.setText(text)
+        message.setText(f"{pattern.name}\n\n{text}")
         message.setStandardButtons(QMessageBox.StandardButton.Ok)
+        message.setWindowModality(Qt.WindowModality.WindowModal)
         message.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         message.show()
 

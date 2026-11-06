@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import cached_property
+
 from dataclasses import dataclass
 from pathlib import Path
 import re
@@ -34,7 +36,6 @@ class RruffService:
         self.index_path = self.root / "index.sqlite"
         self.root.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
-        self._ssl_context = self._create_ssl_context()
 
     def status_row(self) -> list[str]:
         count = self.indexed_count()
@@ -323,6 +324,11 @@ class RruffService:
                 time.time(),
             ),
         )
+
+    @cached_property
+    def _ssl_context(self):
+        # Loading certificate authorities is needed only for an HTTPS request.
+        return self._create_ssl_context()
 
     def _create_ssl_context(self):
         return create_ssl_context()

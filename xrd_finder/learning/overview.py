@@ -12,7 +12,7 @@ OVERVIEW={
  'manual-search.formula':('Search offers names, formulas, card IDs and elements across enabled sources. Elements → Search database retrieves chemical candidates.','database-search'),
  'processing.original':('Processing contains Smoothing, Background/amorphous contribution, Crop XRD and Zero shift. These affect different aspects of working data or display.','processing'),
  'processing.reset':('Apply commits a processing choice; Cancel restores its opening state; Reset reverses that step. Reset processing returns to the original measurement.','reset-processing'),
- 'instrument.saved':('Instrument settings describes radiation/Kα components, geometry, detector and instrumental widths. Save/import/export profiles; apply to active or selected samples.','instrument-button'),
+ 'instrument.saved':('Instrument settings manages reusable radiation, geometry, detector and resolution profiles through Profiles…. Apply a chosen profile in Processing → Instrument and radiation to the current pattern, its series or all project patterns.','instrument-button'),
  'instrument.calibration':('Resolution offers constant FWHM/TCH and Calibrate from standard using an XRD and CIF. It assumes negligible sample broadening of the coarse-grained standard.','instrument-button'),
  'instrument.lebail':('Optional Le Bail improves accepted profiles within 3 cycles/2 seconds. It is not a full refinement; applied results do not provide structural Quant.','auto-button'),
  'auto-search.setup':('Identify phases opens setup; the next click runs Match. Review available references and optional instrument/Le Bail improvements before running.','auto-button'),

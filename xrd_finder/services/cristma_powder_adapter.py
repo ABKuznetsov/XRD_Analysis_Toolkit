@@ -35,6 +35,9 @@ from xrd_finder.instrument.resolution import cristma_tch_profile
 from xrd_finder.instrument.radiation_catalog import cristma_spectrum_from_profile
 from xrd_finder.services.calculated_pattern_service import HKLPeak
 from xrd_finder.services.profile_support import PROFILE_KERNEL_WINDOW_FWHM
+from xrd_finder.services.explicit_powder_symmetry import (
+    SOURCE_OPERATIONS, explicit_powder_model, regroup_powder_peaks, filter_absent_powder_families,
+)
 
 
 class CristmaPowderError(RuntimeError):
@@ -61,6 +64,7 @@ class CristmaLineResult:
     source_use_lp: bool = True
     source_cell: tuple[float, ...] | None = None
     reflection_limit_deg: float = 0.
+    source_symmetry_operations: tuple = ()
 
     @property
     def profile_lines(self):
@@ -188,6 +192,19 @@ class CristmaPowderAdapter:
                     candidates = basis_matches
             if len(candidates) == 1:
                 setting = candidates[0]
+
+        # Keep the established standard-setting resolution above. For settings
+        # it cannot represent, use the complete reported cell without inventing
+        # a conventional setting or changing the cell basis.
+        if setting is None and definition.provenance == "reported":
+            try:
+                calculation, setting = explicit_powder_model(structure)
+            except ValueError as exc:
+                raise CristmaPowderError(f"Invalid reported CIF symmetry: {exc}") from exc
+            if cell_override is not None:
+                calculation = replace(calculation, cell=CristmaPowderAdapter._cell_with_override(
+                    calculation.cell, cell_override))
+            return calculation, setting
 
         if setting is None:
             raise CristmaPowderError(
@@ -326,6 +343,7 @@ class CristmaPowderAdapter:
             zero_shift_deg=float(zero_shift_deg),
             d_spacing_scale=float(d_spacing_scale),
         )
+        raw_peaks = regroup_powder_peaks(raw_peaks, lines.source_symmetry_operations)
 
         calculated_x.setflags(write=False)
         calculated_y.setflags(write=False)
@@ -574,6 +592,14 @@ class CristmaPowderAdapter:
         cell_override: CellParameters | None = None,
     ) -> tuple[HKLPeak, ...]:
         structure, setting = self._structure_and_setting(cif_path, cell_override)
+        return self.reference_sticks_from_structure(
+            structure, setting, two_theta_min=two_theta_min, two_theta_max=two_theta_max,
+            instrument_profile=instrument_profile, use_lp=use_lp)
+
+    def reference_sticks_from_structure(
+        self, structure, setting, *, two_theta_min: float, two_theta_max: float,
+        instrument_profile: InstrumentProfile, use_lp: bool,
+    ) -> tuple[HKLPeak, ...]:
         radiation = self.radiation_from_profile(instrument_profile)
         reference_lines = self._reference_line_calculator.calculate(
             structure,
@@ -614,7 +640,7 @@ class CristmaPowderAdapter:
         if maximum > 0.0:
             for peak in raw_peaks:
                 peak.intensity = 100.0 * peak.raw_intensity / maximum
-        return tuple(raw_peaks)
+        return regroup_powder_peaks(raw_peaks, structure.metadata.get(SOURCE_OPERATIONS, ()))
 
     @staticmethod
     def _lorentz_polarization_factor(two_theta_deg: float, geometry) -> float:
@@ -658,6 +684,8 @@ class CristmaPowderAdapter:
             XRayScatteringContext.default(),
         )
         intrinsic_lines = PowderLineCalculator().calculate(factors, radiation)
+        intrinsic_lines = filter_absent_powder_families(
+            intrinsic_lines, structure.metadata.get(SOURCE_OPERATIONS, ()))
         geometry = self._geometry_from_profile(instrument_profile, use_lp)
         corrected_lines = (
             None
@@ -672,6 +700,8 @@ class CristmaPowderAdapter:
             two_theta_max=float(two_theta_max),
             zero_shift_deg=0.0,
         )
+        source_operations = structure.metadata.get(SOURCE_OPERATIONS, ())
+        peaks = regroup_powder_peaks(peaks, source_operations)
         return CristmaLineResult(
             intrinsic_lines=intrinsic_lines,
             corrected_lines=corrected_lines,
@@ -683,6 +713,7 @@ class CristmaPowderAdapter:
             source_cell=(None if cell_override is None else tuple(float(getattr(cell_override,name))
                 for name in ('a','b','c','alpha','beta','gamma'))),
             reflection_limit_deg=float(two_theta_max),
+            source_symmetry_operations=source_operations,
         )
 
 

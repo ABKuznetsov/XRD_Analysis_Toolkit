@@ -968,6 +968,8 @@ class PhaseFinderWindow(
         available=self.screen().availableGeometry()
         self.resize(min(self.width(),available.width()-24),min(self.height(),available.height()-48))
         self._plot_initial_settings_timer.start(0)
+        from xrd_finder.ui.import_cleanup_job import schedule_import_cleanup
+        schedule_import_cleanup(self)
 
     def _init_filter_state(self) -> None:
         self._search_mode = "search"
@@ -1333,13 +1335,17 @@ class PhaseFinderWindow(
         cache_key = self._finder_cache_key(pattern, candidates, snap_peak_positions=snap_peak_positions)
         result = self.match_profile_result_cache.get(cache_key)
         if result is None:
-            record = self.profile_states.get(pattern.id, {}).get('calculated_result')
-            if record is not None:
+            saved = self.profile_states.get(pattern.id, {})
+            for field in ('calculated_result', 'pending_position_alignment'):
+                record = saved.get(field)
+                if record is None:
+                    continue
                 result = restore_result(record, self._finder_cache_key(
                     pattern, candidates, snap_peak_positions=snap_peak_positions, portable=True))
                 if result is not None:
                     self.match_profile_result_cache[cache_key] = result
                     self._trim_match_profile_result_cache()
+                    break
         if result is not None:
             represented = {item.entry_id for item in result.candidates}
             represented.update(item.entry_id for item in getattr(result, 'candidate_failures', []))
@@ -1350,7 +1356,8 @@ class PhaseFinderWindow(
                 # or have an explicit failure, rather than silently disappear.
                 result = None
                 self.match_profile_result_cache.pop(cache_key, None)
-        if result is not None:
+        pending_result = result if result is not None and result.position_refinement.get('requires_confirmation') else None
+        if result is not None and pending_result is None:
             self._record_pattern_zero_shift(pattern, result)
             return result, candidate_by_key
         if cache_only:
@@ -1402,6 +1409,7 @@ class PhaseFinderWindow(
                 pattern_path=pattern.source_path,
                 candidates=finder_candidates,
                 quantification_complete=len(finder_candidates) == len(candidates),
+                allow_uncertain_zero=self._allow_uncertain_position_alignment(pattern),
                 refine_sample_broadening=True,
                 wavelength=wavelength,
                 include_kalpha2=include_kalpha2,
@@ -1417,24 +1425,31 @@ class PhaseFinderWindow(
                 ),
                 snap_peak_positions=bool(snap_peak_positions),
             )
-        if background:
+        if not background and pending_result is None:
+            result = self.finder_service.run(inputs)
+            if result.position_refinement.get('requires_confirmation'):
+                pending_result = result
+        if background or pending_result is not None:
             from xrd_finder.ui.accepted_profile_job import AcceptedProfileQueue
             queue = getattr(self, '_accepted_profile_queue', None)
             if queue is None:
                 queue = self._accepted_profile_queue = AcceptedProfileQueue(self)
-            queue.request(pattern, cache_key, inputs, preprocess_auto=preprocess_auto, le_bail=le_bail)
+            queue.request(pattern, cache_key, inputs, preprocess_auto=preprocess_auto, le_bail=le_bail,
+                          prepared_result=pending_result)
             return None, candidate_by_key
-        result = self.finder_service.run(inputs)
         self.match_profile_result_cache[cache_key] = result
         self._store_calculated_result(pattern, candidates, result, snap_peak_positions=snap_peak_positions)
         self._record_pattern_zero_shift(pattern, result)
         self._trim_match_profile_result_cache()
         return result, candidate_by_key
 
-    def _store_calculated_result(self, pattern, candidates, result, *, snap_peak_positions=True) -> None:
+    def _store_calculated_result(self, pattern, candidates, result, *, snap_peak_positions=True, pending=False) -> None:
         key = self._finder_cache_key(pattern, candidates,
                                     snap_peak_positions=snap_peak_positions, portable=True)
-        self.profile_states.setdefault(pattern.id, {})['calculated_result'] = make_result_record(result, key)
+        state = self.profile_states.setdefault(pattern.id, {})
+        state['pending_position_alignment' if pending else 'calculated_result'] = make_result_record(result, key)
+        if not pending:
+            state.pop('pending_position_alignment', None)
 
     def _finder_candidate_structure_overrides(self, pattern, candidates: list[dict[str, str]]) -> dict[str, object]:
         if pattern is None:
@@ -1537,7 +1552,7 @@ class PhaseFinderWindow(
         self.finder_action_bar.cropRequested.connect(self._crop_xrd_patterns_plot)
         self.finder_action_bar.subtractBackgroundRequested.connect(self._subtract_active_background_plot)
         self.finder_action_bar.searchRequested.connect(self._search_pdf2_text)
-        self.finder_action_bar.instrumentProfileSelected.connect(self._select_instrument_profile)
+        self.finder_action_bar.instrumentProfileApplyRequested.connect(self._apply_processing_instrument_profile)
         self.finder_action_bar.instrumentProfileEditRequested.connect(self._open_instrument_profile_editor)
         self.finder_action_bar.manualZeroShiftChanged.connect(self._set_manual_zero_shift)
         self.search_input = self.finder_action_bar.search_input
@@ -1801,14 +1816,39 @@ class PhaseFinderWindow(
         self.close()
 
     def closeEvent(self, event) -> None:
+        cleanup = getattr(self,'_import_cleanup_controller',None)
+        if cleanup is not None and cleanup.running:
+            self._import_cleanup_close_pending = True
+            cleanup.cancel()
+            event.ignore()
+            return
+        if cleanup is not None:
+            # A modal save prompt runs its own event loop. Do not allow a
+            # pending idle timer to start a writer reservation inside it.
+            cleanup.cancel()
+        migration = getattr(self,'_library_storage_migration',None)
+        if migration is not None and migration.running:
+            # Project saving may read reference metadata. Drain the writer
+            # before opening the save prompt, rather than block the GUI on SQL.
+            self._library_migration_close_pending = True
+            migration.cancel()
+            event.ignore()
+            return
+        transfer = getattr(self,'_prepared_library_transfer',None)
+        if transfer is not None and transfer.running:
+            self._library_transfer_close_pending = True
+            transfer.cancel()
+            event.ignore()
+            return
         if not getattr(self, '_preparation_close_confirmed', False):
             if not self._confirm_project_replacement():
+                if cleanup is not None:cleanup.request()
                 event.ignore()
                 return
         self._preparation_close_confirmed = True
         portal = getattr(self,'_ccdc_portal_controller',None)
         if portal is not None:portal.shutdown()
-        for name in ('_cod_inorganic_controller','_prepared_library_transfer'):
+        for name in ('_cod_inorganic_controller','_prepared_library_transfer','_library_storage_migration','_import_cleanup_controller'):
             controller = getattr(self,name,None)
             if controller is not None:
                 controller.cancel()
@@ -1985,6 +2025,10 @@ class PhaseFinderWindow(
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setWidget(panel)
         return scroll
+
+    def _check_for_updates(self) -> None:
+        from xrd_finder.ui.deferred_updates import update_controller
+        update_controller(self).check(manual=True)
 
     def _show_quick_help(self) -> None:
         self._toggle_context_help()

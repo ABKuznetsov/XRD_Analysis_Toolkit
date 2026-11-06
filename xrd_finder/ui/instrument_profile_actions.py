@@ -166,18 +166,26 @@ class PhaseFinderInstrumentProfileActionsMixin:
         current = self._active_instrument_profile()
         profiles = list(self.instrument_profile_library.list_profiles())
         matching_saved = self._matching_saved_instrument_profile(current)
-        active_id = matching_saved.profile_id if matching_saved is not None else current.profile_id
+        active_id = matching_saved.profile_id if matching_saved is not None else f"__current__:{current.profile_id}"
         display_profiles = profiles if matching_saved is not None else [current, *profiles]
         entries = []
         for profile in display_profiles:
             name = profile.identity.name
-            if matching_saved is None and profile.profile_id == current.profile_id:
+            if matching_saved is None and profile is current:
                 name = f"Project profile - {name}"
-            entries.append((profile.profile_id, name))
+            entry_id = (active_id if matching_saved is None and profile is current else profile.profile_id)
+            entries.append((entry_id, name))
         action_bar.set_instrument_profiles(
             entries,
             active_id,
         )
+        pattern = self._active_pattern()
+        series = self.project.series_for_object('pattern', pattern.id) if pattern is not None else None
+        series_count = len(self._patterns_for_instrument_profile(scope='series'))
+        action_bar.set_instrument_targets(
+            pattern.name if pattern is not None else None,
+            series.name if series is not None else None,
+            series_count, len(self.project.patterns))
 
     def _matching_saved_instrument_profile(self, profile: InstrumentProfile) -> InstrumentProfile | None:
         profile_key = profile.calculation_key()
@@ -189,16 +197,13 @@ class PhaseFinderInstrumentProfileActionsMixin:
                 return saved
         return None
 
-    def _select_instrument_profile(self, profile_id: str) -> None:
-        profile = self.instrument_profile_library.get(profile_id)
+    def _apply_processing_instrument_profile(self, profile_id: str, scope: str) -> None:
+        current = self._active_instrument_profile()
+        profile = (current if profile_id == f'__current__:{current.profile_id}'
+                   else self.instrument_profile_library.get(profile_id))
         if profile is None:
             return
-        if not self._patterns_for_instrument_profile(selected=False):
-            self._selected_instrument_profile_id = profile_id
-            self.settings.setValue("instrument/active_profile_id", profile_id)
-            self._refresh_instrument_profile_selector()
-            return
-        self._apply_instrument_profile(profile, selected=False)
+        self._apply_instrument_profile(profile, selected=False, scope=scope)
 
     def _open_instrument_profile_editor(self, section: str = "identity") -> None:
         profile = self._active_instrument_profile()
@@ -239,8 +244,6 @@ class PhaseFinderInstrumentProfileActionsMixin:
         dialog.updateRequested.connect(self._update_instrument_profile)
         dialog.deleteRequested.connect(self._delete_instrument_profile)
         dialog.importRequested.connect(self._import_instrument_profile)
-        dialog.applyActiveRequested.connect(lambda value: self._apply_instrument_profile(value, selected=False))
-        dialog.applySelectedRequested.connect(lambda value: self._apply_instrument_profile(value, selected=True))
         dialog.finished.connect(lambda _result: self._clear_instrument_profile_dialog(dialog))
         self._instrument_profile_dialog = dialog
         dialog.show()
@@ -259,8 +262,8 @@ class PhaseFinderInstrumentProfileActionsMixin:
             return
         if self._instrument_profile_dialog is not None:
             self._instrument_profile_dialog.set_profiles(self.instrument_profile_library.list_profiles(), current_profile=imported)
-        # Loading a shared calibration does not change the active measurement;
-        # the operator applies it with the existing Apply buttons.
+        # Library management never applies a calibration to measurements.
+        # The explicit application controls live in Processing.
         self._refresh_instrument_profile_selector()
 
     def _save_instrument_profile_as_new(self, profile: InstrumentProfile) -> None:
@@ -320,7 +323,22 @@ class PhaseFinderInstrumentProfileActionsMixin:
             self._instrument_profile_dialog.close()
         self._refresh_instrument_profile_selector()
 
-    def _patterns_for_instrument_profile(self, *, selected: bool) -> list[object]:
+    def _patterns_for_instrument_profile(self, *, selected: bool = False, scope: str | None = None) -> list[object]:
+        if scope is not None:
+            if scope == 'all':
+                return list(self.project.patterns)
+            active = self._active_pattern()
+            if active is None:
+                return []
+            if scope == 'active':
+                return [active]
+            if scope == 'series':
+                series = self.project.series_for_object('pattern', active.id)
+                if series is None:
+                    return []
+                ids = set(series.pattern_ids)
+                return [pattern for pattern in self.project.patterns if pattern.id in ids]
+            return []
         if not selected:
             active = self._active_pattern()
             return [active] if active is not None else []
@@ -375,8 +393,9 @@ class PhaseFinderInstrumentProfileActionsMixin:
         dialog.exec()
         return dialog.clickedButton() is apply
 
-    def _apply_instrument_profile(self, profile: InstrumentProfile, *, selected: bool, refresh: bool = True) -> bool:
-        patterns = self._patterns_for_instrument_profile(selected=selected)
+    def _apply_instrument_profile(self, profile: InstrumentProfile, *, selected: bool, refresh: bool = True,
+                                  scope: str | None = None) -> bool:
+        patterns = self._patterns_for_instrument_profile(selected=selected, scope=scope)
         if not patterns:
             return False
         if not self._confirm_instrument_profile_widths(profile, patterns):

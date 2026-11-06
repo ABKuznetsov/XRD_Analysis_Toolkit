@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from cristma.chemistry.elements import normalize_element
+from cristma.chemistry.species import IsotopeSpecies
 
 
 ATOMIC_WEIGHTS: dict[str, float] = {
@@ -130,3 +131,18 @@ def atomic_weight(symbol: str) -> float:
     if not normalized:
         return 0.0
     return ATOMIC_WEIGHTS.get(normalized, 0.0)
+
+
+# Relative atomic masses, NIST Atomic Weights and Isotopic Compositions (H):
+# https://physics.nist.gov/cgi-bin/Compositions/stand_alone.pl?ele=H
+# An isotope's mass number is not its atomic mass. Leave untabulated isotopes
+# unsupported rather than silently substituting the natural-element average.
+HYDROGEN_ISOTOPE_MASSES = {1: 1.00782503223, 2: 2.01410177812, 3: 3.0160492779}
+
+
+def species_atomic_weight(species) -> float:
+    if isinstance(species, IsotopeSpecies):
+        if species.element_symbol == "H" and species.mass_number in HYDROGEN_ISOTOPE_MASSES:
+            return HYDROGEN_ISOTOPE_MASSES[species.mass_number]
+        raise ValueError(f"No tabulated isotope mass for {species.label}")
+    return atomic_weight(species.require_element())

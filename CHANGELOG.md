@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.0 - 2026-11-06
+
+- Reuse prepared reference libraries with compact SQLite storage and portable library archives.
+- Improve startup and keep initial preparation outside the main window.
+- Restore saved profiles and peak assignments consistently, including Le Bail results.
+- Preserve existing calculated I/Ic values and calculate eligible missing values despite noncritical CIF warnings.
+- Handle transient Windows worker-file locks without losing completed results.
+
 ## 1.6.10 - 2026-11-03
 
 - Download and prepare the inorganic COD selection with separate download/calculation progress and time estimates.

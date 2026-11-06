@@ -30,7 +30,8 @@ class CommonZeroAlignment:
     diagnostics: dict
 
 
-def align_common_zero(phases, records, *, wavelength, zero_shift=0., refine_zero=True, budget=None):
+def align_common_zero(phases, records, *, wavelength, zero_shift=0., refine_zero=True,
+                      allow_uncertain_zero=False, budget=None):
     """Use independently validated indexed phases to estimate one common zero.
 
     A nearest-neighbour fit alone is not a calibration. Require distinct lines
@@ -61,9 +62,9 @@ def align_common_zero(phases, records, *, wavelength, zero_shift=0., refine_zero
         if fingerprint in seen:
             continue
         seen.add(fingerprint)
-        # Keep the automatic search in its existing +/-0.5 degree window.
-        # An outside seed is not evidence; fixed calibrations above are exact.
-        start = seed if abs(seed)<=.5 else 0.
+        # Match can independently identify a larger common displacement.
+        # Keep that start; the indexed-line validator below must still confirm it.
+        start = seed
         shifted = apply_peak_cell(phase.peaks,cell,wavelength=wavelength,zero_shift=start)
         if shifted is None:
             continue
@@ -73,14 +74,17 @@ def align_common_zero(phases, records, *, wavelength, zero_shift=0., refine_zero
         if proposal is not None:
             proposals.append(proposal)
     trusted = []
-    if proposals:
+    confirmed = [p for p in proposals if p['confirmed']]
+    eligible = confirmed or (proposals if allow_uncertain_zero else [])
+    rejected = bool(proposals and not confirmed and not allow_uncertain_zero)
+    if eligible:
         # A narrow, independently constrained phase can correct a wrong first
         # card; many weak or duplicate cards cannot vote it away.
         def agreement(p):
             return sum(q['weight']*math.exp(-.5*((p['zero']-q['zero'])/
-                max(.025,2*q['sigma']))**2) for q in proposals)
-        anchor = max(proposals,key=lambda p:(agreement(p),p['weight'],p['key']))
-        trusted = [p for p in proposals if abs(p['zero']-anchor['zero'])<=
+                max(.025,2*q['sigma']))**2) for q in eligible)
+        anchor = max(eligible,key=lambda p:(agreement(p),p['weight'],p['key']))
+        trusted = [p for p in eligible if abs(p['zero']-anchor['zero'])<=
                    max(.03,3*math.hypot(p['sigma'],anchor['sigma']))]
         zero = float(np.average([p['zero'] for p in trusted],weights=[p['weight'] for p in trusted]))
     if refine_zero:
@@ -99,13 +103,13 @@ def align_common_zero(phases, records, *, wavelength, zero_shift=0., refine_zero
         prior = next((p for p in proposals if p['key']==phase.key),None)
         # Preserve an already validated result when the shared budget runs out.
         # Do not publish that cell at a different, unevaluated scan zero.
-        if prior is not None and abs(prior['zero']-zero)<=.000500001:
+        if prior is not None and not rejected and abs(prior['zero']-zero)<=.000500001:
             validated = apply_peak_cell(phase.peaks,prior['cell'],wavelength=wavelength,zero_shift=zero)
             if validated is not None:
                 estimate = CellParameterEstimate(prior['cell'],prior['system'],prior['matches'],
                     zero,prior['rms'],prior['rms']+abs(prior['zero']-zero))
                 fitted = PeakCellAlignment(validated,estimate)
-        if cell is not None and not budget.expired:
+        if cell is not None and not budget.expired and not rejected:
             # Preserve the bounded cell-start search even with a fixed zero:
             # high-angle reflections may be beyond the first association
             # window. Screen from the reference metric, not an already warped
@@ -117,7 +121,10 @@ def align_common_zero(phases, records, *, wavelength, zero_shift=0., refine_zero
                     _alignment_support(fitted.peaks,observed)[0]):
                 fitted = refined
         alignments[phase.key] = fitted
-    diagnostics = dict(zero_confirmed=bool(trusted),budget_exhausted=budget.expired,
+    diagnostics = dict(zero_confirmed=bool(trusted and confirmed),
+        requires_confirmation=bool(trusted and not confirmed),
+        position_rejected=rejected,
+        zero_sigma_deg=max((p['sigma'] for p in trusted),default=0.),budget_exhausted=budget.expired,
         seconds=budget.elapsed,limit_seconds=2.,trusted_phases=[p['key'] for p in trusted],
         proposals=[{k:v for k,v in p.items() if k!='cell'} for p in proposals])
     return CommonZeroAlignment(zero,alignments,diagnostics)
@@ -126,7 +133,7 @@ def align_common_zero(phases, records, *, wavelength, zero_shift=0., refine_zero
 def _validated_proposal(phase, cell, fitted, observed, wavelength, seed):
     estimate = fitted.estimate
     zero = seed if estimate is None else estimate.zero_shift_deg
-    if abs(zero)>.5:
+    if abs(zero)>.5 and abs(zero-seed)>.15:
         return None
     fitted_cell = cell if estimate is None else estimate.cell
     estimator = _PeakPositionEstimator()
@@ -173,10 +180,13 @@ def _validated_proposal(phase, cell, fitted, observed, wavelength, seed):
         sigma = max(rms,.005)/math.sqrt(max(information,1e-12))
     except (ValueError,np.linalg.LinAlgError):
         return None
-    # The smallest matching half-width is 0.05 degrees. A calibration whose
-    # uncertainty exceeds half of that must not become an authoritative shift,
-    # even if broad mixed maxima let a flexible metric match many positions.
-    if not math.isfinite(sigma) or sigma>.025:
+    # Compare zero precision with the resolved anchors, not the minimum
+    # matching window used for sharp lines. Broad observed maxima have less
+    # precise centres. A less precise, otherwise supported proposal is offered
+    # for operator confirmation, never silently certified as a calibration.
+    sigma_limit = min(.05, max(.025, .25*float(np.median(widths))))
+    if not math.isfinite(sigma) or sigma>sigma_limit:
         return None
-    return dict(key=phase.key,zero=float(zero),sigma=float(sigma),rms=rms,coverage=coverage,
+    return dict(key=phase.key,zero=float(zero),sigma=float(sigma),confirmed=sigma<=.025,
+        sigma_limit=sigma_limit,rms=rms,coverage=coverage,
         matches=len(pairs),system=system,cell=fitted_cell,weight=coverage**2/max(sigma,.005)**2)

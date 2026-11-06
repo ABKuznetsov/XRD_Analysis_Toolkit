@@ -79,6 +79,8 @@ class FinderInput:
     refine_sample_broadening: bool = False
     # Internal fixed-calibration option; the UI still has one search workflow.
     refine_scan_zero: bool = True
+    # Only a caller that can obtain operator confirmation may offer this fit.
+    allow_uncertain_zero: bool = False
 
 
 @dataclass(slots=True)

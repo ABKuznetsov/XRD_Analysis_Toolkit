@@ -19,6 +19,8 @@ from xrd_finder.services.geometric_fingerprint import (
     peak_geometric_hashes,
     rank_fingerprint_candidates,
 )
+from xrd_finder.services.reference_batch_reader import REFERENCE_BATCH_SIZE, REFERENCE_COLUMNS, read_reference_batch
+from xrd_finder.services.normalized_reflections import ordered_card_query
 
 
 CandidateRow = list[str]
@@ -70,6 +72,9 @@ def rank_candidate_rows(
     for index, original in enumerate(normalized_rows[:limit]):
         if cancelled is not None and cancelled():
             raise CancelledError('Candidate ranking cancelled')
+        prepare_batch = getattr(reference_peak_loader,'prepare_batch',None)
+        if prepare_batch is not None and index%REFERENCE_BATCH_SIZE==0:
+            prepare_batch(normalized_rows[index:min(index+REFERENCE_BATCH_SIZE,limit)],cancelled=cancelled)
         row = list(original)
         row[5] = ""
         row[6] = ""
@@ -181,14 +186,29 @@ def _area_geometry_refinements(scored_rows, observed_records, *, excluded, limit
 class LocalReferencePeakLoader:
     """Callable reference reader with explicit worker-scope connection ownership."""
 
-    def __init__(self, load, connection, *, snapshot=False):
+    def __init__(self, load, connection, *, snapshot=False, load_batch=None):
         self._load = load
         self._connection = connection
         self._snapshot = snapshot
+        self._load_batch = load_batch
+        self._prefetched = {}
+
+    def prepare_batch(self, rows, *, cancelled=None):
+        if self._connection is None:
+            raise RuntimeError('Reference reader is closed')
+        self._prefetched.clear()
+        if self._load_batch is not None:
+            self._prefetched = self._load_batch(rows,cancelled)
 
     def __call__(self, row):
         if self._connection is None:
             raise RuntimeError("Reference reader is closed")
+        key = (str(row[0] or '').strip().upper(),str(row[1] or '').strip()) if len(row)>1 else ('','')
+        if key in self._prefetched:
+            result = self._prefetched[key]
+            if isinstance(result,Exception):
+                raise result
+            return result
         if not self._snapshot:
             return self._load(row)
         self._connection.execute('BEGIN')
@@ -206,6 +226,7 @@ class LocalReferencePeakLoader:
         self.close()
 
     def close(self):
+        self._prefetched.clear()
         if self._connection is not None:
             self._connection.close()
             self._connection = None
@@ -280,17 +301,25 @@ def create_local_reference_peak_loader(
             return []
         columns = ("d,two_theta,intensity,norm_intensity,raw_intensity,h,k,l,intrinsic_intensity,intensity_origin"
                    if match_only else "*")
-        records = connection.execute(
-            f"""
-            select {', '.join('peaks.'+name for name in columns.split(','))}
-            from phase_peaks as peaks
-            join phases as phase
-              on phase.source = peaks.source and phase.entry_id = peaks.entry_id
-            where phase.source = ? and phase.entry_id = ? and phase.derived_version = ?
-            order by peaks.peak_index
-            """,
-            (source, entry_id, DERIVED_CACHE_VERSION),
-        ).fetchall()
+        if prepared_only:
+            # __call__ owns the metadata/line snapshot. Preserve the old exact
+            # version-12 gate without joining the card header for every line.
+            if int(entry['derived_version'] or 0)!=DERIVED_CACHE_VERSION:
+                return []
+            fields=tuple(c for c in REFERENCE_COLUMNS if c!='multiplicity') if match_only else REFERENCE_COLUMNS
+            records=connection.execute(ordered_card_query(connection,fields),(source,entry_id)).fetchall()
+        else:
+            records = connection.execute(
+                f"""
+                select {', '.join('peaks.'+name for name in columns.split(','))}
+                from phase_peaks as peaks
+                join phases as phase
+                  on phase.source = peaks.source and phase.entry_id = peaks.entry_id
+                where phase.source = ? and phase.entry_id = ? and phase.derived_version = ?
+                order by peaks.peak_index
+                """,
+                (source, entry_id, DERIVED_CACHE_VERSION),
+            ).fetchall()
         if match_only:
             return _cached_match_peaks(records, primary_wavelength,
                 instrument_profile=instrument_profile, sql_records=True, two_theta_range=two_theta_range)
@@ -300,7 +329,27 @@ def create_local_reference_peak_loader(
     uri = cache.index_path.resolve().as_uri() + "?mode=ro"
     connection = sqlite3.connect(uri, uri=True)
     connection.row_factory = sqlite3.Row
-    return LocalReferencePeakLoader(load, connection, snapshot=prepared_only)
+    def load_batch(rows,cancelled):
+        keys = [(str(row[0] or '').strip().upper(),str(row[1] or '').strip()) for row in rows if len(row)>1]
+        keys = [key for key in keys if key[0] in {'COD','USER','MP','CCDC','AFLOW','OQMD'} and key[1]]
+        requested_wavelength = (float(instrument_profile.radiation.components[0].wavelength_angstrom)
+                               if instrument_profile is not None else primary_wavelength)
+        low,high = cache._requested_d_range(requested_wavelength,*(two_theta_range or (5.,120.)))
+        def classify(key,row,conn):
+            if row is None or int(row['derived_version'] or 0)!=DERIVED_CACHE_VERSION:
+                return []
+            support = cache._reference_prefix_entry(*key,row,connection=conn)
+            return None if cache._entry_covers_reference_range(support,low,high,False) else []
+        columns = tuple(c for c in REFERENCE_COLUMNS if c!='multiplicity') if match_only else REFERENCE_COLUMNS
+        def convert(key,row,records):
+            if match_only:
+                return _cached_match_peaks(records,primary_wavelength,instrument_profile=instrument_profile,
+                    sql_records=True,two_theta_range=two_theta_range)
+            return _cached_reference_peaks((dict(zip(columns,r)) for r in records),primary_wavelength,
+                instrument_profile=instrument_profile,two_theta_range=two_theta_range)
+        return read_reference_batch(connection,keys,columns=columns,classify=classify,convert=convert,cancelled=cancelled)
+    return LocalReferencePeakLoader(load, connection, snapshot=prepared_only,
+        load_batch=load_batch if prepared_only else None)
 
 
 def _normalized_row(row: CandidateRow) -> CandidateRow:

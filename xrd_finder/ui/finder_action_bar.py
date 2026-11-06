@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPushButton,
     QScrollArea,
     QStyle,
     QToolButton,
@@ -24,7 +25,7 @@ class FinderActionBar(QWidget):
     cropRequested = Signal()
     subtractBackgroundRequested = Signal()
     searchRequested = Signal()
-    instrumentProfileSelected = Signal(str)
+    instrumentProfileApplyRequested = Signal(str, str)
     instrumentProfileEditRequested = Signal()
     manualZeroShiftChanged = Signal(float)
 
@@ -33,6 +34,18 @@ class FinderActionBar(QWidget):
         self.search_input = QLineEdit()
         self.instrument_profile_combo = QComboBox()
         self.instrument_profile_edit_button = QToolButton()
+        self.instrument_profile_scope = QComboBox()
+        self.instrument_profile_scope.addItem("Current pattern", "active")
+        self.instrument_profile_scope.addItem("Current series", "series")
+        self.instrument_profile_scope.addItem("All project patterns", "all")
+        self.instrument_profile_apply_button = QPushButton("Apply")
+        self.instrument_profile_target_label = QLabel()
+        self.instrument_profile_target_label.setWordWrap(True)
+        self.instrument_profile_target_label.setProperty('uiRole', 'muted')
+        self._instrument_target_name = None
+        self._instrument_series_name = None
+        self._instrument_series_count = 0
+        self._instrument_pattern_count = 0
         self.zero_shift_refined_value = QLabel("0.000")
         self.zero_shift_refined_value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.zero_shift_refined_value.setToolTip("Scan-zero displacement from the current refinement")
@@ -67,6 +80,7 @@ class FinderActionBar(QWidget):
         self._current_preprocessing_key: str | None = None
         self._current_preprocessing_panel: QWidget | None = None
         self._build_ui()
+        self.set_instrument_targets(None, None, 0, 0)
 
     def search_text(self) -> str:
         return self.search_input.text().strip()
@@ -92,23 +106,32 @@ class FinderActionBar(QWidget):
 
         self.instrument_profile_combo.setMinimumContentsLength(12)
         self.instrument_profile_combo.setMinimumWidth(120)
-        self.instrument_profile_combo.setMaximumWidth(170)
-        self.instrument_profile_combo.setToolTip("Instrument and radiation profile used for calculated patterns")
-        self.instrument_profile_combo.currentIndexChanged.connect(self._emit_instrument_profile)
+        self.instrument_profile_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.instrument_profile_combo.setToolTip("Choose a profile, then press Apply to change the intended measurements.")
+        self.instrument_profile_combo.currentIndexChanged.connect(self._sync_instrument_target)
         self.instrument_profile_edit_button.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView)
         )
-        self.instrument_profile_edit_button.setToolTip("Edit instrument profile")
+        self.instrument_profile_edit_button.setToolTip("Manage reusable instrument profiles")
         self.instrument_profile_edit_button.clicked.connect(self.instrumentProfileEditRequested)
 
         instrument_row = QVBoxLayout()
         instrument_row.setContentsMargins(0, 0, 0, 0)
         instrument_row.setSpacing(6)
-        instrument_row.addWidget(QLabel("Active instrument profile"))
+        instrument_row.addWidget(QLabel("Instrument profile"))
         profile_row = QHBoxLayout()
         profile_row.addWidget(self.instrument_profile_combo, 1)
         profile_row.addWidget(self.instrument_profile_edit_button)
         instrument_row.addLayout(profile_row)
+        self.instrument_profile_scope.setToolTip("Choose the current pattern, its series, or every XRD pattern in the project.")
+        self.instrument_profile_scope.currentIndexChanged.connect(self._sync_instrument_target)
+        self.instrument_profile_apply_button.clicked.connect(self._emit_instrument_profile)
+        apply_row = QHBoxLayout()
+        apply_row.addWidget(QLabel("Apply to"))
+        apply_row.addWidget(self.instrument_profile_scope, 1)
+        apply_row.addWidget(self.instrument_profile_apply_button)
+        instrument_row.addLayout(apply_row)
+        instrument_row.addWidget(self.instrument_profile_target_label)
 
         self.smooth_button = self._add_preprocessing_section(
             layout,
@@ -209,14 +232,43 @@ class FinderActionBar(QWidget):
             self.instrument_profile_combo.setCurrentIndex(index if index >= 0 else 0)
         finally:
             self.instrument_profile_combo.blockSignals(False)
+        self._sync_instrument_target()
 
     def current_instrument_profile_id(self) -> str:
         return str(self.instrument_profile_combo.currentData() or "")
 
-    def _emit_instrument_profile(self, _index: int) -> None:
+    def set_instrument_targets(self, active_name, series_name, series_count, pattern_count):
+        self._instrument_target_name = active_name
+        self._instrument_series_name = series_name
+        self._instrument_series_count = int(series_count)
+        self._instrument_pattern_count = int(pattern_count)
+        for scope, enabled in (('active', active_name is not None),
+                               ('series', series_name is not None and series_count > 0),
+                               ('all', pattern_count > 0)):
+            index = self.instrument_profile_scope.findData(scope)
+            self.instrument_profile_scope.model().item(index).setEnabled(enabled)
+        self._sync_instrument_target()
+
+    def _sync_instrument_target(self, *_args):
+        scope = self.instrument_profile_scope.currentData()
+        if scope == 'active':
+            available = self._instrument_target_name is not None
+            text = f"Current pattern: {self._instrument_target_name}" if available else "Select an XRD pattern."
+        elif scope == 'series':
+            available = self._instrument_series_name is not None and self._instrument_series_count > 0
+            text = (f"Series: {self._instrument_series_name} · {self._instrument_series_count} patterns"
+                    if available else "The current pattern is not in a series.")
+        else:
+            available = scope == 'all' and self._instrument_pattern_count > 0
+            text = f"All project patterns: {self._instrument_pattern_count}"
+        self.instrument_profile_target_label.setText(text)
+        self.instrument_profile_apply_button.setEnabled(available and bool(self.current_instrument_profile_id()))
+        self.instrument_profile_apply_button.setToolTip(text)
+
+    def _emit_instrument_profile(self) -> None:
         profile_id = self.current_instrument_profile_id()
-        if profile_id:
-            self.instrumentProfileSelected.emit(profile_id)
+        if profile_id and self.instrument_profile_apply_button.isEnabled():
+            self.instrumentProfileApplyRequested.emit(profile_id, str(self.instrument_profile_scope.currentData()))
 
     def _add_preprocessing_section(
         self,

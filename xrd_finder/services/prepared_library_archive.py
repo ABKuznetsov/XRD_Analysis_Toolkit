@@ -8,11 +8,14 @@ from pathlib import Path, PurePosixPath
 import re
 import sqlite3
 import tempfile
+from itertools import zip_longest
 from zipfile import ZipFile, ZIP_DEFLATED
 
 from xrd_finder import __version__
 from xrd_finder.services.cod_cif_store import atomic_save_cif, lock_cifs
 from xrd_finder.services.local_phase_cache import DERIVED_CACHE_VERSION
+from xrd_finder.services.cache_storage import COMPACT_STORAGE_VERSION, SUPPORTED_STORAGE_VERSIONS, rewrite_payloads, optimize_database_copy
+from xrd_finder.services.normalized_reflections import normalized_reflections, denormalize_reflections, validate_normalized_schema
 
 PHASE_TABLES = ('phases','phase_elements','phase_peaks','phase_fingerprints',
                 'phase_fingerprint_state','phase_chemistry','reference_preparation_failures')
@@ -50,14 +53,22 @@ def _relative(name):
     return path
 
 
-def export_prepared_library(cache, path, *, progress=None, cancelled=lambda: False):
+def export_prepared_library(cache, path, *, progress=None, cancelled=lambda: False, compact=True):
     _check(cancelled)
     target = Path(path)
     target.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='xrd-library-export-') as folder:
         snapshot = Path(folder)/'index.sqlite'
-        with closing(cache._connect()) as original,closing(sqlite3.connect(snapshot)) as saved:
-            original.backup(saved,pages=256,progress=lambda *_:_check(cancelled))
+        if compact:
+            optimize_database_copy(cache.index_path,snapshot,progress=progress,cancelled=cancelled)
+        else:
+            with closing(cache._connect()) as original,closing(sqlite3.connect(snapshot)) as saved:
+                original.backup(saved,pages=256,progress=lambda *_:_check(cancelled))
+            with closing(sqlite3.connect(snapshot)) as saved,saved:
+                saved.execute('pragma journal_mode=delete')
+                rewrite_payloads(saved,compact=False,progress=progress,cancelled=cancelled)
+                denormalize_reflections(saved,cancelled=cancelled)
+                saved.execute('pragma user_version=0')
         with closing(sqlite3.connect(snapshot)) as saved:
             rows = saved.execute('select source,entry_id,cif_path from phases').fetchall()
             paths = {Path(row[2]).resolve() for row in rows if row[2] and Path(row[2]).is_file()}
@@ -98,7 +109,9 @@ def export_prepared_library(cache, path, *, progress=None, cancelled=lambda: Fal
                             name = 'references/'+reference.name
                             auxiliary[name] = _hash(reference,cancelled)
                             archive.write(reference,name)
-                    manifest = dict(schema=1,application='XRD Phase Finder prepared library',
+                    storage_version = saved.execute('pragma user_version').fetchone()[0]
+                    manifest = dict(schema=2 if storage_version else 1,
+                        storage_version=storage_version,application='XRD Phase Finder prepared library',
                         app_version=__version__,derived_version=DERIVED_CACHE_VERSION,
                         calculation_signature=cache.calculated_iic.signature,auxiliary=auxiliary,
                         phases=len(rows),ready=ready,missing_cifs=missing,sources=sources,
@@ -118,7 +131,10 @@ def export_prepared_library(cache, path, *, progress=None, cancelled=lambda: Fal
 def _validate_database(saved, destination):
     objects = saved.execute("select type,name,sql from sqlite_master where type in ('table','view','trigger')").fetchall()
     expected_triggers = dict(destination.execute("select name,sql from sqlite_master where type='trigger'"))
+    normalized_objects = validate_normalized_schema(saved) if normalized_reflections(saved) else frozenset()
     for kind,name,sql in objects:
+        if name in normalized_objects:
+            continue  # Exact known schema, not arbitrary archive views/triggers.
         if kind=='view' or (kind=='table' and (name not in (*TABLES,'sqlite_stat1','sqlite_stat4') or 'virtual table' in (sql or '').lower())):
             raise ValueError('Unsupported database object in prepared library')
         if kind=='trigger' and expected_triggers.get(name)!=sql:
@@ -126,10 +142,46 @@ def _validate_database(saved, destination):
     for table in TABLES:
         columns = saved.execute('pragma table_xinfo('+table+')').fetchall()
         expected = destination.execute('pragma table_xinfo('+table+')').fetchall()
-        if not columns or any(row[6] for row in columns) or {(r[1],r[2],r[5]) for r in columns}!={(r[1],r[2],r[5]) for r in expected}:
+        # A compatibility view has no declared PK; logical peak keys are fixed.
+        def schema(rows):
+            return {(r[1],r[2],0 if table=='phase_peaks' else r[5]) for r in rows}
+        if not columns or any(row[6] for row in columns) or schema(columns)!=schema(expected):
             raise ValueError('Library SQL schema differs; use the same Finder version on both computers')
     if saved.execute('pragma quick_check').fetchone()[0]!='ok':
         raise ValueError('The prepared SQLite library is damaged')
+
+
+def _incoming_matches(destination, *, progress, cancelled):
+    """Compare affected rows in the write snapshot, without materializing a library.
+
+    Count auxiliary rows as well as their values: a matching card header alone
+    cannot certify a complete reflection/fingerprint index. Unrelated cards and
+    unrelated cached queries are outside this archive's replacement scope.
+    """
+    missing = object()
+    for index,table in enumerate(TABLES,1):
+        if progress:
+            progress('Checking existing prepared records',index,len(TABLES))
+        _check(cancelled)
+        columns = destination.execute('pragma main.table_info('+table+')').fetchall()
+        keys = [row[1] for row in sorted(columns,key=lambda row:row[5]) if row[5]]
+        if table=='phase_peaks':
+            keys = ['source','entry_id','peak_index']
+        fields = ','.join('t.'+row[1] for row in columns)
+        order = ','.join('t.'+key for key in keys)
+        scope = 'search_cache' if table=='search_cache' else 'phases'
+        scope_keys = keys if table=='search_cache' else ('source','entry_id')
+        join = ' and '.join('t.'+key+'=p.'+key for key in scope_keys)
+        query = f'select {fields} from main.{table} t join incoming.{scope} p on {join} order by {order}'
+        with closing(destination.execute(query)) as existing,closing(destination.execute(
+                f'select {fields} from incoming.{table} t order by {order}')) as incoming:
+            for number,(left,right) in enumerate(zip_longest(existing,incoming,fillvalue=missing)):
+                if number%256==0:
+                    _check(cancelled)
+                if left is missing or right is missing or tuple(left)!=tuple(right):
+                    return False
+    _check(cancelled)
+    return True
 
 
 def import_prepared_library(cache, path, *, progress=None, cancelled=lambda: False):
@@ -146,11 +198,13 @@ def import_prepared_library(cache, path, *, progress=None, cancelled=lambda: Fal
             if archive.getinfo('manifest.json').file_size>64*1024**2:
                 raise ValueError('Library manifest is too large')
             manifest = json.loads(archive.read('manifest.json'))
-            if manifest.get('schema')!=1 or manifest.get('application')!='XRD Phase Finder prepared library':
+            if manifest.get('schema') not in (1,2) or manifest.get('application')!='XRD Phase Finder prepared library':
                 raise ValueError('Unsupported prepared library archive')
+            if manifest.get('schema')==2 and manifest.get('storage_version') not in SUPPORTED_STORAGE_VERSIONS[1:]:
+                raise ValueError('Unsupported prepared library storage format')
             if manifest.get('derived_version')!=DERIVED_CACHE_VERSION:
                 raise ValueError('Library calculation version differs; use the same Finder version on both computers')
-            if manifest.get('calculation_signature')!=cache.calculated_iic.signature:
+            if not cache.calculated_iic.compatible_library_signature(manifest.get('calculation_signature')):
                 raise ValueError('Library CrIStMa/reference settings differ; install the same Finder runtime on both computers')
             files = manifest['files']
             auxiliary = manifest.get('auxiliary',{})
@@ -177,7 +231,13 @@ def import_prepared_library(cache, path, *, progress=None, cancelled=lambda: Fal
         snapshot = folder/'index.sqlite'
         with closing(sqlite3.connect(snapshot)) as saved,closing(cache._connect()) as destination:
             saved.execute('pragma trusted_schema=off')
+            if saved.execute('pragma user_version').fetchone()[0] != manifest.get('storage_version',0):
+                raise ValueError('Prepared library storage version does not match its manifest')
             _validate_database(saved,destination)
+            # Dictionary IDs belong to one database. Merge by public card keys,
+            # never copy foreign numeric IDs into another laboratory's library.
+            with saved:
+                denormalize_reflections(saved,cancelled=cancelled)
             rows = saved.execute('select source,entry_id,cif_path from phases').fetchall()
             referenced = {row[2] for row in rows if row[2]}
             if referenced-set(files):
@@ -212,20 +272,23 @@ def import_prepared_library(cache, path, *, progress=None, cancelled=lambda: Fal
             updates = [(str((blob_root/Path(row[2]).name).resolve()) if row[2] else '',row[0],row[1]) for row in rows]
             with saved:
                 saved.executemany('update phases set cif_path=? where source=? and entry_id=?',updates)
+                rewrite_payloads(saved,compact=cache.compact_storage,
+                    sql_reflections=cache.storage_version>=COMPACT_STORAGE_VERSION,progress=progress,cancelled=cancelled)
             destination.execute('attach database ? as incoming',(str(snapshot),))
             try:
                 destination.set_progress_handler(lambda:1 if cancelled() else 0,10000)
                 with destination:
                     destination.execute('begin immediate')
-                    for index,table in enumerate(TABLES,1):
-                        _check(cancelled)
-                        if table!='phases' and table!='search_cache':
-                            destination.execute(f'delete from {table} where exists (select 1 from incoming.phases p where p.source={table}.source and p.entry_id={table}.entry_id)')
-                        columns = [row[1] for row in destination.execute('pragma table_info('+table+')')]
-                        fields = ','.join(columns)
-                        destination.execute(f'insert or replace into main.{table} ({fields}) select {fields} from incoming.{table}')
-                        if progress:
-                            progress('Restoring prepared index: '+table,index,len(TABLES))
+                    if not _incoming_matches(destination,progress=progress,cancelled=cancelled):
+                        for index,table in enumerate(TABLES,1):
+                            _check(cancelled)
+                            if table!='phases' and table!='search_cache':
+                                destination.execute(f'delete from {table} where exists (select 1 from incoming.phases p where p.source={table}.source and p.entry_id={table}.entry_id)')
+                            columns = [row[1] for row in destination.execute('pragma table_info('+table+')')]
+                            fields = ','.join(columns)
+                            destination.execute(f'insert or replace into main.{table} ({fields}) select {fields} from incoming.{table}')
+                            if progress:
+                                progress('Restoring prepared index: '+table,index,len(TABLES))
                     _check(cancelled)
             except sqlite3.OperationalError:
                 _check(cancelled)

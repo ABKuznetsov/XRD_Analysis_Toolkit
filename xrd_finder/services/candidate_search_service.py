@@ -1227,6 +1227,8 @@ class CandidateSearchService(CandidateRowFormatter):
     ) -> int:
         """Queue CIF preparation only after a broad manual search is accepted."""
 
+        if cancelled is not None and cancelled():
+            return 0
         reference_low,reference_high = two_theta_range or (5.,120.)
         queued = 0
         seen: set[tuple[str, str]] = set()
@@ -1239,6 +1241,14 @@ class CandidateSearchService(CandidateRowFormatter):
             (row[0], row[1]) for row in normalized_rows
             if row[0].strip().upper() in supported
         )
+        try:
+            coverage = self.local_phase_cache.reference_range_coverage(
+                states,wavelength=wavelength,two_theta_min=reference_low,
+                two_theta_max=reference_high,cancelled=cancelled)
+        except CancelledError:
+            if cancelled is not None and cancelled():
+                return 0  # No jobs have been submitted during the bounded read.
+            raise
         for normalized in normalized_rows:
             if cancelled is not None and cancelled():
                 break
@@ -1249,13 +1259,11 @@ class CandidateSearchService(CandidateRowFormatter):
                 continue
             seen.add(key)
             cached = states.get(key)
-            if cached is not None and cached.ready and self.local_phase_cache.reference_range_covered(
-                    source,entry_id,wavelength=wavelength,two_theta_min=reference_low,two_theta_max=reference_high):
+            if cached is not None and cached.ready and coverage.get(key,False):
                 continue
             cached_path = Path(cached.cif_path) if cached is not None and cached.cif_path else None
             existing_path = cached_path if cached_path is not None and cached_path.exists() else None
-            if cached is not None and not self.local_phase_cache.reference_range_covered(
-                    source,entry_id,wavelength=wavelength,two_theta_min=reference_low,two_theta_max=reference_high):
+            if cached is not None and not coverage.get(key,False):
                 existing = self.local_phase_cache.cif_path(source,entry_id)
                 if existing is not None:
                     queued += int(self._queue_candidate_preparation(source=source,entry_id=entry_id,

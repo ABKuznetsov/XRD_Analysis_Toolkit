@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import cached_property
+
 import html as html_lib
 from dataclasses import dataclass
 import re
@@ -37,9 +39,6 @@ class CcdcEntry:
 
 
 class CcdcService:
-    def __init__(self) -> None:
-        self._ssl_context = self._create_ssl_context()
-
     def status(self) -> CcdcApiStatus:
         try:
             from ccdc.io import EntryReader
@@ -359,6 +358,11 @@ class CcdcService:
 
     def _safe_id(self, doi: str) -> str:
         return re.sub(r"[^A-Za-z0-9._-]+", "_", doi).strip("_") or "ccdc_doi"
+
+    @cached_property
+    def _ssl_context(self):
+        # Loading certificate authorities is needed only for an HTTPS request.
+        return self._create_ssl_context()
 
     def _create_ssl_context(self):
         return create_ssl_context()

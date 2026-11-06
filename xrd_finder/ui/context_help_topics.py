@@ -102,6 +102,8 @@ def resolve_help(window,widget,global_pos=None):
     add(window.finder_action_bar,{'smooth_button':'processing.smoothing','background_button':'processing.background',
         'crop_button':'processing.crop','zero_shift_value':'processing.zero','zero_shift_section':'processing.zero',
         'instrument_profile_combo':'instrument.saved','instrument_profile_edit_button':'instrument.saved',
+        'instrument_profile_scope':'instrument.saved','instrument_profile_apply_button':'instrument.saved',
+        'instrument_profile_target_label':'instrument.saved',
         'peak_search_tolerance':'peaks.select'})
     for key,topic in (('_auto_search_setup_popup','auto-search.setup'),('_instrument_profile_dialog','instrument.saved'),
                        ('_database_settings_dialog','databases.sources'),('_plot_view_settings_dialog','appearance-export.plot'),

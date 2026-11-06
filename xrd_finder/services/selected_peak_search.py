@@ -9,6 +9,7 @@ from typing import Callable, Iterable
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
+from xrd_finder.services.normalized_reflections import range_join
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,9 +222,8 @@ def search_selected_peaks(
                     f"""with search_windows(min_d,max_d) as (values {values})
                     select p.source,p.entry_id,p.formula,p.name,p.spacegroup,p.iic,p.iic_method,p.derived_version,pp.d
                     from search_windows w
-                    join phase_peaks pp on pp.d between w.min_d and w.max_d
-                    join phases p on p.source=pp.source and p.entry_id=pp.entry_id
-                    where {' and '.join(where)}""",
+                    cross join {range_join(connection)}
+                    where pp.d between w.min_d and w.max_d and {' and '.join(where)}""",
                     (*[value for bounds in batch for value in bounds], *params),
                 )
                 for row in cursor:

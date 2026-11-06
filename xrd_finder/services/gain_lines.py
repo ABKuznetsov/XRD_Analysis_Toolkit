@@ -25,6 +25,26 @@ class GainLineMixin:
         observed = getattr(inputs,'observed',None) if inputs is not None else (self._active_observed_data() if hasattr(self,'_active_observed_data') else None)
         return reference_scan_range(observed) or (5.,120.)
 
+    def _prefetch_candidate_rows_for_gain(self, rows):
+        """Read one bounded SQL batch before converting/scoring its candidates."""
+        provider = getattr(self, 'candidate_line_provider', None)
+        if provider is None or not hasattr(provider, 'prefetch'):
+            return
+        selected = {self._candidate_key(c) for c in (self.match_candidates or [])}
+        candidates = []
+        for row in rows:
+            candidate = dict(zip(('Source', 'Entry', 'Formula', 'Phase'), row[:4]))
+            if (self._candidate_key(candidate) not in selected
+                    and self._candidate_embedded_cif_path(candidate) is None
+                    and self._gain_structure_override(candidate) is None):
+                candidates.append(candidate)
+        instrument = (self._gain_instrument_profile() if hasattr(self, '_gain_instrument_profile')
+                      else self._instrument_profile_for_pattern(self._active_pattern()))
+        low, high = self._candidate_reference_range()
+        provider.prefetch(candidates,
+            wavelength=float(instrument.radiation.components[0].wavelength_angstrom),
+            two_theta_min=low, two_theta_max=high, cancelled=getattr(self, '_cancelled', None))
+
     def _structure_cell_signature(self, structure) -> tuple[object, ...] | None:
         if structure is None:
             return None

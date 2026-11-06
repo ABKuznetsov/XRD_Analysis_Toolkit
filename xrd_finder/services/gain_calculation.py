@@ -41,6 +41,7 @@ from xrd_finder.ui.gain_scoring import DEFAULT_GAIN_POLICY, GainStage, build_gai
 from xrd_finder.services.gain_peak_width import estimate_profile_fwhm
 from xrd_finder.instrument.models import InstrumentProfile
 from xrd_finder.services.gain_lines import GainLineMixin
+from xrd_finder.services.reference_batch_reader import REFERENCE_BATCH_SIZE
 from xrd_finder.services.gain_cell_alignment import refine_gain_cell
 from xrd_finder.services.candidate_rows import CandidateRowFormatter, normalize_candidate_row
 from xrd_finder.services.cod_online_service import formula_elements
@@ -352,22 +353,30 @@ class GainCalculationMixin:
         if has_selected_phases and gain_context is not None:
             gain_context["gain_stage"] = "combined"
             preliminary_gains: dict[int, float] = {}
-            for row_index, row in enumerate(rows_to_rank):
-                self._gain_check_cancelled()
-                if progress is not None and row_index % 25 == 0:
-                    try:
-                        progress(row_index, len(rows_to_rank))
-                    except Exception:
-                        pass
-                candidate = {
-                    "Source": row[0] if len(row) > 0 else "",
-                    "Entry": row[1] if len(row) > 1 else "",
-                    "Formula": row[2] if len(row) > 2 else "",
-                    "Phase": row[3] if len(row) > 3 else "",
-                }
-                if self._candidate_key(candidate) in selected_keys:
-                    continue
-                preliminary_gains[row_index] = self._candidate_row_preliminary_gain(row, gain_context)
+            try:
+                for row_index, row in enumerate(rows_to_rank):
+                    self._gain_check_cancelled()
+                    if row_index % REFERENCE_BATCH_SIZE == 0:
+                        self._prefetch_candidate_rows_for_gain(
+                            rows_to_rank[row_index:row_index + REFERENCE_BATCH_SIZE])
+                    if progress is not None and row_index % 25 == 0:
+                        try:
+                            progress(row_index, len(rows_to_rank))
+                        except Exception:
+                            pass
+                    candidate = {
+                        "Source": row[0] if len(row) > 0 else "",
+                        "Entry": row[1] if len(row) > 1 else "",
+                        "Formula": row[2] if len(row) > 2 else "",
+                        "Phase": row[3] if len(row) > 3 else "",
+                    }
+                    if self._candidate_key(candidate) in selected_keys:
+                        continue
+                    preliminary_gains[row_index] = self._candidate_row_preliminary_gain(row, gain_context)
+            finally:
+                provider = getattr(self, 'candidate_line_provider', None)
+                if provider is not None and hasattr(provider, 'clear_prefetch'):
+                    provider.clear_prefetch()
             if "peak_search" in gain_context:
                 refine_gain_peak_candidates(self, rows_to_rank, preliminary_gains, gain_context)
             overlap_records = self._gain_stage_records(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QTabWidget,
@@ -61,6 +62,8 @@ class InstrumentProfileEditor(QWidget):
 
     def __init__(self, profile: InstrumentProfile | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setObjectName('instrumentProfileEditor')
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._profile_id = ""
         self.tabs = QTabWidget()
         self._build_identity_tab()
@@ -75,6 +78,8 @@ class InstrumentProfileEditor(QWidget):
 
     def _add_form_tab(self, title: str) -> QFormLayout:
         page = QWidget()
+        page.setObjectName('instrumentProfilePage')
+        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         form = QFormLayout(page)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         form.setHorizontalSpacing(14)
@@ -432,8 +437,6 @@ class InstrumentProfileDialog(ScreenBoundDialog):
     saveAsRequested = Signal(object)
     updateRequested = Signal(object)
     deleteRequested = Signal(str)
-    applyActiveRequested = Signal(object)
-    applySelectedRequested = Signal(object)
 
     def __init__(
         self,
@@ -463,52 +466,48 @@ class InstrumentProfileDialog(ScreenBoundDialog):
             QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
         )
         self.profile_selector.setMinimumContentsLength(28)
-        self.new_profile_button = QPushButton("New")
-        self.save_profile_button = QPushButton("Save")
-        self.delete_button = QPushButton("Delete")
-        self.import_profile_button = QPushButton("Import...")
-        self.export_profile_button = QPushButton("Export...")
-        self.import_profile_button.clicked.connect(self._import_profile_file)
-        self.export_profile_button.clicked.connect(self._export_profile_file)
+        self.profiles_menu = QMenu(self)
+        self.profiles_menu.setToolTipsVisible(True)
+        self.new_profile_action = self.profiles_menu.addAction("New profile…", self._new_profile)
+        self.new_profile_action.setToolTip("Create an unsaved profile. Existing measurements are unchanged.")
+        self.save_profile_action = self.profiles_menu.addAction("Save to my profiles", self._save_selected_profile)
+        self.save_profile_action.setToolTip("Save these settings in your reusable profile library. This does not apply them to measurements.")
+        self.profiles_menu.addSeparator()
+        self.import_profile_action = self.profiles_menu.addAction("Import profile from file…", self._import_profile_file)
+        self.import_profile_action.setToolTip("Add a shared JSON profile to your library without changing measurements.")
+        self.export_profile_action = self.profiles_menu.addAction("Export profile to file…", self._export_profile_file)
+        self.export_profile_action.setToolTip("Write the settings shown below to a JSON file for sharing or backup.")
+        self.profiles_menu.addSeparator()
+        self.delete_profile_action = self.profiles_menu.addAction("Delete saved profile", self._delete_selected_profile)
+        self.delete_profile_action.setToolTip("Remove this saved profile from your library. Built-in profiles cannot be deleted.")
+        self.profiles_button = QPushButton("Profiles…")
+        self.profiles_button.setMenu(self.profiles_menu)
+        self.profiles_button.setToolTip("Create, save, import, export or delete reusable instrument profiles.")
         self.editor = InstrumentProfileEditor(profile)
         self.editor.calibrationRequested.connect(self._open_calibration)
         self.editor.set_section(section)
         note = QLabel(
-            "Laboratory tube spectra and synchrotron radiation are provided by CrIStMa. "
-            "The complete instrument profile is stored in the project."
+            "Profiles → Save keeps these settings in your library. "
+            "To apply them to measurements, use Processing → Instrument and radiation."
         )
         note.setWordWrap(True)
         self.project_profile_note = QLabel(
-            "This instrument profile comes from the opened project. You can edit it for this "
-            "project, or press Save to add it to your personal instrument profiles."
+            "Profile from this project. Use Profiles → Save to my profiles to reuse it."
         )
         self.project_profile_note.setWordWrap(True)
         self.project_profile_note.setObjectName("projectInstrumentProfileNote")
-        apply_active = QPushButton("Apply to active")
-        apply_selected = QPushButton("Apply to selected")
-        self.save_profile_button.clicked.connect(self._save_selected_profile)
-        self.delete_button.clicked.connect(self._delete_selected_profile)
-        apply_active.clicked.connect(lambda: self._emit_profile(self.applyActiveRequested))
-        apply_selected.clicked.connect(lambda: self._emit_profile(self.applySelectedRequested))
         self.profile_selector.currentIndexChanged.connect(self._select_saved_profile)
-        self.new_profile_button.clicked.connect(self._new_profile)
         selector_row = QHBoxLayout()
-        selector_row.addWidget(QLabel("Saved profile"))
+        selector_row.addWidget(QLabel("Profile"))
         selector_row.addWidget(self.profile_selector, 1)
-        selector_row.addWidget(self.new_profile_button)
-        selector_row.addWidget(self.save_profile_button)
-        selector_row.addWidget(self.delete_button)
+        selector_row.addWidget(self.profiles_button)
         actions = QHBoxLayout()
-        actions.addWidget(self.import_profile_button)
-        actions.addWidget(self.export_profile_button)
         actions.addStretch(1)
-        actions.addWidget(apply_active)
-        actions.addWidget(apply_selected)
         close_buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         close_buttons.rejected.connect(self.reject)
         close_buttons.clicked.connect(self.close)
         actions.addWidget(close_buttons)
-        layout = scrollable_dialog_body(self)
+        layout = scrollable_dialog_body(self, body_name='instrumentProfileBody')
         layout.addLayout(selector_row)
         layout.addWidget(self.project_profile_note)
         layout.addWidget(self.editor, 1)
@@ -646,9 +645,8 @@ class InstrumentProfileDialog(ScreenBoundDialog):
         is_project_profile = self._selected_profile_key.startswith("__current__:")
         editable = is_saved and profile_id not in self._packaged_profile_ids
         self.project_profile_note.setVisible(is_project_profile)
-        self.save_profile_button.setText("Add to my profiles" if is_project_profile else "Save")
-        self.save_profile_button.setEnabled(True)
-        self.delete_button.setEnabled(editable)
+        self.save_profile_action.setText("Save changes to my profiles" if editable else "Save to my profiles")
+        self.delete_profile_action.setEnabled(editable)
 
     def _save_selected_profile(self) -> None:
         profile_id = self.editor._profile_id
@@ -661,7 +659,7 @@ class InstrumentProfileDialog(ScreenBoundDialog):
         self._emit_profile(signal)
 
     def _delete_selected_profile(self) -> None:
-        if not self.delete_button.isEnabled():
+        if not self.delete_profile_action.isEnabled():
             return
         self.deleteRequested.emit(self.editor.instrument_profile().profile_id)
 

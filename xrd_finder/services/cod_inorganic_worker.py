@@ -54,8 +54,9 @@ class _JobSource:
 
 
 def prepare_paths(cache_root, paths, *, workers=None, ready=None, cancelled=lambda: False,
-                  source_done=None):
+                  source_done=None,source='COD'):
     from xrd_finder.services.cod_inorganic_library import LibraryCancelled
+    source_name=source
     source = _JobSource(paths, source_done)
     while source.empty() and not source.finished():
         if cancelled():
@@ -85,7 +86,7 @@ def prepare_paths(cache_root, paths, *, workers=None, ready=None, cancelled=lamb
                         'xrd_finder.services.cod_inorganic_worker','--worker',str(cache_root)],
                         stdin=subprocess.PIPE,stdout=output,stderr=errors,cwd=package_root,
                         env=environment,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
-                slot = dict(process=process,reader=output_path.open('rb'),errors=error_path,current=None)
+                slot = dict(process=process,reader=output_path.open('rb'),errors=error_path,current=None,source=source_name)
                 running.append(slot)
                 _assign(slot,source)
             while not source.finished() or any(slot['current'] is not None for slot in running):
@@ -141,7 +142,7 @@ def _assign(slot, source):
     if job is not None:
         identifier,path = job
         slot['current'] = identifier
-        slot['process'].stdin.write((json.dumps(dict(id=identifier,path=str(path)))+'\n').encode())
+        slot['process'].stdin.write((json.dumps(dict(id=identifier,path=str(path),source=slot['source']))+'\n').encode())
         slot['process'].stdin.flush()
     elif source.finished() and not slot['process'].stdin.closed:
         slot['process'].stdin.close()
@@ -153,7 +154,7 @@ def main(cache_root):
     for line in sys.stdin:
         request = json.loads(line)
         try:
-            success = cache.index_cif(request['path'],source='COD',entry_id=request['id'])
+            success = cache.index_cif(request['path'],source=request.get('source','COD'),entry_id=request['id'])
             error = '' if success else getattr(cache,'_last_reference_preparation_error','CIF preparation failed')
         except Exception as exc:
             success,error = False,str(exc)

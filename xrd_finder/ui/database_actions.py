@@ -70,6 +70,7 @@ class PhaseFinderDatabaseActionsMixin:
         self.database_panel.ccdcPortalRequested.connect(self._open_ccdc_portal)
         self.database_panel.exportPreparedLibraryRequested.connect(lambda:self._transfer_prepared_library(False))
         self.database_panel.importPreparedLibraryRequested.connect(lambda:self._transfer_prepared_library(True))
+        self.database_panel.optimizeLibraryStorageRequested.connect(self._optimize_library_storage)
         self.database_panel.exportCodRequested.connect(lambda: self._export_phase_cache_sources(["COD"], "COD local/bulk", "xrd_cod_cache.json"))
         self.database_panel.importCodRequested.connect(lambda: self._import_phase_cache_sources(["COD"], "COD local/bulk"))
         self.database_panel.clearCodRequested.connect(self._clear_cod_cache)
@@ -256,13 +257,7 @@ class PhaseFinderDatabaseActionsMixin:
         )
         if not path:
             return
-        try:
-            count = self.local_phase_cache.export_user_library(path)
-        except Exception as exc:
-            QMessageBox.warning(self, "Export user phase library failed", str(exc))
-            return
-        self._refresh_user_phase_library_window()
-        QMessageBox.information(self, "Export user phase library", f"Exported {count} phase(s).")
+        self._export_phase_json_background(path,['USER'],library_name='user_phase_library')
 
     def _import_user_phase_library(self) -> None:
         path, _selected_filter = QFileDialog.getOpenFileName(
@@ -273,17 +268,7 @@ class PhaseFinderDatabaseActionsMixin:
         )
         if not path:
             return
-        try:
-            count = self.local_phase_cache.import_user_library(path)
-            self.settings.setValue("sources/user_library", True)
-            if self.database_panel is not None:
-                self.database_panel.set_source_checked("sources/user_library", True)
-        except Exception as exc:
-            QMessageBox.warning(self, "Import user phase library failed", str(exc))
-            return
-        self._refresh_database_rows()
-        self._refresh_user_phase_library_window()
-        QMessageBox.information(self, "Import user phase library", f"Imported {count} new phase(s).")
+        self._import_phase_json_background(path,['USER'])
 
     def _export_phase_cache_sources(self, sources: list[str], title: str, default_filename: str) -> None:
         default_path = Path.home() / "Desktop" / default_filename
@@ -295,12 +280,14 @@ class PhaseFinderDatabaseActionsMixin:
         )
         if not path:
             return
-        try:
-            count = self.local_phase_cache.export_phase_library(path, sources=sources)
-        except Exception as exc:
-            QMessageBox.warning(self, f"Export {title} failed", str(exc))
-            return
-        QMessageBox.information(self, f"Export {title}", f"Exported {count} cached phase(s).")
+        self._export_phase_json_background(path,sources)
+
+    def _export_phase_json_background(self,path,sources, *, library_name='phase_library'):
+        from xrd_finder.ui.prepared_library_transfer import PreparedLibraryTransfer
+        controller = getattr(self,'_prepared_library_transfer',None)
+        if controller is None:
+            controller = self._prepared_library_transfer = PreparedLibraryTransfer(self)
+        controller.start(False,json_path=path,json_sources=sources,json_library=library_name)
 
     def _import_phase_cache_sources(self, sources: list[str], title: str) -> None:
         path, _selected_filter = QFileDialog.getOpenFileName(
@@ -311,22 +298,14 @@ class PhaseFinderDatabaseActionsMixin:
         )
         if not path:
             return
-        try:
-            count = self.local_phase_cache.import_phase_library(path, allowed_sources=sources)
-            for source in sources:
-                if source == "COD":
-                    self.settings.setValue("sources/cod_local", True)
-                    if self.database_panel is not None:
-                        self.database_panel.set_source_checked("sources/cod_local", True)
-                if source == "MP":
-                    self.settings.setValue("materials_project/enabled", True)
-                    if self.database_panel is not None:
-                        self.database_panel.set_materials_project_checked(True)
-        except Exception as exc:
-            QMessageBox.warning(self, f"Import {title} failed", str(exc))
-            return
-        self._refresh_database_rows()
-        QMessageBox.information(self, f"Import {title}", f"Imported {count} new cached phase(s).")
+        self._import_phase_json_background(path,sources)
+
+    def _import_phase_json_background(self,path,sources):
+        from xrd_finder.ui.prepared_library_transfer import PreparedLibraryTransfer
+        controller = getattr(self,'_prepared_library_transfer',None)
+        if controller is None:
+            controller = self._prepared_library_transfer = PreparedLibraryTransfer(self)
+        controller.start(True,json_path=path,json_sources=sources)
 
     def _audit_local_phase_cache_composition(self) -> None:
         def success(reports):
@@ -445,6 +424,13 @@ class PhaseFinderDatabaseActionsMixin:
         if controller is None:
             controller = self._prepared_library_transfer = PreparedLibraryTransfer(self)
         controller.start(importing)
+
+    def _optimize_library_storage(self):
+        from xrd_finder.ui.library_storage_migration import LibraryStorageMigration
+        controller = getattr(self,'_library_storage_migration',None)
+        if controller is None:
+            controller = self._library_storage_migration = LibraryStorageMigration(self)
+        controller.start()
 
     def _prepare_cod_inorganic_library(self) -> None:
         from xrd_finder.ui.cod_inorganic_dialog import CodInorganicController

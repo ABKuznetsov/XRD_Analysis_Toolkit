@@ -38,8 +38,8 @@ def run_gain_job_isolated(inputs, *, progress=None, cancelled=lambda: False):
                 if cancelled():
                     return GainJobResult([], cancelled=True)
                 try:
-                    update = json.loads((root/'progress.json').read_text())
-                except (FileNotFoundError, ValueError):
+                    update = json.loads((root/'progress.json').read_text(encoding='utf-8'))
+                except (FileNotFoundError, PermissionError, ValueError):
                     update = None
                 if update is not None and update != previous:
                     previous = update
@@ -58,14 +58,26 @@ def run_gain_job_isolated(inputs, *, progress=None, cancelled=lambda: False):
                     process.kill();process.wait()
 
 
+def _publish_progress(root, values):
+    temporary = root/'progress.pending'
+    # Windows readers and antivirus scans can briefly prevent replacement.
+    # Keep the last complete update; a busy progress file must not abort Gain.
+    for attempt in range(4):
+        try:
+            temporary.write_text(json.dumps(values), encoding='utf-8')
+            temporary.replace(root/'progress.json')
+            return
+        except PermissionError:
+            if attempt < 3:
+                time.sleep(.005 * (attempt + 1))
+
+
 def main(root):
     from xrd_finder.services.gain_calculation import run_gain_job
     root = Path(root)
     inputs = pickle.loads((root/'input.pickle').read_bytes())
     def progress(*values):
-        temporary = root/'progress.pending'
-        temporary.write_text(json.dumps(values))
-        temporary.replace(root/'progress.json')
+        _publish_progress(root, values)
     # Parent has prepared all references and owns/cancels its preparation
     # children. This process never starts descendants of its own.
     result = run_gain_job(inputs, progress=progress, references_prepared=True)
