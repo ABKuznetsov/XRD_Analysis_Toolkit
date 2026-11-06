@@ -13,8 +13,9 @@ from pathlib import Path
 import pickle
 import subprocess
 import sys
-import tempfile
 import time
+
+from xrd_finder.services.worker_directory import WorkerTemporaryDirectory
 
 LE_BAIL_POLICY = 'accepted-le-bail-2:3cycles:2seconds'
 QUANT_REASON = 'Le Bail adjusts reflection intensities independently; structural mass fractions are unavailable. Turn Le Bail off to restore Quant.'
@@ -119,7 +120,7 @@ def refine_accepted_le_bail(inputs, baseline, *, enabled=True, timeout_seconds=2
         # Avoid competing BLAS pools and long startup on small search problems.
         environment.update(OPENBLAS_NUM_THREADS='1', OMP_NUM_THREADS='1', MKL_NUM_THREADS='1',
                            PYTHONDONTWRITEBYTECODE='1')
-        with tempfile.TemporaryDirectory(prefix='xrd-le-bail-') as folder:
+        with WorkerTemporaryDirectory(prefix='xrd-le-bail-') as folder:
             root = Path(folder)
             (root/'input.pickle').write_bytes(pickle.dumps((inputs, baseline, deadline)))
             process = None

@@ -460,6 +460,8 @@ class PhaseFinderPlotViewActionsMixin:
         if hasattr(self, "_rebuild_visible_legend"):
             self._rebuild_visible_legend()
         self._apply_zero_shift_display()
+        if hasattr(self, '_schedule_multi_pattern_legend_layout'):
+            self._schedule_multi_pattern_legend_layout()
 
     def _apply_grid_settings(self, settings: PlotViewSettings) -> None:
         self.match_plot.showGrid(x=False, y=False)

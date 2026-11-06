@@ -1,5 +1,5 @@
 """One low-priority cache-upgrade process; each completed card is committed."""
-import json,os,subprocess,sys,tempfile,time
+import json,os,subprocess,sys,time
 from pathlib import Path
 
 
@@ -19,7 +19,8 @@ def prepare_iic_cache_isolated(cache_root, *, keys=None, ready=None, progress=No
     environment.update(PYTHONPATH=package_root+os.pathsep+environment.get('PYTHONPATH',''),
         PYTHONDONTWRITEBYTECODE='1',OPENBLAS_NUM_THREADS='1',OMP_NUM_THREADS='1',
         MKL_NUM_THREADS='1',VECLIB_MAXIMUM_THREADS='1')
-    with tempfile.TemporaryDirectory(prefix='xrd-iic-cache-') as folder:
+    from xrd_finder.services.worker_directory import WorkerTemporaryDirectory
+    with WorkerTemporaryDirectory(prefix='xrd-iic-cache-') as folder:
         root=Path(folder)
         (root/'input.json').write_text(json.dumps(dict(root=str(cache_root),keys=[[e.source,e.entry_id,e.cif_path] for e in entries])))
         (root/'events.jsonl').touch()

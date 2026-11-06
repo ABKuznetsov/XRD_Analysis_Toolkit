@@ -135,6 +135,14 @@ class PhaseFinderPreprocessingActionsMixin:
         if decision.get('signature') == signature and isinstance(decision.get('accepted'), bool):
             finished(decision['accepted'])
             return
+        zero = float(result.global_zero_shift)
+        if math.isfinite(zero) and abs(zero) <= .5:
+            # Keep the numerical uncertainty diagnostic, but do not interrupt
+            # routine peak alignment for a small supported correction.
+            result.position_refinement['requires_confirmation'] = False
+            result.position_refinement['acceptance'] = 'automatic_small_correction'
+            finished(True)
+            return
         project = self.project
         sigma = float(result.position_refinement.get('zero_sigma_deg', 0.))
         message = QMessageBox(self)
@@ -144,8 +152,8 @@ class PhaseFinderPreprocessingActionsMixin:
             f'{pattern.name}\n\n'
             f'Proposed zero shift: {result.global_zero_shift:+.3f} deg.\n'
             f'Estimated zero uncertainty: {sigma:.3f} deg.\n\n'
-            'The matched lines support this alignment, but zero shift and cell '
-            'changes are not separated precisely enough for automatic acceptance.\n'
+            'This correction exceeds 0.500 deg. Check the phase alignment and '
+            'instrument calibration.\n'
             'Continue to apply the proposed shift and cell, or reject these changes. '
             'Le Bail remains available as a separate action.')
         proceed = message.addButton('Continue', QMessageBox.ButtonRole.AcceptRole)

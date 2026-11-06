@@ -27,6 +27,7 @@ from xrd_finder.finder.observed_pattern_processor import ObservedPatternData, Ob
 from xrd_finder.finder.profile_calculator import CachedProfileCalculator, array_fingerprint
 from xrd_finder.finder.profile_width_estimator import estimate_phase_fwhm_from_signal
 from xrd_finder.finder.profile_backend import instrument_fwhm_at, profile_reference_angle
+from xrd_finder.io.native_cif_session import native_cif_session
 from xrd_finder.services.calculated_pattern_service import (
     CU_KA1_WAVELENGTH,
     CalculatedPatternService,
@@ -100,6 +101,7 @@ class FinderService:
         self._observed_hits = 0
         self._observed_misses = 0
 
+    @native_cif_session
     def run(self, finder_input: FinderInput) -> FinderResult:
         observed = self._prepare_observed_cached(finder_input)
         x_grid = observed.x_grid

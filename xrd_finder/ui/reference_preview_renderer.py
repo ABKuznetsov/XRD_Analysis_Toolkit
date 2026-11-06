@@ -106,6 +106,8 @@ def draw_pdf2_reference(
             height,
             limit=18,
             above_peaks=True,
+            pattern_id=pattern_id,
+            phase_id=candidate_id,
         )
         for index, item in enumerate(hkl_items):
             tag_xrd_plot_item(

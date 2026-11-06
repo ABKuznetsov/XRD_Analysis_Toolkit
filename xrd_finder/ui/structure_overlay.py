@@ -246,6 +246,8 @@ def draw_structure_overlay(
                 preview_height,
                 limit=18,
                 above_peaks=True,
+                pattern_id=pattern_id,
+                phase_id=candidate_id,
             )
             for index, item in enumerate(hkl_items):
                 tag_xrd_plot_item(
@@ -313,6 +315,8 @@ def draw_structure_overlay(
             lane_baseline - lane_height * 0.2,
             lane_height,
             limit=18,
+            pattern_id=pattern_id,
+            phase_id=candidate_id,
         )
         for index, item in enumerate(hkl_items):
             tag_xrd_plot_item(

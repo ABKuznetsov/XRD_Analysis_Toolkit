@@ -71,7 +71,10 @@ class AcceptedProfileQueue:
                         return
                     if accepted:
                         result.position_refinement['requires_confirmation'] = False
-                        result.position_refinement['user_decision'] = 'continue'
+                        result.position_refinement['user_decision'] = (
+                            'automatic_small_correction' if
+                            result.position_refinement.get('acceptance') == 'automatic_small_correction'
+                            else 'continue')
                         done((result, prepared))
                     else:
                         self.current = None

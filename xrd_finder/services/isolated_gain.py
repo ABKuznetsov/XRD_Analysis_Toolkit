@@ -5,7 +5,6 @@ from pathlib import Path
 import pickle
 import subprocess
 import sys
-import tempfile
 import time
 
 
@@ -25,7 +24,8 @@ def run_gain_job_isolated(inputs, *, progress=None, cancelled=lambda: False):
     package_root = str(Path(__file__).resolve().parents[2])
     environment = os.environ.copy()
     environment['PYTHONPATH'] = package_root + os.pathsep + environment.get('PYTHONPATH', '')
-    with tempfile.TemporaryDirectory(prefix='xrd-gain-worker-') as folder:
+    from xrd_finder.services.worker_directory import WorkerTemporaryDirectory
+    with WorkerTemporaryDirectory(prefix='xrd-gain-worker-') as folder:
         root = Path(folder)
         (root/'input.pickle').write_bytes(pickle.dumps(inputs))
         with (root/'stdout').open('wb') as output, (root/'stderr').open('wb') as errors:

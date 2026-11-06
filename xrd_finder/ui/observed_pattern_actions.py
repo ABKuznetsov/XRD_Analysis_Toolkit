@@ -21,6 +21,7 @@ from xrd_finder.ui.pattern_plot_helpers import (
 from xrd_finder.plot_export.metadata import CanvasLayer
 from xrd_finder.ui.plot_layer_items import tag_xrd_plot_item
 from xrd_finder.ui.formula_display import formula_html
+from xrd_finder.ui.plot_annotation_bounds import annotation_upper_bound
 
 
 def _processed_amorphous_fill_values(
@@ -125,6 +126,14 @@ class DraggableLegendTextItem(pg.TextItem):
 
 
 class PhaseFinderObservedPatternActionsMixin:
+    def _hkl_label_offset_state(self, pattern_id):
+        return self.profile_states.setdefault(pattern_id, {}).setdefault('hkl_label_offsets', {})
+
+    def _hkl_label_offset_changed(self):
+        self.project.touch()
+        self.project_changed.emit()
+        self._schedule_multi_pattern_legend_layout()
+
     def _phase_legend_entries(self, pattern: Pattern) -> list[tuple[str, str, str]]:
         """Use accepted cards and their actual per-pattern marker colours."""
         candidates = self._profile_candidates_for_pattern(pattern) if hasattr(self, "_profile_candidates_for_pattern") else []
@@ -247,18 +256,18 @@ class PhaseFinderObservedPatternActionsMixin:
         return reserved
 
     def _reserve_common_phase_legend_space(self, header_pixels: float) -> None:
-        """Add reversible screen-space headroom, leaving all measured data intact."""
+        """Reserve reversible space for the common legend and peak annotations."""
         view = self.match_plot.getViewBox()
         current = tuple(view.viewRange()[1])
         previous = getattr(self, "_common_phase_legend_range", None)
         # Resize/reflow must start from the unpadded range. A new range from
         # fitting, panning or zooming instead becomes the new display baseline.
         baseline = previous[0] if previous and np.allclose(current, previous[1], rtol=1e-10, atol=1e-10) else current
-        fraction = min(max(float(header_pixels), 0.0) / max(float(view.height()), 1.0), 0.8)
-        padded = (baseline[0], baseline[0] + (baseline[1] - baseline[0]) / (1.0 - fraction))
-        self._common_phase_legend_range = (baseline, padded) if fraction else None
+        padded = (baseline[0], annotation_upper_bound(self.match_plot, self.plot_layers, baseline, header_pixels))
+        self._common_phase_legend_range = (baseline, padded) if padded != baseline else None
         if not np.allclose(current, padded, rtol=1e-10, atol=1e-10):
             view.setYRange(*padded, padding=0.0)
+            view.updateMatrix()
 
     def _remember_common_legend_manual_range(self, axes) -> None:
         previous = getattr(self, "_common_phase_legend_range", None)
@@ -273,14 +282,17 @@ class PhaseFinderObservedPatternActionsMixin:
         self._common_phase_legend_range = (baseline, current)
 
     def _schedule_multi_pattern_legend_layout(self, *_args) -> None:
-        if not getattr(self, 'show_all_selected_patterns', False) or getattr(self, '_multi_legend_layout_pending', False):
+        if getattr(self, '_multi_legend_layout_pending', False):
             return
         self._multi_legend_layout_pending = True
 
         def finish() -> None:
             try:
                 # Internal range/resize signals must not queue another pass.
-                self._fit_multi_pattern_legends_to_canvas()
+                if getattr(self, 'show_all_selected_patterns', False):
+                    self._fit_multi_pattern_legends_to_canvas()
+                else:
+                    self._reserve_common_phase_legend_space(0.)
             finally:
                 self._multi_legend_layout_pending = False
 
@@ -1210,4 +1222,6 @@ class PhaseFinderObservedPatternActionsMixin:
             ymax += delta
         self.match_plot.setXRange(float(xmin), float(xmax), padding=0.0)
         self.match_plot.setYRange(float(ymin), float(ymax), padding=0.0)
+        self._common_phase_legend_range = None
+        self._reserve_common_phase_legend_space(0.)
         self.match_plot_view_initialized = True

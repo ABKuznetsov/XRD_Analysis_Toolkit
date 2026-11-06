@@ -14,8 +14,8 @@
       "type": "installer",
       "platform": "windows",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_Setup_v1_7_0.exe",
-      "sha256": "0d0cba40d69e958c4818be188a58282ef45c7c4c9790631e095c2f4abc0f2e41",
-      "size_bytes": 5613063
+      "sha256": "317bb6b23b64d1faec9b4fc2377f2c85b3a7580b74b678db6a371b297e7c25ce",
+      "size_bytes": 5615189
     }
   ],
   "summary": [
@@ -26,9 +26,9 @@
     "Handle transient Windows worker-file locks without losing completed results."
   ],
   "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_Setup_v1_7_0.exe",
-  "installer_sha256": "0d0cba40d69e958c4818be188a58282ef45c7c4c9790631e095c2f4abc0f2e41",
+  "installer_sha256": "317bb6b23b64d1faec9b4fc2377f2c85b3a7580b74b678db6a371b297e7c25ce",
   "installer_filename": "XRD_Phase_Finder_Setup_v1_7_0.exe",
-  "installer_size_bytes": 5613063,
+  "installer_size_bytes": 5615189,
   "platform_versions": {
     "windows": "1.7.0"
   },

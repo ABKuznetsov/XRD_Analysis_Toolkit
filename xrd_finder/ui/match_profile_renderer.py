@@ -475,6 +475,8 @@ def draw_match_profile_result(
                 limit=18,
                 above_peaks=True,
                 x_grid=x,
+                pattern_id=pattern_id,
+                phase_id=key,
             )
             _tag_plot_items(
                 hkl_items,

@@ -10,6 +10,7 @@ from PySide6.QtGui import QFont
 from scipy.signal import find_peaks
 
 from xrd_finder.services.calculated_pattern_service import CU_KA1_WAVELENGTH
+from xrd_finder.ui.hkl_labels import HklLabelItem, primary_hkl_peaks
 
 
 @dataclass(slots=True)
@@ -243,6 +244,9 @@ def add_hkl_labels(
     angle: float = 90,
     above_peaks: bool = False,
     x_grid=None,
+    *,
+    pattern_id: str | None = None,
+    phase_id: str | None = None,
 ):
     labels = []
     y_values = np.asarray(y, dtype=float)
@@ -255,13 +259,13 @@ def add_hkl_labels(
             return float(np.interp(two_theta, x_values, y_values))
         return float(np.nanmedian(y_values)) if y_values.size else 0.0
 
-    display_peaks = sorted(peaks, key=lambda item: getattr(item, "intensity", 0.0), reverse=True)[:limit]
+    display_peaks = sorted(primary_hkl_peaks(peaks), key=lambda item: getattr(item, "intensity", 0.0), reverse=True)[:limit]
     display_peaks = sorted(display_peaks, key=lambda item: getattr(item, "two_theta", 0.0))
     for peak in display_peaks:
         h = getattr(peak, "h", "")
         k = getattr(peak, "k", "")
         l = getattr(peak, "l", "")
-        item = pg.TextItem(f"({h}{k}{l})", color=color, anchor=(0.5, 1.0), angle=angle)
+        item = HklLabelItem(f"({h}{k}{l})", plot=plot, hkl=(h,k,l), color=color, anchor=(0.5, 1.0), angle=angle)
         label_font = QFont()
         label_font.setPointSize(10)
         label_font.setWeight(QFont.Weight.DemiBold)
@@ -272,8 +276,8 @@ def add_hkl_labels(
             label_y = base_y_at(two_theta) + float(height) * intensity / 100.0 + float(height) * 0.09
         else:
             label_y = base_y_at(two_theta)
-        item.setPos(two_theta, float(label_y))
         plot.addItem(item)
+        item.set_label_origin(two_theta, float(label_y), pattern_id=pattern_id, phase_id=phase_id)
         labels.append(item)
     return labels
 

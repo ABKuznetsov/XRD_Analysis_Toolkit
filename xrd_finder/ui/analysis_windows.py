@@ -1602,6 +1602,8 @@ class PhaseFinderWindow(
 
     def _create_match_plot(self, project: Project) -> None:
         self.match_plot = self._plot_widget("Phase Finder: pattern and candidate phase markers", xrd_navigation=True)
+        self.match_plot.hkl_label_offset_state = self._hkl_label_offset_state
+        self.match_plot.hkl_label_offset_changed = self._hkl_label_offset_changed
         self.match_plot.getViewBox().full_range_callback = self._reset_match_plot_view
         self.match_plot.setTitle("Phase Finder: pattern and candidate phase markers", color="#111111", size="13pt")
         self.match_plot.setLabel("bottom", "2theta", color="#111111", **{"font-size": "12pt"})
