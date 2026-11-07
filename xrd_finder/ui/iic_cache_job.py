@@ -47,10 +47,10 @@ class IicCacheController(QObject):
             self._paused=True;self._timer.stop();return
         self._paused=monotonic()-self._last_activity<2. or self._foreground_busy()
         if self._paused:return
-        for _ in range(min(8,len(self._ready))):
-            source,entry=self._ready.pop()
-            value=w.local_phase_cache.get(source,entry)
-            if value is not None:w._refresh_calculated_iic(SimpleNamespace(result=value))
+        keys=[self._ready.pop() for _ in range(min(8,len(self._ready)))]
+        if keys:
+            for value in w.local_phase_cache.iic_entries(keys).values():
+                w._refresh_calculated_iic(SimpleNamespace(result=value))
         if self._busy:return
         if not self._all and not self._keys:
             if not self._ready:self._timer.stop()

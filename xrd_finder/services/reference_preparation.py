@@ -2,13 +2,13 @@
 from concurrent.futures import CancelledError
 from contextlib import closing
 from pathlib import Path
+from xrd_finder.services.source_registry import is_structure_source
 from xrd_finder.services.local_phase_cache import LocalPhaseCache, DERIVED_CACHE_VERSION, REINDEXABLE_CACHE_VERSIONS
 
 
 def prepare_reference_rows(cache, rows, *, wavelength, two_theta_range=None, progress=None, cancelled=lambda: False):
-    structural_sources = {'COD', 'USER', 'MP', 'CCDC', 'AFLOW', 'OQMD'}
     keys = list(dict.fromkeys((str(row[0]).upper(), str(row[1])) for row in rows
-        if len(row) > 1 and str(row[0]).upper() in structural_sources and row[1]))
+        if len(row) > 1 and is_structure_source(str(row[0]).upper()) and row[1]))
     low,high = two_theta_range if two_theta_range is not None else (5.,120.)
     coverage = cache.reference_range_coverage(keys,wavelength=wavelength,
         two_theta_min=low,two_theta_max=high,cancelled=cancelled)

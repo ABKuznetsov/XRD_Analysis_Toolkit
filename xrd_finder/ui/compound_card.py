@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from xrd_finder.services.ccdc_service import extract_doi
 from xrd_finder.ui.theme import is_dark_theme, theme_colors
 from xrd_finder.ui.formula_display import FormulaDisplayDelegate, formula_html
+from xrd_finder.ui.space_group_display import space_group_html
 
 
 class CopyableTableWidget(QTableWidget):
@@ -125,6 +126,9 @@ class CompoundCardWidget(QWidget):
             text = str(data.get(key, "") or "")
             if key in {"Formula", "Name", "Mineral Name"}:
                 text = formula_html(text)
+            elif key == 'Space group':
+                label.setToolTip(text)
+                text = space_group_html(text)
             label.setText(text if text else "-")
 
         self._set_table_rows(self.atom_table, data.get("_AtomRows"))

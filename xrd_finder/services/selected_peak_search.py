@@ -10,6 +10,7 @@ from typing import Callable, Iterable
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 from xrd_finder.services.normalized_reflections import range_join
+from xrd_finder.services.source_registry import organic_material_sql
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,12 +196,8 @@ def search_selected_peaks(
             where.append(f"{operator} (select 1 from phase_elements e where e.source=p.source and e.entry_id=p.entry_id and e.element=?)")
             params.append(element)
     if query.allow_inorganic != query.allow_organic:
-        # Preserve Finder's existing C-and-H material-class convention.
-        organic = " and ".join(
-            "exists (select 1 from phase_elements e where e.source=p.source and e.entry_id=p.entry_id and e.element=?)"
-            for _ in ("C", "H"))
+        organic = organic_material_sql()
         where.append(f"({'not' if query.allow_inorganic else ''} ({organic}))")
-        params.extend(("C", "H"))
     windows = _d_windows(query)
     entries: dict[tuple[str, str], tuple[dict, set[float]]] = {}
     uri = Path(index_path).resolve().as_uri() + "?mode=ro"

@@ -4,7 +4,6 @@ import math
 
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
-    QCheckBox,
     QBoxLayout,
     QComboBox,
     QHBoxLayout,
@@ -12,6 +11,7 @@ from PySide6.QtWidgets import (
     QLayout,
     QSizePolicy,
     QSlider,
+    QToolButton,
     QWidget,
 )
 
@@ -30,12 +30,30 @@ def d_spacing_from_two_theta(two_theta: float, wavelength: float) -> float | Non
     return radiation / (2.0 * sine)
 
 
+class PatternDisplayButton(QToolButton):
+    """Two display modes, retaining the mode names used by saved projects."""
+    def __init__(self):
+        super().__init__()
+        self.setCheckable(True)
+        self.setProperty('plotToggle', True)
+        self.setText('One pattern')
+        self.toggled.connect(lambda checked: self.setText('All selected' if checked else 'One pattern'))
+
+    def currentText(self):
+        return 'All selected' if self.isChecked() else 'One'
+
+    def setCurrentText(self, mode):
+        self.setChecked(mode == 'All selected')
+        self.setText('All selected' if self.isChecked() else 'One pattern')
+
+
 class FinderPlotControlBar(QWidget):
     patternDisplayModeChanged = Signal(str)
     plotAspectModeChanged = Signal(str)
     patternOffsetPercentChanged = Signal(int)
     normalizePatternsChanged = Signal(bool)
     zeroCorrectionChanged = Signal(bool)
+    allObservedBlackChanged = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -51,15 +69,13 @@ class FinderPlotControlBar(QWidget):
         layout = WrappingLayout(self._controls)
         self._flow_layout = layout
 
-        self.pattern_display_mode = QComboBox()
-        self.pattern_display_mode.addItems(["One", "All selected"])
-        self.pattern_display_mode.setMinimumWidth(82)
-        self.pattern_display_mode.setMaximumWidth(112)
+        self.pattern_display_mode = PatternDisplayButton()
         self.pattern_display_mode.setToolTip(
             "One: show only the active XRD pattern.\n"
             "All selected: show all checked XRD patterns from the project tree."
         )
-        self.pattern_display_mode.currentTextChanged.connect(self.patternDisplayModeChanged)
+        self.pattern_display_mode.toggled.connect(
+            lambda checked: self.patternDisplayModeChanged.emit('All selected' if checked else 'One'))
 
         self.plot_aspect_mode = QComboBox()
         self.plot_aspect_mode.addItems(PLOT_ASPECTS.keys())
@@ -70,17 +86,23 @@ class FinderPlotControlBar(QWidget):
         )
         self.plot_aspect_mode.currentTextChanged.connect(self.plotAspectModeChanged)
 
-        self.normalize_patterns_checkbox = QCheckBox('Normalize')
+        self.normalize_patterns_checkbox = self._toggle_button('Normalize')
         self.normalize_patterns_checkbox.setToolTip(
-            "Normalize observed XRD patterns to Imax = 100 for display and phase search."
+            "Display experimental XRD patterns with Imax = 100. "
+            "Fitted phases, peak assignments and search scores are retained."
         )
         self.normalize_patterns_checkbox.toggled.connect(self.normalizePatternsChanged)
-        self.correct_zero_checkbox = QCheckBox("Correct zero")
+        self.correct_zero_checkbox = self._toggle_button("Correct zero")
         self.correct_zero_checkbox.setToolTip(
             "Display this scan and its phase lines on the corrected 2theta scale. "
             "Uses Processing > Zero shift; original data and fitted results are unchanged."
         )
         self.correct_zero_checkbox.toggled.connect(self.zeroCorrectionChanged)
+        self.all_observed_black_button = self._toggle_button('All black')
+        self.all_observed_black_button.setToolTip(
+            'Show all experimental curves in black. Turn off to restore their assigned colors. '
+            'Phase markers and calculated curves keep their colors.')
+        self.all_observed_black_button.toggled.connect(self.allObservedBlackChanged)
 
         self.pattern_offset_slider = QSlider(Qt.Orientation.Horizontal)
         self.pattern_offset_slider.setRange(0, 150)
@@ -111,17 +133,29 @@ class FinderPlotControlBar(QWidget):
         )
         self.set_cursor_readout()
 
-        for controls in ((QLabel('Patterns'), self.pattern_display_mode),
+        for controls in ((self.pattern_display_mode,),
                          (QLabel('Aspect'), self.plot_aspect_mode),
                          (self.normalize_patterns_checkbox,),
                          (QLabel('Offset'), self.pattern_offset_slider, self.pattern_offset_value),
-                         (self.correct_zero_checkbox,)):
+                         (self.correct_zero_checkbox,),
+                         (self.all_observed_black_button,)):
             group=QWidget()
             row=QHBoxLayout(group);row.setContentsMargins(0,0,0,0);row.setSpacing(6)
             for control in controls:row.addWidget(control)
             layout.addWidget(group)
         self._bar_layout.addWidget(self._controls, 1)
         self._bar_layout.addWidget(self.cursor_position_status_label, 0, Qt.AlignmentFlag.AlignRight)
+        for button in (self.pattern_display_mode, self.normalize_patterns_checkbox,
+                       self.correct_zero_checkbox, self.all_observed_black_button):
+            button.toggled.connect(lambda _checked: self._update_control_layout())
+
+    @staticmethod
+    def _toggle_button(text):
+        button = QToolButton()
+        button.setText(text)
+        button.setCheckable(True)
+        button.setProperty('plotToggle', True)
+        return button
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

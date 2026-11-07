@@ -29,6 +29,10 @@ from xrd_finder.io.analysis_summary import finalize_analysis_summary, verify_ana
 PORTABLE_PROJECT_SUFFIX = ".xpff"
 PORTABLE_PROJECT_TYPE_NAME = "XRD Phase Finder File"
 PORTABLE_MANIFEST_NAME = "project.json"
+MAX_PROJECT_MEMBERS = 100_000
+MAX_PROJECT_UNPACKED_BYTES = 4 * 1024**3
+MAX_PROJECT_MEMBER_BYTES = 1024**3
+MAX_PROJECT_MANIFEST_BYTES = 256 * 1024**2
 
 
 def _to_plain(value: Any) -> Any:
@@ -229,6 +233,7 @@ def _safe_member_stem(value: str) -> str:
 
 def _load_portable_project(source: Path) -> Project:
     with zipfile.ZipFile(source, mode="r") as archive:
+        _validate_portable_archive_size(archive)
         try:
             data = json.loads(archive.read(PORTABLE_MANIFEST_NAME).decode("utf-8-sig"))
         except KeyError as exc:
@@ -259,6 +264,25 @@ def _load_portable_project(source: Path) -> Project:
     project.root_path = str(source)
     project.prune_series_memberships()
     return project
+
+
+def _validate_portable_archive_size(archive):
+    """Bound manifest allocation and extraction before reading any members."""
+    members = archive.infolist()
+    if len(members) > MAX_PROJECT_MEMBERS:
+        raise ValueError('XPFF contains too many files')
+    names = set()
+    total = 0
+    for member in members:
+        if member.filename in names:
+            raise ValueError('XPFF contains duplicate archive paths')
+        names.add(member.filename)
+        limit = MAX_PROJECT_MANIFEST_BYTES if member.filename == PORTABLE_MANIFEST_NAME else MAX_PROJECT_MEMBER_BYTES
+        if member.file_size > limit or member.flag_bits & 1:
+            raise ValueError(f'XPFF member is encrypted or exceeds the size limit: {member.filename}')
+        total += member.file_size
+        if total > MAX_PROJECT_UNPACKED_BYTES:
+            raise ValueError('XPFF unpacked size exceeds the project limit')
 
 
 def _upgrade_legacy_instrument_profiles(project: Project) -> None:
@@ -346,13 +370,31 @@ def _extract_portable_member(
     target = resolved_root.joinpath(*member_path.parts).resolve()
     if target == resolved_root or resolved_root not in target.parents:
         raise ValueError(f"Unsafe file path in {PORTABLE_PROJECT_TYPE_NAME}: {member}")
+    already = getattr(archive, '_xrd_extracted_members', None)
+    if already is None:
+        already = archive._xrd_extracted_members = {}
+    identity = (str(resolved_root), member)
+    if identity in already:
+        return already[identity]
+    if archive.getinfo(member).file_size > MAX_PROJECT_MEMBER_BYTES:
+        raise ValueError(f'XPFF member exceeds the size limit: {member}')
     target.parent.mkdir(parents=True, exist_ok=True)
-    with archive.open(member, mode="r") as source_stream, target.open("wb") as target_stream:
-        while True:
-            block = source_stream.read(1024 * 1024)
-            if not block:
-                break
-            target_stream.write(block)
+    temporary = None
+    try:
+        with archive.open(member, mode="r") as source_stream, tempfile.NamedTemporaryFile(
+                dir=target.parent, prefix='.' + target.name + '.', suffix='.tmp', delete=False) as target_stream:
+            temporary = Path(target_stream.name)
+            written = 0
+            while block := source_stream.read(1024 * 1024):
+                written += len(block)
+                if written > MAX_PROJECT_MEMBER_BYTES:
+                    raise ValueError(f'XPFF member exceeds the size limit: {member}')
+                target_stream.write(block)
+        os.replace(temporary, target)
+        already[identity] = target
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     return target
 
 

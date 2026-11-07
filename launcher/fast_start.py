@@ -31,15 +31,17 @@ def runtime_metadata_ready(root: Path) -> bool:
             line = line.split('#', 1)[0].strip()
             if not line:
                 continue
-            match = re.fullmatch(r'([A-Za-z0-9_-]+)(?:==([^\s;]+))?', line)
+            match = re.fullmatch(r'([A-Za-z0-9_-]+)([<>=!~][^\s;]+)?', line)
             if not match:
                 return False  # A new constraint must be checked by the full setup path.
-            name, expected = match.groups()
+            name, constraint = match.groups()
             if sys.platform == 'darwin' and name.casefold() == 'pyside6':
-                expected = '6.11.1'
+                constraint = '==6.11.1'
             actual = importlib.metadata.version(name)
-            if expected and actual != expected:
-                return False
+            if constraint:
+                from packaging.specifiers import SpecifierSet
+                if actual not in SpecifierSet(constraint):
+                    return False
             if importlib.util.find_spec(name) is None:
                 return False
         return True
@@ -97,9 +99,27 @@ def launch(root: Path, data: Path, logs: Path, arguments: list[str], *, environ=
         ready.unlink(missing_ok=True)
 
 
+def launch_in_process(root: Path, data: Path, logs: Path, arguments: list[str]) -> None:
+    # LaunchServices delivers document events to the app's original PID.
+    # exec keeps that identity instead of detaching the GUI into a child.
+    env = dict(os.environ)
+    data = Path(env.get('XRD_FINDER_DATA_DIR') or data).expanduser()
+    logs = Path(env.get('XRD_FINDER_LOG_DIR') or logs).expanduser()
+    logs.mkdir(parents=True, exist_ok=True)
+    env.update(PYTHONDONTWRITEBYTECODE='1', XRD_FINDER_DATA_DIR=str(data),
+               XRD_FINDER_LOG_DIR=str(logs))
+    env['PYTHONPATH'] = str(root) + (os.pathsep + env['PYTHONPATH'] if env.get('PYTHONPATH') else '')
+    env.setdefault('MPLCONFIGDIR', str(data.parent / 'matplotlib'))
+    env.setdefault('QT_MAC_WANTS_LAYER', '1')
+    env.pop('XRD_FINDER_SHOW_SIGNAL_FILE', None)
+    env.pop('XRD_FINDER_PREPARED_FILE', None)
+    os.execvpe(sys.executable, [sys.executable, '-m', 'xrd_finder.apps.finder_gui', *arguments], env)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--probe', action='store_true')
+    parser.add_argument('--in-process', action='store_true')
     parser.add_argument('--develop', action='store_true')
     parser.add_argument('--data-root', type=Path)
     parser.add_argument('--logs-root', type=Path)
@@ -116,6 +136,9 @@ def main() -> int:
         return 0
     if args.data_root is None or args.logs_root is None:
         parser.error('--data-root and --logs-root are required for installed launch')
+    if args.in_process:
+        launch_in_process(root, args.data_root, args.logs_root, arguments)
+        return 0
     code = launch(root, args.data_root, args.logs_root, arguments)
     if code:
         # Only failed starts need the expensive native-library/API probe.

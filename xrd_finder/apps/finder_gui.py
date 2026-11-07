@@ -57,6 +57,8 @@ def _run_gui() -> int:
     app.setApplicationDisplayName("XRD Phase Finder")
     app.setOrganizationName("XRD Phase Finder")
     app.setOrganizationDomain("xrdphasefinder.local")
+    from xrd_finder.ui.project_file_open import ProjectFileOpenHandler
+    file_open_handler = ProjectFileOpenHandler(app)
     icon_path = Path(__file__).resolve().parents[2] / "icon.png"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
@@ -81,6 +83,7 @@ def _run_gui() -> int:
     if project_loaded:
         with trace_operation('startup.restore_project', slow_ms=0):
             window._after_project_loaded()
+    file_open_handler.set_window(window)
     if icon_path.exists():
         window.setWindowIcon(QIcon(str(icon_path)))
     window.setWindowTitle(f"XRD Phase Finder - {project.name}")
@@ -117,6 +120,8 @@ def _run_gui() -> int:
     schedule_learning_offer(window)
     from xrd_finder.ui.deferred_updates import schedule_update_check
     schedule_update_check(window)
+    from xrd_finder.ui.database_warmup import schedule_database_warmup
+    schedule_database_warmup(window)
     return int(app.exec())
 
 

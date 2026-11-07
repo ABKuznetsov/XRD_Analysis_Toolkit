@@ -5,7 +5,6 @@ from xrd_finder.ui.screen_bound_dialog import ScreenBoundDialog
 import shutil
 import threading
 from pathlib import Path
-from zipfile import ZipFile
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -66,6 +65,10 @@ class PhaseFinderDatabaseActionsMixin:
         self.database_panel.indexCodZipRequested.connect(self._index_cod_zip_archive)
         self.database_panel.downloadCodArchiveRequested.connect(self._download_cod_archive_from_url)
         self.database_panel.prepareCodInorganicRequested.connect(self._prepare_cod_inorganic_library)
+        self.database_panel.prepareCoreMofRequested.connect(self._prepare_core_mof_library)
+        self.database_panel.manageConnectionsRequested.connect(self._show_library_connections)
+        self.database_panel.readyLibrariesRequested.connect(self._show_ready_libraries)
+        self.database_panel.readyLibraryRequested.connect(self._show_ready_library)
         self.database_panel.ccdcAccountRequested.connect(lambda:self._open_ccdc_portal(login=True))
         self.database_panel.ccdcPortalRequested.connect(self._open_ccdc_portal)
         self.database_panel.exportPreparedLibraryRequested.connect(lambda:self._transfer_prepared_library(False))
@@ -84,6 +87,7 @@ class PhaseFinderDatabaseActionsMixin:
         self.database_panel.clearAflowRequested.connect(self._clear_aflow_cache)
         self.database_panel.clearOqmdRequested.connect(self._clear_oqmd_cache)
         self.database_panel.clearMaterialsProjectRequested.connect(self._clear_materials_project_cache)
+        self._refresh_database_rows()
         return self.database_panel
 
     def _show_database_settings_tab(self) -> None:
@@ -172,10 +176,40 @@ class PhaseFinderDatabaseActionsMixin:
             "User phase library": self._database_summary_row(self._user_phase_library_status_row()),
             "RRUFF powder": self._database_summary_row(self.rruff.status_row()),
             "PDF-2": self._match_pdf2_status_row(),
+            "CoRE MOF SI": ["CoRE MOF SI", "Ready" if self.local_phase_cache.source_count('COREMOF') else "Not downloaded",
+                f"{self.local_phase_cache.source_count('COREMOF'):,} prepared CIF structures · CoRE MOF SI 2024", "https://zenodo.org/records/15055758"],
         }
         for source_name, values in replacements.items():
             self.database_panel.update_row(source_name, values)
+        self._refresh_connected_library_rows()
         self._refresh_materials_project_database_row()
+
+    def _refresh_connected_library_rows(self):
+        """Read only source counts/settings; never download or recalculate here."""
+        if getattr(self, 'database_panel', None) is None:
+            return
+        from xrd_finder.services.curated_libraries import PRESETS
+        from xrd_finder.services.library_connections import load_connections
+        from xrd_finder.services.source_registry import saved_custom_sources
+        connections = {c.source: c for c in load_connections(self.settings)}
+        known = {p.source: (p.name, p.record_url) for p in PRESETS.values()}
+        known['LIB_4F4D44420001'] = ('OMDB', 'https://omdb.mathub.io/dataset')
+        sources = dict(known)
+        sources.update({source: (c.name, '') for source, c in connections.items() if source not in known})
+        for source in saved_custom_sources(self.local_phase_cache):
+            sources.setdefault(source, (source, ''))
+        rows = []
+        for source, (name, url) in sources.items():
+            count = self.local_phase_cache.source_count(source)
+            connection = connections.get(source)
+            state = ('Ready' if count else 'Connected' if connection else
+                     'CIF import' if name == 'OMDB' else 'Not downloaded')
+            enabled = ' · search disabled' if connection and not connection.enabled else ''
+            rows.append([name, state,
+                f'{count:,} prepared CIF structures{enabled}' if count else
+                ('Configured connection' + enabled if connection else
+                 'Download on website, then import CIFs' if name == 'OMDB' else 'Download or import CIF archive'), url])
+        self.database_panel.sync_connected_rows(rows)
 
     def _user_phase_library_status_row(self) -> list[str]:
         return user_phase_library_status_row(self.local_phase_cache.status_row())
@@ -196,9 +230,11 @@ class PhaseFinderDatabaseActionsMixin:
         self._run_background_task(
             "Build local index",
             "Indexing saved CIF files...",
-            self.local_phase_cache.build_index,
+            lambda progress: self.local_phase_cache.build_index(progress=progress,
+                cancelled=lambda: getattr(self, "_preparation_close_confirmed", False)),
             success,
             lambda message, _details: QMessageBox.warning(self, "Build local index failed", message),
+            with_progress=True,
         )
 
     def _show_user_phase_library_window(self) -> None:
@@ -339,7 +375,8 @@ class PhaseFinderDatabaseActionsMixin:
         self._run_background_task(
             "Recalculate CIF patterns",
             "Recalculating saved CIF patterns with CrIStMa...",
-            self.local_phase_cache.build_index,
+            lambda progress: self.local_phase_cache.build_index(progress=progress, force=True,
+                cancelled=lambda: getattr(self, "_preparation_close_confirmed", False)),
             success,
             lambda message, _details: QMessageBox.warning(
                 self,
@@ -380,18 +417,7 @@ class PhaseFinderDatabaseActionsMixin:
         if not folder:
             return
 
-        def success(result) -> None:
-            count = int(result or 0)
-            self._refresh_database_rows()
-            QMessageBox.information(self, "Index COD folder", f"Indexed {count} COD CIF files.")
-
-        self._run_background_task(
-            "Index COD folder",
-            "Indexing COD CIF folder...",
-            lambda: self.local_phase_cache.index_cif_folder(folder, source="COD"),
-            success,
-            lambda message, _details: QMessageBox.warning(self, "Index COD folder failed", message),
-        )
+        self._show_cod_local_preparation(folder)
 
     def _index_cod_zip_archive(self) -> None:
         archive_path, _selected_filter = QFileDialog.getOpenFileName(
@@ -402,21 +428,14 @@ class PhaseFinderDatabaseActionsMixin:
         )
         if not archive_path:
             return
-        archive = Path(archive_path)
-        target_root = self.local_phase_cache.root / "cod_bulk_cif"
+        self._show_cod_local_preparation(Path(archive_path), archive=True)
 
-        def success(result) -> None:
-            count = int(result or 0)
-            self._refresh_database_rows()
-            QMessageBox.information(self, "Index COD ZIP", f"Indexed {count} COD CIF files.")
-
-        self._run_background_task(
-            "Index COD ZIP",
-            "Extracting and indexing COD CIF archive...",
-            lambda: self._extract_and_index_cif_zip(archive, target_root, source="COD"),
-            success,
-            lambda message, _details: QMessageBox.warning(self, "Index COD ZIP failed", message),
-        )
+    def _show_cod_local_preparation(self, path, *, archive=False) -> None:
+        from xrd_finder.ui.cod_inorganic_dialog import CodInorganicController
+        controller = getattr(self, '_cod_inorganic_controller', None)
+        if controller is None:
+            controller = self._cod_inorganic_controller = CodInorganicController(self)
+        controller.show(path, archive=archive)
 
     def _transfer_prepared_library(self, importing: bool) -> None:
         from xrd_finder.ui.prepared_library_transfer import PreparedLibraryTransfer
@@ -438,6 +457,50 @@ class PhaseFinderDatabaseActionsMixin:
         if controller is None:
             controller = self._cod_inorganic_controller = CodInorganicController(self)
         controller.show()
+
+    def _prepare_core_mof_library(self, archive_path=None) -> None:
+        from xrd_finder.ui.cod_inorganic_dialog import CodInorganicController
+        controller = getattr(self, '_cod_inorganic_controller', None)
+        if controller is None:
+            controller = self._cod_inorganic_controller = CodInorganicController(self)
+        controller.show(local_path=archive_path,archive=archive_path is not None,dataset='COREMOF')
+
+    def _show_ready_libraries(self) -> None:
+        from xrd_finder.ui.ready_libraries import ReadyLibrariesDialog
+        dialog=getattr(self,'_ready_libraries_dialog',None)
+        if dialog is None:
+            dialog=self._ready_libraries_dialog=ReadyLibrariesDialog(self)
+        dialog.show();dialog.raise_();dialog.activateWindow()
+
+    def _show_ready_library(self, key):
+        self._show_ready_libraries()
+        dialog = self._ready_libraries_dialog
+        index = dialog.source.findData(key)
+        if index >= 0:
+            dialog.source.setCurrentIndex(index)
+
+    def _show_library_connections(self) -> None:
+        from xrd_finder.ui.library_connections import LibraryConnectionsDialog
+        dialog = getattr(self, '_library_connections_dialog', None)
+        if dialog is None:
+            dialog = self._library_connections_dialog = LibraryConnectionsDialog(self)
+        else:
+            dialog.refresh()
+        dialog.show();dialog.raise_();dialog.activateWindow()
+
+    def _refresh_custom_source_names(self):
+        from xrd_finder.services.library_connections import load_connections
+        table = getattr(self, 'candidate_table', None)
+        if table is not None:
+            table.set_source_names({c.source:c.name for c in load_connections(self.settings)})
+        self._refresh_connected_library_rows()
+
+    def _prepare_library_connection(self, connection):
+        from xrd_finder.ui.cod_inorganic_dialog import CodInorganicController
+        controller = getattr(self, '_cod_inorganic_controller', None)
+        if controller is None:
+            controller = self._cod_inorganic_controller = CodInorganicController(self)
+        controller.show(connection=connection)
 
     def _download_cod_archive_from_url(self) -> None:
         url, ok = QInputDialog.getText(
@@ -481,26 +544,6 @@ class PhaseFinderDatabaseActionsMixin:
             return
         self._refresh_database_rows()
         QMessageBox.information(self, "Clear COD local/bulk", "COD local cache was cleared.")
-
-    def _extract_and_index_cif_zip(self, archive_path: Path, target_root: Path, source: str) -> int:
-        target_root.mkdir(parents=True, exist_ok=True)
-        count = 0
-        with ZipFile(archive_path) as archive:
-            for member in archive.infolist():
-                if member.is_dir():
-                    continue
-                member_path = Path(member.filename)
-                if member_path.is_absolute() or ".." in member_path.parts:
-                    continue
-                if member_path.suffix.lower() != ".cif":
-                    continue
-                target_path = target_root / member_path
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-                with archive.open(member) as source_handle, target_path.open("wb") as target_handle:
-                    shutil.copyfileobj(source_handle, target_handle)
-                self.local_phase_cache.index_cif(target_path, source=source, entry_id=target_path.stem)
-                count += 1
-        return count
 
     def _update_rruff_database(self) -> None:
         def task() -> int:

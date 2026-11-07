@@ -327,6 +327,8 @@ class PhaseFinderObservedPatternActionsMixin:
         clearance = 3.0 * data_per_pixel
         x_clearance = 3.0 * x_per_pixel
         entries = []
+        data_cache = getattr(self, '_multi_legend_data_cache', {})
+        next_data_cache = {}
         for item in labels:
             item.setScale(1.0)
             item._xrd_screen_scale = 1.0
@@ -336,15 +338,25 @@ class PhaseFinderObservedPatternActionsMixin:
                 item.setTextWidth(available_width)
             pattern_id = getattr(item, "_xrd_pattern_id", "")
             context = self.observed_pattern_plot_context.get(pattern_id, {})
-            x = np.asarray(context.get("display_x", []), dtype=float)
-            y = np.asarray(context.get("display_y", []), dtype=float)
-            if self.profile_states.get(pattern_id, {}).get("correct_zero", False):
-                x = x - self._pattern_display_zero_shift_deg(pattern_id)
-            finite = np.isfinite(x) & np.isfinite(y) if x.size == y.size else np.zeros(0, dtype=bool)
-            x = x[finite]
-            y = y[finite]
-            baseline = float(np.nanpercentile(y, 8)) if y.size else float(item.pos().y())
-            entries.append({"item": item, "x": x, "y": y, "baseline": baseline})
+            raw_x, raw_y = context.get('display_x'), context.get('display_y')
+            zero = (self._pattern_display_zero_shift_deg(pattern_id)
+                    if self.profile_states.get(pattern_id, {}).get('correct_zero', False) else 0.)
+            previous = data_cache.get(pattern_id)
+            if previous and previous[0] is raw_x and previous[1] is raw_y and previous[2] == zero:
+                data = previous[3]
+            else:
+                x = np.asarray(raw_x if raw_x is not None else [], dtype=float) - zero
+                y = np.asarray(raw_y if raw_y is not None else [], dtype=float)
+                finite = np.isfinite(x) & np.isfinite(y) if x.shape == y.shape else np.zeros(0, dtype=bool)
+                x, y = x[finite], y[finite]
+                data = dict(x=x, y=y,
+                    baseline=float(np.percentile(y, 8)) if y.size else float(item.pos().y()),
+                    ordered=bool(np.all(x[1:] >= x[:-1])))
+            # Strong references prevent object-ID reuse, and new display arrays
+            # (normalization/offset/data edits) automatically invalidate the data.
+            next_data_cache[pattern_id] = (raw_x, raw_y, zero, data)
+            entries.append({'item': item, **data})
+        self._multi_legend_data_cache = next_data_cache
         entries.sort(key=lambda entry: float(entry["baseline"]), reverse=True)
 
         occupied = []
@@ -385,9 +397,14 @@ class PhaseFinderObservedPatternActionsMixin:
                 lower = max(float(entry["baseline"]), float(y_min)) + clearance
                 if current_x.size:
                     current_y = entry["y"]
-                    mask = (current_x >= float(anchor) - label_width) & (current_x <= float(anchor))
-                    if np.any(mask):
-                        lower = max(lower, float(np.nanmax(current_y[mask])) + clearance)
+                    if entry['ordered']:
+                        start = np.searchsorted(current_x, float(anchor) - label_width, side='left')
+                        end = np.searchsorted(current_x, float(anchor), side='right')
+                        selected_y = current_y[start:end]
+                    else:
+                        selected_y = current_y[(current_x >= float(anchor) - label_width) & (current_x <= float(anchor))]
+                    if selected_y.size:
+                        lower = max(lower, float(np.max(selected_y)) + clearance)
                 free_height = upper - lower
                 if manual is not None:
                     center = float(manual[1])
@@ -465,11 +482,9 @@ class PhaseFinderObservedPatternActionsMixin:
     def _set_pattern_normalization(self, enabled: bool) -> None:
         self.normalize_observed_patterns = bool(enabled)
         self.match_plot_view_initialized = False
-        if hasattr(self, "_auto_scoring_cache"):
-            self._auto_scoring_cache.clear()
-        if hasattr(self, "_invalidate_match_profile_cache"):
-            self._invalidate_match_profile_cache()
-        self._clear_probability_caches()
+        # This is a display scale, not a new measurement. Retain fitted
+        # profiles, assignments and search evidence; the renderer scales them
+        # to each trace's current display context.
         self._refresh_observed_pattern_plot()
         self._rerun_active_calculation(active_only=False)
 
@@ -498,9 +513,7 @@ class PhaseFinderObservedPatternActionsMixin:
         if pattern is None:
             return None
         if getattr(self, "_scoring_source", "Auto") != "Auto":
-            processed = self._pattern_processed_observed_data(pattern)
-            data = processed if processed is not None else self._normalized_observed_data(observed_pattern_data(pattern))
-            return self._crop_pattern_data(pattern, data)
+            return self._crop_pattern_data(pattern, observed_pattern_data(pattern))
         result = self._pattern_auto_preprocessing_result(pattern)
         if result is None:
             return None
@@ -525,7 +538,7 @@ class PhaseFinderObservedPatternActionsMixin:
             return None
         raw = self._crop_pattern_data(
             pattern,
-            self._normalized_observed_data(observed_pattern_data(pattern)),
+            observed_pattern_data(pattern),
         )
         if raw is None or not len(raw):
             return None
@@ -551,7 +564,7 @@ class PhaseFinderObservedPatternActionsMixin:
             str(getattr(pattern, "source_path", "")),
             array_fingerprint(x),
             array_fingerprint(y),
-            bool(self.normalize_observed_patterns),
+            False,  # Retain the legacy key shape; display normalization is independent.
             "auto-scoring-components-v3",
         )
 
@@ -568,7 +581,7 @@ class PhaseFinderObservedPatternActionsMixin:
         pattern = self._active_pattern()
         return self._crop_pattern_data(
             pattern,
-            self._normalized_observed_data(observed_pattern_data(pattern)),
+            observed_pattern_data(pattern),
         )
 
     def _crop_pattern_data(self, pattern: Pattern | None, data: np.ndarray | None) -> np.ndarray | None:
@@ -627,6 +640,7 @@ class PhaseFinderObservedPatternActionsMixin:
         self.legend_item = ensure_right_legend(self.match_plot, clear=True)
         self.legend_item.setVisible(legend_visible and not self.show_all_selected_patterns)
         self.observed_pattern_plot_context = {}
+        self._multi_legend_data_cache = {}
 
         patterns = self._patterns_to_display()
         signature = (self.show_all_selected_patterns, tuple(pattern.id for pattern in patterns),
@@ -929,6 +943,8 @@ class PhaseFinderObservedPatternActionsMixin:
 
 
     def _observed_pattern_color(self, pattern_id: str) -> str:
+        if getattr(getattr(self, "plot_view_settings", None), "all_observed_black", False):
+            return "#000000"
         observed_color = getattr(getattr(getattr(self, "plot_style", None), "observed", None), "color", None) or "#202124"
         active_pattern = self._active_pattern()
         if not getattr(self, "show_all_selected_patterns", False):

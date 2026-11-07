@@ -15,7 +15,7 @@ find_python() {
 
     local candidate
     for candidate in "${candidates[@]}"; do
-        if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c "import PySide6, numpy, scipy, pyqtgraph" >/dev/null 2>&1; then
+        if command -v "$candidate" >/dev/null 2>&1 && "$candidate" "$APP_ROOT/launcher/fast_start.py" --probe >/dev/null 2>&1; then
             echo "$candidate"
             return 0
         fi

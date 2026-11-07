@@ -1,8 +1,10 @@
 from __future__ import annotations
+from html import escape
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -11,12 +13,14 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
 
 from xrd_finder.ui.theme import glass_button_style, is_dark_theme, theme_colors
 from xrd_finder.services.ccdc_service import CCDC_WEB_ENABLED, CCDC_WEB_UNAVAILABLE_MESSAGE
+from xrd_finder.ui.database_descriptions import database_description
 
 
 class DatabasePanelWidget(QWidget):
@@ -35,6 +39,10 @@ class DatabasePanelWidget(QWidget):
     indexCodZipRequested = Signal()
     downloadCodArchiveRequested = Signal()
     prepareCodInorganicRequested = Signal()
+    prepareCoreMofRequested = Signal()
+    manageConnectionsRequested = Signal()
+    readyLibrariesRequested = Signal()
+    readyLibraryRequested = Signal(str)
     ccdcAccountRequested = Signal()
     ccdcPortalRequested = Signal()
     exportCodRequested = Signal()
@@ -63,7 +71,11 @@ class DatabasePanelWidget(QWidget):
         super().__init__(parent)
         self.setObjectName('databaseSettingsBody')
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet('QWidget#databaseSettingsBody QLabel, '
+            'QWidget#databaseSettingsBody QCheckBox { font-size: 13px; }')
         self.source_checkboxes: dict[str, QCheckBox] = {}
+        self.management_cards: dict[str, QWidget] = {}
+        self._connected_row_names: set[str] = set()
         self.database_table: QTableWidget | None = None
         self.materials_project_checkbox: QCheckBox | None = None
         self.materials_project_status_label: QLabel | None = None
@@ -102,19 +114,39 @@ class DatabasePanelWidget(QWidget):
     def update_row(self, source_name: str, values: list[str]) -> None:
         if self.database_table is None:
             return
-        for row in range(self.database_table.rowCount()):
-            name_item = self.database_table.item(row, 0)
+        row = self.database_table.rowCount()
+        for index in range(self.database_table.rowCount()):
+            name_item = self.database_table.item(index, 0)
             if name_item is None or name_item.text() != source_name:
                 continue
-            location = values[3] if len(values) > 3 else ""
-            for column, value in enumerate(values[: self.database_table.columnCount()]):
-                item = QTableWidgetItem(value)
-                if location:
-                    item.setToolTip(location)
-                self.database_table.setItem(row, column, item)
-            self.database_table.resizeColumnsToContents()
-            self.database_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-            return
+            row = index
+            break
+        if row == self.database_table.rowCount():
+            self.database_table.insertRow(row)
+        self._set_table_row(self.database_table, row, values)
+        self._fit_table_height()
+
+    def _fit_table_height(self):
+        table = self.database_table
+        density = getattr(self.window(), '_ui_density_factor', 1.)
+        header = table.horizontalHeader()
+        table.setFixedHeight(max(round(44 * density), header.sizeHint().height(), header.height())
+            + sum(table.rowHeight(i) for i in range(table.rowCount())) + round(10 * density))
+
+    def sync_connected_rows(self, rows):
+        names = {row[0] for row in rows}
+        for index in range(self.database_table.rowCount() - 1, -1, -1):
+            item = self.database_table.item(index, 0)
+            if item and item.text() in self._connected_row_names - names:
+                self.database_table.removeRow(index)
+        for row in rows:
+            self.update_row(row[0], row)
+        self._connected_row_names = names
+        self._fit_table_height()
+
+    def showEvent(self, event):
+        self._fit_table_height()
+        super().showEvent(event)
 
     def _build_ui(
         self,
@@ -125,11 +157,11 @@ class DatabasePanelWidget(QWidget):
         materials_project_api_key: str,
     ) -> None:
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
         self.database_table = self._table(["Database", "Status", "Details"], rows)
-        self.database_table.setMinimumHeight(52 + 32 * len(rows))
-        self.database_table.setMaximumHeight(52 + 32 * len(rows))
+        self.database_table.setObjectName('databaseOverviewTable')
+        self._fit_table_height()
         self.database_table.setWordWrap(True)
         self.database_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.database_table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
@@ -137,16 +169,14 @@ class DatabasePanelWidget(QWidget):
         self.database_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.database_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.database_table.setColumnWidth(2, 340)
-        layout.addWidget(self.database_table)
 
         settings = QWidget()
         settings_layout = QHBoxLayout(settings)
         settings_layout.setContentsMargins(0, 0, 0, 0)
         settings_layout.setSpacing(16)
         search_controls = QVBoxLayout()
-        management_section = QVBoxLayout()
+        settings_layout.addWidget(self.database_table, 2)
         settings_layout.addLayout(search_controls, 1)
-        settings_layout.addLayout(management_section, 2)
         search_controls.addWidget(self._section_title("Databases used for search"))
         source_box = QWidget()
         source_layout = QGridLayout(source_box)
@@ -159,8 +189,12 @@ class DatabasePanelWidget(QWidget):
             ("PDF-2", "sources/match_pdf2", 2, 0),
             ("AFLOW", "sources/aflow", 2, 1),
             ("OQMD", "sources/oqmd", 3, 0),
+            ("CoRE MOF SI", "sources/core_mof", 3, 1),
         ]:
             checkbox = QCheckBox(label)
+            description = database_description(label)
+            if description:
+                self._describe(checkbox, description)
             checkbox.setChecked(bool(source_states.get(key, False)))
             checkbox.toggled.connect(lambda checked, setting_key=key: self.sourceToggled.emit(setting_key, checked))
             self.source_checkboxes[key] = checkbox
@@ -172,6 +206,7 @@ class DatabasePanelWidget(QWidget):
         self.materials_project_checkbox.toggled.connect(self.materialsProjectToggled)
         self.materials_project_checkbox.setText("Use Materials Project")
         self.materials_project_checkbox.setToolTip("Use Materials Project in phase search")
+        self._describe(self.materials_project_checkbox, database_description('Materials Project'))
         search_controls.addWidget(self.materials_project_checkbox)
 
         self.materials_project_status_label = QLabel(materials_project_status_text)
@@ -193,15 +228,16 @@ class DatabasePanelWidget(QWidget):
         search_controls.addWidget(key_row)
         search_controls.addStretch(1)
 
-        management_section.addWidget(self._section_title("Database management"))
         management = QWidget()
         management_layout = QHBoxLayout(management)
         management_layout.setContentsMargins(0, 0, 0, 0)
         management_layout.setSpacing(16)
         library_actions = QVBoxLayout()
         source_actions = QVBoxLayout()
-        management_layout.addLayout(library_actions, 1)
-        management_layout.addLayout(source_actions, 1)
+        library_actions.addWidget(self._management_row('Additional databases',[
+            ('Connections…',self.manageConnectionsRequested),
+            ('Organic / MOF…',self.readyLibrariesRequested),
+        ]))
         library_actions.addWidget(
             self._management_row(
                 "User phase library",
@@ -214,11 +250,11 @@ class DatabasePanelWidget(QWidget):
             self._management_row(
                 "Local diffraction index",
                 [
-                    ("Check CIF composition", self.auditLocalCompositionRequested),
-                    ("Recalculate CIF patterns", self.rebuildLocalPeakIndexRequested),
-                    ("Export prepared library…", self.exportPreparedLibraryRequested),
-                    ("Import prepared library…", self.importPreparedLibraryRequested),
-                    ("Optimize library storage…", self.optimizeLibraryStorageRequested),
+                    ("Check composition", self.auditLocalCompositionRequested),
+                    ("Recalculate", self.rebuildLocalPeakIndexRequested),
+                    ("Export prepared…", self.exportPreparedLibraryRequested),
+                    ("Import prepared…", self.importPreparedLibraryRequested),
+                    ("Optimize storage…", self.optimizeLibraryStorageRequested),
                 ],
             )
         )
@@ -229,20 +265,27 @@ class DatabasePanelWidget(QWidget):
                     ("Update from folder", self.indexCodFolderRequested),
                     ("Update from ZIP", self.indexCodZipRequested),
                     ("Download archive", self.downloadCodArchiveRequested),
-                    ("Download inorganic COD…", self.prepareCodInorganicRequested),
+                    ("Inorganic COD…", self.prepareCodInorganicRequested),
                     ("Export", self.exportCodRequested),
                     ("Import", self.importCodRequested),
                     ("Clear", self.clearCodRequested),
                 ],
             )
         )
-        ccdc_row = self._management_row('CCDC Access Structures' if CCDC_WEB_ENABLED else 'CCDC Access Structures — temporarily unavailable',[
+        source_actions.addWidget(self._management_row('CoRE MOF SI',[
+            ('Download CIFs…',self.prepareCoreMofRequested),
+        ]))
+        for key, label in [('curated_cofs', 'CURATED COFs'), ('qmof', 'QMOF'), ('omdb', 'OMDB')]:
+            source_actions.addWidget(self._management_row(label, [
+                ('Set up…', lambda _checked=False, source=key: self.readyLibraryRequested.emit(source)),
+            ]))
+        ccdc_row = self._management_row('CCDC / CSD',[
             ('Sign in to CCDC…',self.ccdcAccountRequested),
             ('Open CCDC',self.ccdcPortalRequested),
         ])
-        ccdc_row.setToolTip(CCDC_WEB_UNAVAILABLE_MESSAGE if not CCDC_WEB_ENABLED else '')
         for button in ccdc_row.findChildren(QPushButton):
-            button.setEnabled(CCDC_WEB_ENABLED)
+            if button.text() != '?':
+                button.setEnabled(CCDC_WEB_ENABLED)
         source_actions.addWidget(ccdc_row)
         source_actions.addWidget(
             self._management_row(
@@ -290,10 +333,26 @@ class DatabasePanelWidget(QWidget):
                 ],
             )
         )
-        library_actions.addStretch(1)
-        source_actions.addStretch(1)
-        management_section.addWidget(management)
+        # Keep complete database cards together; avoid two very tall towers of buttons.
+        for temporary in (library_actions, source_actions):
+            while temporary.count():
+                temporary.takeAt(0)
+        for labels in (
+            ('Additional databases', 'User phase library', 'Local diffraction index'),
+            ('COD local/bulk', 'Materials Project'),
+            ('CoRE MOF SI', 'CURATED COFs', 'QMOF'),
+            ('OMDB', 'CCDC / CSD', 'RRUFF powder'),
+            ('PDF-2', 'AFLOW', 'OQMD'),
+        ):
+            column = QVBoxLayout()
+            column.setSpacing(8)
+            for label in labels:
+                column.addWidget(self.management_cards[label])
+            column.addStretch(1)
+            management_layout.addLayout(column, 1)
         layout.addWidget(settings)
+        layout.addWidget(self._section_title('Database management'))
+        layout.addWidget(management)
 
         help_label = QLabel(
             "Clear permanently deletes the selected local cache. This cannot be undone."
@@ -308,41 +367,82 @@ class DatabasePanelWidget(QWidget):
         return label
 
     def _management_row(self, label_text: str, actions) -> QWidget:
-        row = QWidget()
+        row = QFrame()
+        row.setProperty('databaseCard', True)
+        row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.management_cards[label_text] = row
         layout = QGridLayout(row)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(10, 8, 10, 8)
         layout.setHorizontalSpacing(6)
         layout.setVerticalSpacing(4)
         title = QLabel(label_text)
+        title.setWordWrap(True)
         title.setStyleSheet("font-weight: 600;")
-        layout.addWidget(title, 0, 0, 1, 2)
+        heading = QHBoxLayout()
+        heading.addWidget(title, 1)
+        layout.addLayout(heading, 0, 0, 1, 2)
+        description = database_description(label_text)
+        first_action_row = 1
+        if description:
+            self._describe(row, description)
+            help_button = QPushButton('?')
+            help_button.setFixedSize(24, 24)
+            help_button.setStyleSheet('QPushButton { padding: 0; min-height: 0; font-weight: 600; }')
+            help_button.setAccessibleName('About ' + description.name)
+            self._describe(help_button, description)
+            help_button.clicked.connect(lambda: QToolTip.showText(
+                help_button.mapToGlobal(help_button.rect().bottomLeft()), description.tooltip(), help_button))
+            heading.addWidget(help_button)
+            summary = QLabel(description.summary)
+            summary.setWordWrap(True)
+            summary.setProperty('uiRole', 'muted')
+            summary.setStyleSheet('font-size: 12px;')
+            layout.addWidget(summary, 1, 0, 1, 2)
+            first_action_row = 2
         for index, (button_text, signal) in enumerate(actions):
             button = QPushButton(button_text)
             button.setMinimumHeight(28)
             button.setStyleSheet(self._button_style(button_text))
+            if description:
+                self._describe(button, description)
             button.clicked.connect(signal)
-            layout.addWidget(button, 1 + index // 2, index % 2)
+            layout.addWidget(button, first_action_row + index // 2, index % 2)
         layout.setColumnStretch(0, 1)
         layout.setColumnStretch(1, 1)
         return row
 
+    @staticmethod
+    def _describe(widget, description):
+        widget.setToolTip(description.tooltip())
+        widget.setProperty('databaseHelpName', description.name)
+        widget.setProperty('databaseHelpDetails', description.details)
+        widget.setProperty('databaseHelpUsage', description.usage)
+
+    def _set_table_row(self, table, row_index, row):
+        location = row[3] if len(row) > 3 else ''
+        description = database_description(row[0])
+        tip = description.tooltip() if description else ''
+        if location and location not in tip:
+            tip = tip.replace('</qt>', '<p>' + escape(location) + '</p></qt>') if tip else escape(location)
+        for col_index, value in enumerate(row[:table.columnCount()]):
+            item = QTableWidgetItem(value)
+            item.setToolTip(tip)
+            table.setItem(row_index, col_index, item)
+
     def _table(self, headers: list[str], rows: list[list[str]]) -> QTableWidget:
         table = QTableWidget(len(rows), len(headers))
+        table.setStyleSheet('QTableWidget { font-size: 13px; }')
         table.setHorizontalHeaderLabels(headers)
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.setAlternatingRowColors(True)
         for row_index, row in enumerate(rows):
-            location = row[3] if len(row) > 3 else ""
-            for col_index, value in enumerate(row[: len(headers)]):
-                item = QTableWidgetItem(value)
-                if location:
-                    item.setToolTip(location)
-                table.setItem(row_index, col_index, item)
+            self._set_table_row(table, row_index, row)
         table.resizeColumnsToContents()
         table.setShowGrid(False)
-        table.verticalHeader().setDefaultSectionSize(32)
+        table.verticalHeader().setMinimumSectionSize(12)
+        table.verticalHeader().setDefaultSectionSize(24)
         return table
 
     def _button_style(self, text: str) -> str:

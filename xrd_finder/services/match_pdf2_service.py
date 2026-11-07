@@ -320,6 +320,8 @@ class MatchPdf2Service:
         if summary_mtime <= 0:
             return False
         with closing(self._connect()) as connection, connection:
+            parser=connection.execute('select version from pdf2_label_parser where summary_path=?',(summary_path,)).fetchone()
+            if parser is None or parser[0]!=2:return False
             row = connection.execute(
                 """
                 select count(*) as count
@@ -380,6 +382,7 @@ class MatchPdf2Service:
                     """,
                     rows,
                 )
+            connection.execute('insert or replace into pdf2_label_parser values(?,2)',(summary_path,))
 
     def _clear_index_for_current_summary(self) -> None:
         summary_path, _summary_mtime, _summary_size = self._summary_signature()
@@ -449,6 +452,7 @@ class MatchPdf2Service:
 
     def _ensure_schema(self) -> None:
         with closing(self._connect()) as connection, connection:
+            connection.execute('create table if not exists pdf2_label_parser (summary_path text primary key,version integer not null)')
             connection.execute(
                 """
                 create table if not exists pdf2_entries (
@@ -478,8 +482,20 @@ class MatchPdf2Service:
         connection.row_factory = sqlite3.Row
         return connection
 
+    def reference_labels(self, entry_ids):
+        ids=list(dict.fromkeys(str(value) for value in entry_ids));result={}
+        if not ids or not self.index_path.is_file():return result
+        summary_path,_,_=self._summary_signature()
+        with closing(self._connect()) as connection:
+            if not connection.execute("select 1 from sqlite_master where type='table' and name='pdf2_entries'").fetchone():return result
+            for start in range(0,len(ids),500):
+                batch=ids[start:start+500]
+                rows=connection.execute('select entry_id,quality from pdf2_entries where summary_path=? and entry_id in ('+','.join('?' for _ in batch)+')',[summary_path,*batch])
+                for row in rows:result[('PDF2',row['entry_id'])]={'kind':'pdf','quality':row['quality']}
+        return result
+
     def _parse_summary_record(self, text: str) -> MatchPdf2Entry | None:
-        match = re.search(r"\s+(\d{1,2})-\s*(\d{1,5})\s*([A-Za-z]*)\s*$", text)
+        match = re.search(r"\s+(\d{1,2})-\s*(\d{1,5})\s*([A-Za-z*+?]*)\s*$", text)
         if not match:
             return None
         prefix = text[: match.start()].rstrip()

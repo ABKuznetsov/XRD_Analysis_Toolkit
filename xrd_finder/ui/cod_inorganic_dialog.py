@@ -3,6 +3,7 @@ import json
 import threading
 import math
 import time
+from html import escape
 
 from PySide6.QtCore import QObject, Qt, QTimer
 from PySide6.QtWidgets import QLabel, QHBoxLayout, QProgressBar, QPushButton, QVBoxLayout
@@ -83,6 +84,10 @@ class CodInorganicController(QObject):
         self.running = False
         self.cancel_event = threading.Event()
         self.dialog = CodInorganicDialog(self)
+        self.inorganic_description = self.dialog.description.text()
+        self.local_input = None
+        self.dataset = 'COD'
+        self.connection = None
         self.handle = None
         self.latest_progress = None
         self.started_at = None
@@ -90,7 +95,41 @@ class CodInorganicController(QObject):
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self._refresh_time)
 
-    def show(self):
+    def show(self, local_path=None, *, archive=False, dataset='COD', connection=None):
+        if not self.running:
+            self.dataset = connection.source if connection is not None else dataset
+            self.connection = connection
+            self.local_input = (local_path, archive) if local_path is not None else None
+            local = self.local_input is not None
+            self.dialog.setWindowTitle('Import COD CIF library' if local else 'Inorganic COD library')
+            self.dialog.description.setText(
+                '<b>Prepare local CIF files for search</b><br><br>' + escape(str(local_path)) +
+                '<br><br>Current records are reused. New or changed structures are calculated '
+                'by up to four persistent background processes. Cancel retains completed records.'
+                if local else self.inorganic_description)
+            self.dialog.start_button.setText('Prepare SQL' if local else 'Download and prepare SQL')
+            self.dialog.status.setText('Press Prepare SQL to start.' if local else 'Press Download and prepare SQL to start or continue.')
+            self.dialog.download_label.setText('CIF files: waiting to start' if local else 'CIF download: waiting to start')
+            self.dialog.sql_label.setText('SQL preparation: waiting to start')
+            if dataset == 'COREMOF':
+                self.dialog.setWindowTitle('CoRE MOF SI library')
+                self.dialog.start_button.setText('Prepare CIFs' if local else 'Download and prepare CIFs')
+                self.dialog.description.setText(
+                    '<b>CoRE MOF SI 2024 · 2,664 CIF structures</b><br><br>'
+                    'Download the public 44 MB archive and calculate reference XRD patterns in background processes. '
+                    'Only the authors’ computation-ready subset is imported; their NCR subset is excluded.<br><br>'
+                    'ASR: all solvent removed. FSR: free solvent removed. Ion: ion-containing structure. '
+                    'These are processed CIF structures, not measured powder references. Enable Organic in the element panel to include metal-organic candidates. '
+                    'Cancellation retains completed cards; repeating the import reuses current results.<br><br>'
+                    '<a href="https://zenodo.org/records/15055758">Source, authors and distribution terms</a>')
+            elif connection is not None:
+                self.dialog.setWindowTitle(connection.name+' · CIF preparation')
+                self.dialog.description.setText('<b>'+escape(connection.name)+'</b><br><br>'
+                    'Prepare new or changed CIF files in background processes. Current cards are reused. '
+                    'Cancellation retains completed cards. This source has its own identity in the local search cache.')
+                self.dialog.start_button.setText('Prepare CIFs')
+                self.dialog.status.setText('Press Prepare CIFs to start or continue.')
+                self.dialog.download_label.setText('CIF files: waiting to start')
         self.dialog.show()
         self.dialog.raise_()
         self.dialog.activateWindow()
@@ -106,9 +145,10 @@ class CodInorganicController(QObject):
         self.latest_progress = None
         self.started_at = time.monotonic()
         for bar in (self.dialog.download_progress,self.dialog.sql_progress):
-            bar.setRange(0,len(load_selection()))
+            bar.setRange(0,0 if self.local_input is not None or self.dataset != 'COD' else len(load_selection()))
             bar.setValue(0)
-        self.dialog.download_label.setText('CIF download: checking existing files…')
+        self.dialog.download_label.setText('CIF files: checking existing files…' if self.local_input is not None
+                                           else 'CIF download: checking existing files…')
         self.dialog.sql_label.setText('SQL preparation: checking current records…')
         self._refresh_time()
         self.timer.start()
@@ -120,10 +160,27 @@ class CodInorganicController(QObject):
         if panel is not None:
             panel.setEnabled(False)
         cache = self.owner.local_phase_cache
+        local_input = self.local_input
+        dataset = self.dataset
+        connection = self.connection
+        def task(emit, partial):
+            if connection is not None:
+                from xrd_finder.services.library_connections import prepare_connection
+                return prepare_connection(cache,connection,progress=emit,status=partial,cancelled=self.cancel_event.is_set)
+            if dataset == 'COREMOF':
+                from xrd_finder.services.core_mof_library import prepare_core_mof_library
+                return prepare_core_mof_library(cache,archive_path=local_input[0] if local_input else None,
+                    progress=emit,status=partial,cancelled=self.cancel_event.is_set)
+            if local_input is not None:
+                from xrd_finder.services.local_cif_preparation import prepare_local_cif_library
+                path, archive = local_input
+                return prepare_local_cif_library(cache, path, archive=archive,
+                    progress=emit, status=partial, cancelled=self.cancel_event.is_set)
+            return prepare_inorganic_library(cache, progress=emit, status=partial,
+                                               cancelled=self.cancel_event.is_set)
         self.handle = handle = BackgroundTaskHandle(
-            lambda emit,partial: prepare_inorganic_library(cache,progress=emit,status=partial,
-                                                           cancelled=self.cancel_event.is_set),
-            self.owner,accepts_progress=True,accepts_partial=True,operation_name='database.cod_inorganic')
+            task, self.owner,accepts_progress=True,accepts_partial=True,
+            operation_name='database.cod_import' if local_input is not None else 'database.cod_inorganic')
         self.owner._background_tasks.add(handle)
         self.owner._background_task_threads.add(handle)
         handle.progress.connect(self._progress)
@@ -146,7 +203,8 @@ class CodInorganicController(QObject):
         self.dialog.sql_progress.setRange(0,shot.total)
         self.dialog.sql_progress.setValue(shot.processed)
         self.dialog.download_label.setText(
-            f'CIF download: {shot.available:,} / {shot.total:,} available · reused {shot.reused:,}'
+            f'{"CIF files" if self.local_input is not None else "CIF download"}: '
+            f'{shot.available:,} / {shot.total:,} available · reused {shot.reused:,}'
             f' · failed {shot.download_failed:,} · remaining: {_duration(shot.download_seconds)}')
         self.dialog.sql_label.setText(
             f'SQL preparation: {shot.processed:,} / {shot.total:,} checked'
@@ -174,7 +232,9 @@ class CodInorganicController(QObject):
                 f'prepared now: {result.prepared:,}; already ready: {result.skipped:,}; '
                 f'not downloaded: {len(result.download_failed):,}; not prepared: {len(result.preparation_failed):,}.')
         if result.failed:
-            path = self.owner.local_phase_cache.root/'cod_inorganic_failures.json'
+            path = self.owner.local_phase_cache.root/('library_connection_failures.json' if self.connection is not None else
+                'core_mof_failures.json' if self.dataset == 'COREMOF' else
+                'cod_import_failures.json' if self.local_input is not None else 'cod_inorganic_failures.json')
             try:
                 path.write_text(json.dumps(dict(download=result.download_failed,preparation=result.preparation_failed),
                                            ensure_ascii=False, indent=2),encoding='utf-8')
@@ -183,11 +243,21 @@ class CodInorganicController(QObject):
                 text += '\nCould not save failure details: '+str(error)
         self.dialog.status.setText(text)
         if result.prepared or result.skipped:
-            self.owner.settings.setValue('sources/cod_local', True)
-            if self.owner.database_panel is not None:
-                self.owner.database_panel.set_source_checked('sources/cod_local', True)
+            if self.connection is not None:
+                from xrd_finder.services.library_connections import load_connections,save_connections
+                connections=load_connections(self.owner.settings)
+                for item in connections:
+                    if item.source==self.connection.source:item.enabled=True
+                save_connections(self.owner.settings,connections)
+            else:
+                setting_key = 'sources/core_mof' if self.dataset == 'COREMOF' else 'sources/cod_local'
+                self.owner.settings.setValue(setting_key, True)
+                if self.owner.database_panel is not None:
+                    self.owner.database_panel.set_source_checked(setting_key, True)
         if not getattr(self.owner,'_preparation_close_confirmed',False):
             self.owner._refresh_database_rows()
+            manager=getattr(self.owner,'_library_connections_dialog',None)
+            if manager is not None:manager.refresh()
             self.owner._set_background_status(text)
         self.owner._background_tasks.discard(self.handle)
 

@@ -6,7 +6,7 @@
       "app_id": "xrd_finder",
       "name": "XRD Phase Finder",
       "description": "Identify and interpret crystalline phases in powder X-ray diffraction patterns.",
-      "version": "1.7.0",
+      "version": "1.7.1",
       "icon": "icon.png",
       "announcement_revision": 0,
       "platforms": [
@@ -27,7 +27,7 @@
       },
       "platform_versions": {
         "windows": "1.7.0",
-        "macos": "1.7.0",
+        "macos": "1.7.1",
         "linux": "1.6.9"
       }
     }

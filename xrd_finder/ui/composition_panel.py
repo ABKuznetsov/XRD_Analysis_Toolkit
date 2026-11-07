@@ -35,9 +35,8 @@ class CompositionPanel(QWidget):
         self.ccdc_doi_input = QLineEdit()
         self.inorganics_checkbox = QCheckBox("Inorganic")
         self.organics_checkbox = QCheckBox("Organic")
-        self.structural_data_checkbox = QCheckBox("Include structures")
-        self.reference_patterns_checkbox = QCheckBox("Reference patterns")
-        self.rank_by_probability_checkbox = QCheckBox("Rank by XRD match")
+        self.structural_data_checkbox = QCheckBox("CIF structures")
+        self.reference_patterns_checkbox = QCheckBox("Profile only")
 
         self._build_element_panel()
         self._build_controls_panel(match_table)
@@ -97,12 +96,12 @@ class CompositionPanel(QWidget):
         self.ccdc_doi_input.returnPressed.connect(self.searchRequested)
         controls_layout.addWidget(self.ccdc_doi_input)
 
-        material_row = QHBoxLayout()
+        material_row = WrappingLayout(spacing=10)
         self.inorganics_checkbox.setChecked(True)
         self.organics_checkbox.setChecked(False)
+        self.organics_checkbox.setToolTip('Include organic and metal-organic compounds. Classification normally uses C and H; known MOF/COF libraries also include carbon frameworks whose CIF omits hydrogen.')
         material_row.addWidget(self.inorganics_checkbox)
         material_row.addWidget(self.organics_checkbox)
-        material_row.addStretch(1)
         controls_layout.addLayout(material_row)
 
         data_mode_row = WrappingLayout(spacing=10)
@@ -110,16 +109,11 @@ class CompositionPanel(QWidget):
         self.structural_data_checkbox.setToolTip("Include entries from crystallographic structure databases. CIF files may be downloaded or prepared after retrieval.")
         self.reference_patterns_checkbox.setChecked(False)
         self.reference_patterns_checkbox.setToolTip(
-            "Include enabled experimental/reference databases such as RRUFF and PDF-2."
-        )
-        self.rank_by_probability_checkbox.setChecked(True)
-        self.rank_by_probability_checkbox.setToolTip(
-            "Estimate whether locally available structural candidates have peaks present in the active XRD pattern."
+            "Include reference profiles and d/I cards from enabled RRUFF and PDF-2 databases; a CIF is not required."
         )
         data_mode_row.addWidget(self.structural_data_checkbox)
-        data_mode_row.addWidget(self.rank_by_probability_checkbox)
+        data_mode_row.addWidget(self.reference_patterns_checkbox)
         controls_layout.addLayout(data_mode_row)
-        controls_layout.addWidget(self.reference_patterns_checkbox)
 
         actions = QHBoxLayout()
         search_button = self.search_button = QPushButton("Search database")
@@ -150,7 +144,7 @@ class CompositionPanel(QWidget):
     def set_search_mode(self, mode: str) -> None:
         search, reset = {
             "search": ("Search database", "Clear search"),
-            "auto": ("Identify phases", "Clear search"),
+            "auto": ("Refine search", "Finish auto search"),
             "peaks": ("Peak search", "Clear search"),
         }[mode]
         self.search_button.setText(search)
@@ -159,12 +153,16 @@ class CompositionPanel(QWidget):
         self.search_button.style().polish(self.search_button)
         self.search_button.update()
         self.reset_button.setText(reset)
+        self.reset_button.setProperty('uiRole','danger' if mode=='auto' else '')
+        self.reset_button.style().unpolish(self.reset_button)
+        self.reset_button.style().polish(self.reset_button)
+        self.reset_button.update()
         self.search_button.setToolTip({
             "search": "Search phase candidates using element filters and enabled databases.",
-            "auto": "Detect peaks in the active XRD pattern and search local databases.",
+            "auto": "Repeat automatic identification using the current element filters and search settings.",
             "peaks": "Search local databases using only the manually selected peaks.",
         }[mode])
-        self.reset_button.setToolTip(
+        self.reset_button.setToolTip('Stop automatic search and Gain updates. Keep filters, candidates and selected phases.' if mode=='auto' else
             f"{reset}: cancel the current search and clear its chemical filters and candidate results. "
             "Accepted phases and pattern processing are preserved."
         )

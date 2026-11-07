@@ -8,6 +8,7 @@ from xrd_finder.finder.reference_lines import ReferenceLineSet
 from xrd_finder.services.local_phase_cache import DERIVED_CACHE_VERSION, LocalPhaseCache
 from xrd_finder.services.reference_batch_reader import REFERENCE_COLUMNS, read_reference_batch
 from xrd_finder.services.normalized_reflections import ordered_card_query
+from xrd_finder.services.source_registry import is_structure_source
 
 
 class LineSetStatus(str, Enum):
@@ -26,7 +27,7 @@ class CandidateLineResolution:
 
 
 class CandidateLineProvider:
-    STRUCTURAL_SOURCES = frozenset({"USER", "COD", "CCDC", "MP", "AFLOW", "OQMD"})
+    STRUCTURAL_SOURCES = frozenset({"USER", "COD", "CCDC", "MP", "AFLOW", "OQMD", 'COREMOF'})
 
     def __init__(self, cache: LocalPhaseCache) -> None:
         self.cache = cache
@@ -43,7 +44,7 @@ class CandidateLineProvider:
         keys,unsupported = [],{}
         for candidate in candidates:
             key = (str(candidate.get('Source','') or '').upper(),str(candidate.get('Entry','') or '').strip())
-            if key[0] in self.STRUCTURAL_SOURCES and key[1]:
+            if is_structure_source(key[0]) and key[1]:
                 keys.append(key)
             else:
                 unsupported[key] = CandidateLineResolution(LineSetStatus.UNSUPPORTED)
@@ -82,7 +83,7 @@ class CandidateLineProvider:
             if isinstance(result,Exception):
                 raise result
             return result
-        if source not in self.STRUCTURAL_SOURCES or not entry_id:
+        if not is_structure_source(source) or not entry_id:
             return CandidateLineResolution(LineSetStatus.UNSUPPORTED)
         with closing(self.cache._connect()) as connection:
             # Metadata and reflections must belong to one SQLite snapshot,

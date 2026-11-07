@@ -1,4 +1,5 @@
 from __future__ import annotations
+from xrd_finder.services.source_registry import is_structure_source
 from dataclasses import asdict
 
 from PySide6.QtCore import Qt, QTimer
@@ -128,7 +129,7 @@ class PhaseFinderSelectedPhasesActionsMixin:
                 "PDF-2 entries are reference cards. They can be previewed as peak overlays, but cannot be used as calculated CIF phases.",
             )
             return
-        if self._candidate_source(candidate) not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"} or not candidate.get("Entry"):
+        if not is_structure_source(self._candidate_source(candidate)) or not candidate.get("Entry"):
             QMessageBox.information(self, "Working set", "Only saved COD, CCDC, user, or Materials Project structures can be calculated from CIF for now.")
             return
         self._with_candidate_cif_ready(

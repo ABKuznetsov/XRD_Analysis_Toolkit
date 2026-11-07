@@ -4,7 +4,7 @@ from xrd_finder.services.candidate_rows import CandidateRowFormatter, normalize_
 
 from collections.abc import Callable
 from concurrent.futures import CancelledError, ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 import math
 import re
@@ -26,6 +26,7 @@ from xrd_finder.services.local_phase_cache import (
 )
 from xrd_finder.services.match_pdf2_service import MatchPdf2Service
 from xrd_finder.services.materials_project_service import MaterialsProjectService
+from xrd_finder.services.candidate_cif_batches import CandidateCifDownloads
 from xrd_finder.services.rruff_service import RruffService
 from xrd_finder.services.runtime_diagnostics import trace_operation
 
@@ -52,6 +53,9 @@ class CandidateSearchOptions:
     restrict_to_selected_elements: bool = True
     defer_candidate_preparation: bool = False
     wavelength: float = CU_KA1_WAVELENGTH
+    custom_connections: list = field(default_factory=list)
+    allow_organic: bool | None = None
+    allow_inorganic: bool | None = None
 
 
 class CandidateSearchService(CandidateRowFormatter):
@@ -88,6 +92,7 @@ class CandidateSearchService(CandidateRowFormatter):
         self.aflow = aflow or AflowService()
         self.oqmd = oqmd or OqmdService()
         self._status_callback = status_callback
+        self.custom_sources = {}
         self._prepared_listeners: list[Callable[[CandidatePreparedNotice], None]] = []
         self._preparation_progress_listeners: list[
             Callable[[CandidatePreparationProgress], None]
@@ -232,6 +237,8 @@ class CandidateSearchService(CandidateRowFormatter):
             rows = pdf2_rows + rows
             self._emit_search_progress(progress, f"PDF-2: found {len(rows)} candidates total", len(rows), 0, 6)
 
+        rows = self._search_custom_connections(query, rows, options, progress=progress,
+            session_token=session_token, cancelled=cancelled)
         rows = self._emit_partial_candidate_rows(partial_results, rows, options)
 
         check_cancelled()
@@ -507,6 +514,8 @@ class CandidateSearchService(CandidateRowFormatter):
             pdf2_rows = self.match_pdf2_rows(pdf2_entries)
             rows = pdf2_rows + rows
             self._emit_search_progress(progress, f"PDF-2: found {len(rows)} candidates total", len(rows), 0, 4)
+        rows = self._search_custom_connections(' '.join(elements), rows, options, progress=progress,
+            session_token=session_token, cancelled=cancelled)
         rows = self._emit_partial_candidate_rows(partial_results, rows, options)
         if cancelled is not None and cancelled():
             return rows
@@ -677,6 +686,33 @@ class CandidateSearchService(CandidateRowFormatter):
                         rows.append(["OQMD", "", "", "OQMD search failed", "", str(exc)])
         rows = self.dedupe_candidate_rows(self.filter_candidate_rows_by_excluded_elements(rows, options))
         self._emit_search_progress(progress, f"Done: found {len(rows)} candidates", len(rows), 0, 12)
+        return rows
+
+    def _search_custom_connections(self, query, rows, options, *, progress=None, session_token=None, cancelled=None):
+        from xrd_finder.services.library_connections import JsonCifSource
+        from xrd_finder.services.security_mode import offline_mode_enabled
+        if not options.structural_data_enabled or offline_mode_enabled():
+            return rows
+        for connection in options.custom_connections:
+            if not connection.enabled or connection.kind != 'json_api':
+                continue
+            if cancelled is not None and cancelled():
+                raise CancelledError('Database search cancelled')
+            self._emit_search_progress(progress, 'Searching '+connection.name+'…',len(rows),0,1)
+            try:
+                client = self.custom_sources.get(connection.source)
+                if client is None or client.connection != connection:
+                    client = self.custom_sources[connection.source] = JsonCifSource(connection)
+                found = client.search(query,cancelled=cancelled or (lambda:False))
+                found = self.filter_candidate_rows_by_excluded_elements(found,options)
+                rows = rows + found
+                if not options.defer_candidate_preparation:
+                    self.queue_candidate_rows(found,session_token=session_token,cancelled=cancelled,
+                        wavelength=options.wavelength)
+            except CancelledError:
+                raise
+            except Exception as error:
+                rows = rows + [[connection.source,'','',connection.name+' — search failed','',str(error),'','']]
         return rows
 
     def search_local_cache(
@@ -1196,25 +1232,7 @@ class CandidateSearchService(CandidateRowFormatter):
         *,
         session_token: int | None = None,
     ) -> int:
-        queued = 0
-        for entry in entries:
-            if not entry.cod_id:
-                continue
-            target = self.local_phase_cache.cif_dir / f"{entry.cod_id}.cif"
-            queued += int(
-                self._queue_candidate_preparation(
-                    source="COD",
-                    entry_id=entry.cod_id,
-                    fetch=lambda entry=entry: self.cod_online.download_cif(
-                        entry.cod_id,
-                        self.local_phase_cache.cif_dir,
-                    ),
-                    existing_path=target if target.is_file() else None,
-                    fallback=entry,
-                    session_token=session_token,
-                )
-            )
-        return queued
+        return self.queue_candidate_rows(self.cod_rows(entries), session_token=session_token)
 
     def queue_candidate_rows(
         self,
@@ -1234,6 +1252,7 @@ class CandidateSearchService(CandidateRowFormatter):
         seen: set[tuple[str, str]] = set()
         normalized_rows = [normalize_candidate_row(row) for row in rows]
         supported = {"COD"}
+        supported.update(self.custom_sources)
         supported.update(source for source, service in (
             ("MP", getattr(self, "materials_project", None)), ("AFLOW", getattr(self, "aflow", None)), ("OQMD", getattr(self, "oqmd", None)),
         ) if service is not None)
@@ -1249,6 +1268,26 @@ class CandidateSearchService(CandidateRowFormatter):
             if cancelled is not None and cancelled():
                 return 0  # No jobs have been submitted during the bounded read.
             raise
+        downloads = {}
+        for batch_source, batch_service, target_dir in (
+            ('MP', self.materials_project, self.local_phase_cache.root / 'materials_project_cif'),
+            ('COD', self.cod_online, self.local_phase_cache.cif_dir),
+        ):
+            ids = []
+            for row in normalized_rows:
+                key = row[0].strip().upper(), row[1].strip()
+                if key[0] != batch_source or not key[1]:
+                    continue
+                cached = states.get(key)
+                if cached is not None and (cached.ready and coverage.get(key, False)
+                        or cached.cif_path and Path(cached.cif_path).is_file()):
+                    continue
+                if not (target_dir / f'{key[1]}.cif').is_file():
+                    ids.append(key[1])
+            downloads[batch_source] = CandidateCifDownloads(batch_service, ids, target_dir,
+                active=lambda ids, source=batch_source:
+                    self.preparation_queue.has_pending((source, key) for key in ids),
+                cancelled=cancelled)
         for normalized in normalized_rows:
             if cancelled is not None and cancelled():
                 break
@@ -1268,6 +1307,7 @@ class CandidateSearchService(CandidateRowFormatter):
                 if existing is not None:
                     queued += int(self._queue_candidate_preparation(source=source,entry_id=entry_id,
                         fetch=lambda: None,existing_path=existing,session_token=session_token,
+                        cached_states=states,cached_coverage=coverage,
                         reference_wavelength=wavelength,reference_two_theta_range=two_theta_range))
                     continue
             formula = normalized[2].strip()
@@ -1284,13 +1324,12 @@ class CandidateSearchService(CandidateRowFormatter):
                 queued += int(self._queue_candidate_preparation(
                     source=source,
                     entry_id=entry_id,
-                    fetch=lambda entry_id=entry_id: self.cod_online.download_cif(
-                        entry_id, self.local_phase_cache.cif_dir
-                    ),
+                    fetch=lambda entry_id=entry_id: downloads["COD"].fetch(entry_id),
                     existing_path=target if target.is_file() else existing_path,
                     fallback=fallback,
                     session_token=session_token,
                     cached_states=states,
+                    cached_coverage=coverage,
                     reference_wavelength=wavelength,reference_two_theta_range=two_theta_range,
                 ))
             elif source == "MP" and self.materials_project is not None:
@@ -1299,14 +1338,22 @@ class CandidateSearchService(CandidateRowFormatter):
                 queued += int(self._queue_candidate_preparation(
                     source=source,
                     entry_id=entry_id,
-                    fetch=lambda entry_id=entry_id: self.materials_project.download_cif(
-                        entry_id, target_dir
-                    ),
+                    fetch=lambda entry_id=entry_id: downloads["MP"].fetch(entry_id),
                     existing_path=target if target.is_file() else existing_path,
                     session_token=session_token,
                     cached_states=states,
+                    cached_coverage=coverage,
                     reference_wavelength=wavelength,reference_two_theta_range=two_theta_range,
                 ))
+            elif source in self.custom_sources:
+                client = self.custom_sources[source]
+                target_dir = self.local_phase_cache.root / (source.lower()+'_cif')
+                queued += int(self._queue_candidate_preparation(source=source,entry_id=entry_id,
+                    fetch=lambda client=client, entry_id=entry_id, target_dir=target_dir:
+                        client.download_cif(entry_id,target_dir,cancelled=cancelled or (lambda:False)),
+                    existing_path=existing_path,session_token=session_token,cached_states=states,
+                    cached_coverage=coverage,reference_wavelength=wavelength,
+                    reference_two_theta_range=two_theta_range))
             elif source in {"AFLOW", "OQMD"}:
                 service = self.aflow if source == "AFLOW" else self.oqmd
                 if service is None:
@@ -1326,6 +1373,7 @@ class CandidateSearchService(CandidateRowFormatter):
                     existing_path=existing_path,
                     session_token=session_token,
                     cached_states=states,
+                    cached_coverage=coverage,
                     reference_wavelength=wavelength,reference_two_theta_range=two_theta_range,
                 ))
         return queued
@@ -1348,25 +1396,10 @@ class CandidateSearchService(CandidateRowFormatter):
         return queued
 
     def queue_background_mp_downloads(self, entries, *, session_token: int | None = None) -> int:
-        target_dir = self.local_phase_cache.root / "materials_project_cif"
-        queued = 0
-        for entry in entries[: self.BACKGROUND_DOWNLOAD_LIMIT]:
-            if not entry.material_id:
-                continue
-            target = target_dir / f"{entry.material_id}.cif"
-            queued += int(
-                self._queue_candidate_preparation(
-                    source="MP",
-                    entry_id=entry.material_id,
-                    fetch=lambda entry=entry: self.materials_project.download_cif(
-                        entry.material_id,
-                        target_dir,
-                    ),
-                    existing_path=target if target.is_file() else None,
-                    session_token=session_token,
-                )
-            )
-        return queued
+        return self.queue_candidate_rows(
+            self.mp_rows(entries[: self.BACKGROUND_DOWNLOAD_LIMIT]),
+            session_token=session_token,
+        )
 
     def _download_mp_entry_to_cache(self, entry, target_dir) -> None:
         cif_path = self.materials_project.download_cif(entry.material_id, target_dir)
@@ -1435,17 +1468,20 @@ class CandidateSearchService(CandidateRowFormatter):
         fallback: CodEntry | None = None,
         session_token: int | None = None,
         cached_states: dict[tuple[str, str], CachedPreparationState] | None = None,
+        cached_coverage: dict[tuple[str, str], bool] | None = None,
         reference_wavelength: float = CU_KA1_WAVELENGTH,
         reference_two_theta_range: tuple[float,float] | None = None,
     ) -> bool:
         reference_low,reference_high = reference_two_theta_range or (5.,120.)
-        cached = self.local_phase_cache.get(source, entry_id)
+        key = source, entry_id
+        states = cached_states if cached_states is not None else self.local_phase_cache.preparation_states((key,))
+        cached = states.get(key)
         if (
             cached is not None
-            and int(getattr(cached, "derived_version", 0)) == DERIVED_CACHE_VERSION
-            and self.local_phase_cache.peak_records(source, entry_id)
-            and self.local_phase_cache.reference_range_covered(source,entry_id,wavelength=reference_wavelength,
-                two_theta_min=reference_low,two_theta_max=reference_high)
+            and cached.ready
+            and (cached_coverage.get(key, False) if cached_coverage is not None else
+                 self.local_phase_cache.reference_range_covered(source,entry_id,wavelength=reference_wavelength,
+                    two_theta_min=reference_low,two_theta_max=reference_high))
         ):
             return False
         if existing_path is None and cached is not None and cached.cif_path:
@@ -1457,6 +1493,10 @@ class CandidateSearchService(CandidateRowFormatter):
                 entry_id=entry_id,
                 fetch=None if existing_path is not None else fetch,
                 existing_payload=existing_path,
+                batch_index=self._batch_index_prepared_cifs,
+                native_request=dict(source=source, entry_id=entry_id,
+                    fallback=asdict(fallback) if fallback is not None else None,
+                    reference_range=(reference_wavelength, *(reference_two_theta_range or (5.,120.)))),
                 index=lambda path: self._index_prepared_cif(
                     path,
                     source=source,
@@ -1468,6 +1508,10 @@ class CandidateSearchService(CandidateRowFormatter):
             session_token=session_token,
         )
 
+    def _batch_index_prepared_cifs(self, requests, ready, cancelled):
+        from xrd_finder.services.candidate_cif_preparation import prepare_candidate_cif_batch
+        prepare_candidate_cif_batch(self.local_phase_cache.root, requests, ready, cancelled)
+
     def _index_prepared_cif(
         self,
         path,
@@ -1478,19 +1522,16 @@ class CandidateSearchService(CandidateRowFormatter):
         reference_wavelength: float = CU_KA1_WAVELENGTH,
         reference_two_theta_range: tuple[float,float] | None = None,
     ):
-        self.local_phase_cache.index_cif(
+        saved = self.local_phase_cache.index_cif(
             path,
             source=source,
             entry_id=entry_id,
             fallback=fallback,
             reference_range=(reference_wavelength,*(reference_two_theta_range or (5.,120.))),
         )
-        cached = self.local_phase_cache.get(source, entry_id)
-        if (
-            cached is None
-            or int(getattr(cached, "derived_version", 0)) != DERIVED_CACHE_VERSION
-            or not self.local_phase_cache.peak_records(source, entry_id)
-        ):
+        key = source, entry_id
+        state = self.local_phase_cache.preparation_states((key,)).get(key)
+        if not saved or state is None or not state.ready:
             raise ValueError(f"{source}:{entry_id} could not be indexed for Match/Gain.")
         return path
 
@@ -1585,7 +1626,7 @@ class CandidateSearchService(CandidateRowFormatter):
                 "MP",
                 entry.material_id,
                 self.display_formula(entry.formula),
-                entry.name or self.display_formula(entry.formula),
+                self.phase_display_name('MP', entry.formula, entry.name),
                 getattr(entry, "spacegroup", ""),
                 "",
                 self.display_iic(getattr(entry, "iic", None), getattr(entry, "derived_version", 0), getattr(entry, "iic_method", "")),

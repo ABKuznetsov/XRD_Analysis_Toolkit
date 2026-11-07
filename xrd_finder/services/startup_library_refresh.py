@@ -11,6 +11,7 @@ from xrd_finder.services.normalized_reflections import normalize_reflections
 from xrd_finder.services.library_storage_migration import migrate_library_storage,_verify,_retry
 from xrd_finder.services.local_phase_cache import LocalPhaseCache
 from xrd_finder.services.prepared_library_archive import TABLES
+from xrd_finder.services.reference_labels import ensure_label_schema
 
 
 @dataclass(frozen=True)
@@ -166,6 +167,9 @@ def refresh_legacy_library(root,*,api_key='',progress=None,cancelled=lambda:Fals
                     for left,right in (('main','refreshed'),('refreshed','main')):
                         if writer.execute(f'select source,entry_id from {left}.phases except select source,entry_id from {right}.phases limit 1').fetchone():
                             raise ValueError('The refreshed library has different card identities')
+                    # Optional metadata is added inside the activation transaction,
+                    # after the concurrency guard. Cancellation rolls it back too.
+                    ensure_label_schema(writer)
                     for table in TABLES:
                         old=writer.execute('pragma main.table_info('+table+')').fetchall()
                         new=writer.execute('pragma refreshed.table_info('+table+')').fetchall()

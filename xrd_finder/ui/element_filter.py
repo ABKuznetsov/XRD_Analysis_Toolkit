@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontMetrics, QMouseEvent
 from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 from xrd_finder.ui.wrapping_layout import WrappingLayout
+from xrd_finder.ui.theme import colored_hover_background
 
 
 def periodic_table_positions() -> list[tuple[str, int, int]]:
@@ -65,6 +66,7 @@ def element_state_style(state: str) -> str:
         f"background: {bg}; border: 1px solid {border}; color: {color};"
         "border-radius: 4px; font-weight: 600; padding: 0px;"
         "}"
+        f"QPushButton:hover:enabled {{ background: {colored_hover_background(bg)}; border-color: {border}; color: {color}; }}"
     )
 
 
@@ -95,7 +97,9 @@ class ElementFilterButton(QPushButton):
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         self.gestureMoved.emit(event.globalPosition().toPoint())
-        event.accept()
+        # QPushButton tracks its hover state here, independently of our drag
+        # selection (whose press/release events are handled above and below).
+        super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
@@ -202,14 +206,14 @@ class PeriodicTableWidget(QWidget):
                 "QPushButton { background: #0f8a75; color: #ffffff; "
                 "border: 2px solid #42c7ad; border-radius: 5px; "
                 "font-weight: 700; padding: 3px; } "
-                "QPushButton:hover { background: #159d87; }"
+                f"QPushButton:hover:enabled {{ background: {colored_hover_background('#0f8a75')}; border-color: #42c7ad; }}"
             )
         else:
             self.mode_button.setStyleSheet(
                 "QPushButton { background: #9b1b59; color: #ffffff; "
                 "border: 2px solid #d85a98; border-radius: 5px; "
                 "font-weight: 700; padding: 3px; } "
-                "QPushButton:hover { background: #b52b6d; }"
+                f"QPushButton:hover:enabled {{ background: {colored_hover_background('#9b1b59')}; border-color: #d85a98; }}"
             )
 
     def set_scale(self, value: str) -> None:

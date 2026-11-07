@@ -51,6 +51,8 @@ def enrich_candidate_from_structure(
         candidate["Phase"] = structure.name
     if structure.formula:
         candidate["Formula"] = display_formula(structure.formula)
+        if str(candidate.get('Source', '')).strip().upper() == 'MP':
+            candidate['Phase'] = display_formula(structure.formula)
     candidate["Space group"] = structure.space_group or structure.space_group_number or ""
     cell = structure.cell
     if has_complete_cell(cell):

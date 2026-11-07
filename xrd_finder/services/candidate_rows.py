@@ -43,13 +43,18 @@ class CandidateRowFormatter:
                 entry.source,
                 entry.entry_id,
                 self.display_formula(entry.formula),
-                entry.name or self.display_formula(entry.formula),
+                self.phase_display_name(entry.source, entry.formula, entry.name),
                 getattr(entry, "spacegroup", ""),
                 "",
                 self.display_iic(getattr(entry, "iic", None), getattr(entry, "derived_version", 0), getattr(entry, "iic_method", "")),
             ]
             for entry in entries
         ]
+
+    def phase_display_name(self, source, formula, name="") -> str:
+        if str(source).strip().upper() == 'MP' and formula:
+            return self.display_formula(formula)
+        return name or self.display_formula(formula)
 
     def dedupe_candidate_rows(self, rows: list[list[str]]) -> list[list[str]]:
         unique = []
@@ -74,22 +79,27 @@ class CandidateRowFormatter:
         for row in rows:
             normalized = normalize_candidate_row(row)
             formula = normalized[2] if len(normalized) > 2 else ""
-            if self.candidate_formula_allowed(formula, options):
+            if self.candidate_formula_allowed(formula, options, source=normalized[0]):
                 filtered.append(row)
         return filtered
 
     @staticmethod
-    def candidate_formula_allowed(formula: str, options) -> bool:
+    def candidate_formula_allowed(formula: str, options, *, source='') -> bool:
         if not formula:
             return True
         excluded = set(options.excluded_elements)
         required = {element.strip() for element in options.required_elements if element.strip()}
         allowed = required | {element.strip() for element in options.optional_elements if element.strip()}
         elements = formula_elements(formula)
+        from xrd_finder.services.source_registry import ORGANIC_FRAMEWORK_SOURCES
+        allow_organic=getattr(options,'allow_organic',None)
+        material_allowed=(bool(allow_organic) if allow_organic is not None
+                          and source in ORGANIC_FRAMEWORK_SOURCES and 'C' in elements
+                          else options.material_class_allowed(formula))
         return (required.issubset(elements) and not elements.intersection(excluded)
                 and (not getattr(options, 'restrict_to_selected_elements', True)
                      or not allowed or elements.issubset(allowed))
-                and options.material_class_allowed(formula))
+                and material_allowed)
 
     def display_formula(self, formula: str) -> str:
         parts = re.findall(r"[A-Z][a-z]?[0-9.]*", formula or "")

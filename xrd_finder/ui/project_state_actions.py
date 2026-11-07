@@ -1,4 +1,5 @@
 from __future__ import annotations
+from xrd_finder.services.source_registry import is_structure_source
 
 from copy import deepcopy
 from pathlib import Path
@@ -33,7 +34,7 @@ class PhaseFinderProjectStateActionsMixin:
                 continue
             source = str(candidate.get("Source", "") or candidate.get("Qual.", "")).strip().upper()
             entry = str(candidate.get("Entry", "")).strip()
-            if source not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"} or not entry:
+            if not is_structure_source(source) or not entry:
                 continue
             candidate_key = self._candidate_key(candidate)
             if candidate_key in candidate_paths:

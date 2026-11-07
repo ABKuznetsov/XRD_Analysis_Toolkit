@@ -43,7 +43,7 @@ def capture_observed_search(window) -> ObservedSearchCapture | None:
         id(window.project), id(pattern), pattern.id, str(pattern.source_path),
         window._processed_probability_signature(observed),
         getattr(window, '_scoring_source', 'Auto'), bool(removed),
-        bool(window.normalize_observed_patterns),
+        False,
         tuple(tuple(bounds) for bounds in getattr(pattern, 'crop_ranges', ())),
         float(wavelength), bool(doublet),
         profile.calculation_key() if profile is not None else None, float(zero),
@@ -62,7 +62,7 @@ def observed_search_watch_key(window):
     pattern = window._active_pattern()
     return (
         id(window.project), id(pattern), getattr(pattern, 'source_path', None),
-        getattr(window, '_scoring_source', 'Auto'), bool(window.normalize_observed_patterns),
+        getattr(window, '_scoring_source', 'Auto'), False,
         id(getattr(pattern, 'processed_points', None)),
         len(getattr(pattern, 'processed_points', ())),
         getattr(pattern, 'processed_background_removed', False),

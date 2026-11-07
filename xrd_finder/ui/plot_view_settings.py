@@ -115,6 +115,7 @@ class PlotViewSettings:
     layer_peak_labels_visible: bool = False
     layer_unknown_peaks_visible: bool = False
     observed_color: str = "#202124"
+    all_observed_black: bool = False
     calculated_color: str = "#0b8043"
     background_color: str = "#9aa0a6"
     reference_color: str = "#1a73e8"
@@ -154,7 +155,7 @@ class NoWheelDoubleSpinBox(QDoubleSpinBox):
 def plot_style_from_view_settings(settings: PlotViewSettings) -> PlotStyle:
     marker_symbol = _MARKER_SYMBOLS.get(settings.marker_shape, "o")
     return PlotStyle(
-        observed=PlotLineStyle(width=settings.observed_width, color=settings.observed_color),
+        observed=PlotLineStyle(width=settings.observed_width, color="#000000" if settings.all_observed_black else settings.observed_color),
         calculated=PlotLineStyle(width=settings.calculated_width, color=settings.calculated_color),
         phase=PlotLineStyle(width=max(settings.phase_profile_width, 0.2)),
         background=PlotLineStyle(width=max(settings.background_width, 0.2), color=settings.background_color),
@@ -676,6 +677,7 @@ class PlotViewSettingsWidget(QScrollArea):
         layout.setSpacing(2)
         self.observed_color_input = QLineEdit("#202124")
         self.observed_color_input.textChanged.connect(self._emit_settings)
+        self._all_observed_black = False
         self.observed_draw_mode_combo = QComboBox()
         self.observed_draw_mode_combo.addItems(["Line", "Scatter", "Line + scatter"])
         self.observed_draw_mode_combo.currentTextChanged.connect(self._emit_settings)
@@ -941,6 +943,7 @@ class PlotViewSettingsWidget(QScrollArea):
             layer_peak_labels_visible=bool(self.layer_peak_labels_checkbox.isChecked()),
             layer_unknown_peaks_visible=bool(self.layer_unknown_peaks_checkbox.isChecked()),
             observed_color=self.observed_color_input.text().strip() or "#202124",
+            all_observed_black=self._all_observed_black,
             calculated_color=self.calculated_color_input.text().strip() or "#0b8043",
             background_color=self.background_color_input.text().strip() or "#9aa0a6",
             reference_color=self.reference_color_input.text().strip() or "#1a73e8",
@@ -1089,6 +1092,7 @@ class PlotViewSettingsWidget(QScrollArea):
         self.layer_peak_labels_checkbox.setChecked(settings.layer_peak_labels_visible)
         self.layer_unknown_peaks_checkbox.setChecked(settings.layer_unknown_peaks_visible)
         self.observed_color_input.setText(settings.observed_color)
+        self._all_observed_black = settings.all_observed_black
         self.observed_draw_mode_combo.setCurrentText(settings.observed_draw_mode if settings.observed_draw_mode in {"Line", "Scatter", "Line + scatter"} else "Line")
         self.calculated_color_input.setText(settings.calculated_color)
         self.background_color_input.setText(settings.background_color)

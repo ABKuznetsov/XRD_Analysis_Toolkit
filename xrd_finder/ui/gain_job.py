@@ -89,7 +89,7 @@ def capture_gain_job(window) -> tuple[tuple, GainJobInput]:
         observed_cache_scope=(
             id(window.project), getattr(pattern, "id", None),
             str(getattr(pattern, "source_path", "")),
-            bool(getattr(window, "normalize_observed_patterns", False)),
+            False,  # Display-only normalization; retain the cache-key slot.
             getattr(pattern, "processed_label", ""),
             bool(getattr(pattern, "processed_background_removed", False)),
             tuple(tuple(bounds) for bounds in getattr(pattern, "crop_ranges", ())),
@@ -170,7 +170,7 @@ def gain_job_watch_key(window) -> tuple:
         tuple(sorted(window.match_cell_scales.items())),
         tuple(sorted(window.element_states.items())), tuple(window.selected_element_order),
         getattr(window, "_scoring_source", "Auto"),
-        bool(getattr(window, "normalize_observed_patterns", False)),
+        False,  # Display-only normalization; retain the cache-key slot.
         getattr(window, "_last_match_profile_fwhm", 0.),
         getattr(window, "_last_match_profile_eta", 0.),
         bool(getattr(window, "_gain_overlap_locked", False)),

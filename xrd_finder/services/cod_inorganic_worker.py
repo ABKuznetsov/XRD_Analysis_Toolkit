@@ -140,9 +140,12 @@ def prepare_paths(cache_root, paths, *, workers=None, ready=None, cancelled=lamb
 def _assign(slot, source):
     job = source.take()
     if job is not None:
-        identifier,path = job
+        identifier,path = job[:2]
+        options = job[2] if len(job) > 2 else {}
         slot['current'] = identifier
-        slot['process'].stdin.write((json.dumps(dict(id=identifier,path=str(path),source=slot['source']))+'\n').encode())
+        request = dict(options, id=identifier, path=str(path))
+        request.setdefault('source',slot['source'])
+        slot['process'].stdin.write((json.dumps(request)+'\n').encode())
         slot['process'].stdin.flush()
     elif source.finished() and not slot['process'].stdin.closed:
         slot['process'].stdin.close()
@@ -154,7 +157,11 @@ def main(cache_root):
     for line in sys.stdin:
         request = json.loads(line)
         try:
-            success = cache.index_cif(request['path'],source=request.get('source','COD'),entry_id=request['id'])
+            from xrd_finder.services.cod_online_service import CodEntry
+            fallback = CodEntry(**request['fallback']) if request.get('fallback') else None
+            success = cache.index_cif(request['path'],source=request.get('source','COD'),
+                entry_id=request.get('entry_id',request['id']), fallback=fallback,
+                reference_range=tuple(request['reference_range']) if request.get('reference_range') else None)
             error = '' if success else getattr(cache,'_last_reference_preparation_error','CIF preparation failed')
         except Exception as exc:
             success,error = False,str(exc)

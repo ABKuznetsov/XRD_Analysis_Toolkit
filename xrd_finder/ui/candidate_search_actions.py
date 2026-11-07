@@ -282,6 +282,7 @@ class PhaseFinderCandidateSearchActionsMixin:
     def _initialize_candidate_batch_updates(self) -> None:
         self._candidate_batch_updates = CandidateBatchUpdateController(
             row_loader=self._load_prepared_candidate_row,
+            rows_loader=self._load_prepared_candidate_rows,
             rows_ready=self._merge_prepared_candidate_rows,
             status_callback=self.background_status_changed.emit,
             title_callback=self.candidate_list_label.setText,
@@ -315,9 +316,7 @@ class PhaseFinderCandidateSearchActionsMixin:
         if row >= 0:
             candidate = self.candidate_table.row_values(row)
             changed = self._apply_cached_iic(candidate, entry) or changed
-            item = self.candidate_table.item(row, self.candidate_table.columnCount() - 1)
-            if item is not None:
-                item.setText(candidate.get("I/Ic*", ""))
+            self.candidate_table.set_iic(row, candidate.get("I/Ic*", ""))
         collections = [self.match_candidates]
         collections.extend(state.get("candidates", []) for state in self.profile_states.values())
         for candidates in collections:
@@ -388,11 +387,12 @@ class PhaseFinderCandidateSearchActionsMixin:
             controller.set_notice("Online database unavailable; local data shown")
 
     def _load_prepared_candidate_row(self, source: str, entry_id: str) -> list[str] | None:
-        entry = self.local_phase_cache.get(source, entry_id)
-        if entry is None:
-            return None
-        rows = self.candidate_search_service.cache_rows([entry])
+        rows = self._load_prepared_candidate_rows(((source, entry_id),))
         return rows[0] if rows else None
+
+    def _load_prepared_candidate_rows(self, keys) -> list[list[str]]:
+        entries = self.local_phase_cache.candidate_summaries(keys)
+        return self.candidate_search_service.cache_rows(entries[key] for key in keys if key in entries)
 
     def _merge_prepared_candidate_rows(self, prepared_rows: list[list[str]]) -> None:
         if getattr(self, "_search_mode", "search") == "peaks":
@@ -409,21 +409,40 @@ class PhaseFinderCandidateSearchActionsMixin:
                 return
             self._candidate_gain_refresh_after_preparation = True
             if not self._candidate_preparation_is_busy():
-                self._candidate_gain_refresh_after_preparation = False
-                self._schedule_candidate_gain_ranking()
+                self._defer_candidate_gain_after_preparation()
             return
 
         self.candidate_table.upsert_rows(rows, normalize_candidate_row)
         self._apply_candidate_element_filter()
         if self._rank_by_peak_probability_enabled():
-            from xrd_finder.ui.candidate_match_job import CandidateMatchQueue
-            queue = getattr(self, '_loaded_match_queue', None)
-            if queue is None:
-                queue = self._loaded_match_queue = CandidateMatchQueue(self)
-            all_rows = self.candidate_table.ranking_row_values()
-            queue.request(self._candidate_state_rows(all_rows))
+            self._schedule_prepared_candidate_match()
+
+    def _schedule_prepared_candidate_match(self):
+        """One latest table snapshot per burst, not one rank per display chunk."""
+        timer = getattr(self, '_prepared_candidate_match_timer', None)
+        if timer is None:
+            timer = self._prepared_candidate_match_timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(180)
+            timer.timeout.connect(self._rank_prepared_candidates)
+        if not timer.isActive():
+            timer.start()
+
+    def _rank_prepared_candidates(self):
+        if (getattr(self, '_preparation_close_confirmed', False) or self.match_candidates
+                or getattr(self, '_search_mode', 'search') == 'peaks'
+                or not self._rank_by_peak_probability_enabled()):
+            return
+        from xrd_finder.ui.candidate_match_job import CandidateMatchQueue
+        queue = getattr(self, '_loaded_match_queue', None)
+        if queue is None:
+            queue = self._loaded_match_queue = CandidateMatchQueue(self)
+        queue.request(self._candidate_state_rows(self.candidate_table.ranking_row_values()))
 
     def _stop_candidate_batch_updates(self) -> None:
+        timer = getattr(self, '_prepared_candidate_match_timer', None)
+        if timer is not None:
+            timer.stop()
         controller = getattr(self, "_candidate_batch_updates", None)
         if controller is not None:
             controller.stop()
@@ -432,12 +451,11 @@ class PhaseFinderCandidateSearchActionsMixin:
         controller = getattr(self, "_candidate_batch_updates", None)
         if controller is None:
             return
-        count = sum(
-            1
-            for row in rows
-            if len(row) > 1 and str(row[0]).strip() and str(row[1]).strip()
-        )
-        controller.set_local_rows(count)
+        normalized = [normalize_candidate_row(row) for row in rows]
+        keys = {tuple(row[:2]) for row in normalized
+                if len(row) > 1 and str(row[0]).strip() and str(row[1]).strip()}
+        states = self.local_phase_cache.preparation_states(keys)
+        controller.set_candidate_rows(normalized, prepared_keys={key for key, state in states.items() if state.ready})
 
     def _finalize_candidate_search(self, search_token: int, *, error: str = "") -> None:
         controller = getattr(self, "_candidate_batch_updates", None)
@@ -447,6 +465,14 @@ class PhaseFinderCandidateSearchActionsMixin:
     def _auto_search_candidates(self) -> None:
         if self._active_pattern() is None:
             self.finder_top_toolbar.set_search_mode(self._search_mode)
+            QMessageBox.information(self, 'Identify phases', 'Import or select an XRD pattern first.')
+            return
+        from xrd_finder.ui.auto_search_setup import run_auto_search
+        run_auto_search(self)
+
+    def _open_auto_search_settings(self) -> None:
+        if self._active_pattern() is None:
+            self.finder_top_toolbar.auto_search_settings_button.setChecked(False)
             QMessageBox.information(self, 'Identify phases', 'Import or select an XRD pattern first.')
             return
         from xrd_finder.ui.auto_search_setup import show_auto_search_setup
@@ -849,6 +875,7 @@ class PhaseFinderCandidateSearchActionsMixin:
         )
 
     def _candidate_search_options(self, *, include_observed_peaks: bool = True) -> CandidateSearchOptions:
+        from xrd_finder.services.library_connections import load_connections
         allow_inorganic = self.inorganics_checkbox.isChecked()
         allow_organic = self.organics_checkbox.isChecked()
 
@@ -873,6 +900,8 @@ class PhaseFinderCandidateSearchActionsMixin:
             observed_peak_positions=self._candidate_search_peak_positions() if include_observed_peaks else [],
             wavelength=float(self._instrument_profile_for_pattern(
                 self._active_pattern()).radiation.components[0].wavelength_angstrom),
+            custom_connections=load_connections(self.settings),
+            allow_organic=allow_organic,allow_inorganic=allow_inorganic,
             restrict_to_selected_elements=False,
         )
 
@@ -902,11 +931,25 @@ class PhaseFinderCandidateSearchActionsMixin:
         )
 
     def _local_cache_sources(self) -> list[str]:
+        from xrd_finder.services.library_connections import load_connections
+        from xrd_finder.services.source_registry import saved_custom_sources
+        if not self._structural_data_enabled():
+            return []
         sources = []
         if self._source_enabled("sources/user_library", True):
             sources.extend(["USER", "CCDC", "COD"])
         if self._source_enabled("sources/cod_local", True):
             sources.append("COD")
+        if self._source_enabled("sources/core_mof", False):
+            sources.append("COREMOF")
+        connections = load_connections(self.settings)
+        sources.extend(c.source for c in connections if c.enabled)
+        # Portable libraries retain usable cards even without the original API
+        # connection or its private credentials on the destination computer.
+        cache = getattr(self, 'local_phase_cache', None)
+        if cache is not None:
+            configured = {c.source for c in connections}
+            sources.extend(s for s in saved_custom_sources(cache) if s not in configured)
         if self._structural_data_enabled() and bool(self.settings.value("materials_project/enabled", False, type=bool)):
             sources.append("MP")
         if self._structural_data_enabled() and self._source_enabled("sources/aflow", False):

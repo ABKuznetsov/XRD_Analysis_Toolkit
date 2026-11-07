@@ -15,7 +15,7 @@ OVERVIEW={
  'instrument.saved':('Instrument settings manages reusable radiation, geometry, detector and resolution profiles through Profiles…. Apply a chosen profile in Processing → Instrument and radiation to the current pattern, its series or all project patterns.','instrument-button'),
  'instrument.calibration':('Resolution offers constant FWHM/TCH and Calibrate from standard using an XRD and CIF. It assumes negligible sample broadening of the coarse-grained standard.','instrument-button'),
  'instrument.lebail':('Optional Le Bail improves accepted profiles within 3 cycles/2 seconds. It is not a full refinement; applied results do not provide structural Quant.','auto-button'),
- 'auto-search.setup':('Identify phases opens setup; the next click runs Match. Review available references and optional instrument/Le Bail improvements before running.','auto-button'),
+ 'auto-search.setup':('Identify phases starts Match immediately; its down arrow opens search settings. Review available references and optional instrument/Le Bail improvements before running.','auto-button'),
  'phases.candidates':('Candidates are possible database cards. One click previews a card; double-click accepts a supported phase for the active sample.','candidates'),
  'phases.overlay':('Right-click candidates for Add to working set, Calculate pattern overlay or Export CIF. A preview/overlay is different from an accepted phase.','candidates'),
  'phases.edit':('Right-click Selected phases to recalculate, rename, recolour, export or remove a phase, or clear the working set. This does not delete the source database.','selected'),

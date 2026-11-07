@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from PySide6.QtGui import QPalette
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication, QWidget
 
 
@@ -24,10 +24,10 @@ def theme_colors(dark: bool = False, widget: QWidget | None = None) -> dict[str,
     if widget is not None:
         dark = is_dark_theme(widget)
     if dark:
-        return dict(bg='#070f20', panel='#0c1930', alt='#12223c', text='#e6edf7',
-                    muted='#a0b1cb', border='#2b4263', selected='#173e38', input='#081428',
-                    header='#152947', hover='#1b3152', link='#6cdac1', accent='#087f69',
-                    cell_border='#3a5378', attention_text='#ff8791', **SEMANTIC_COLORS)
+        return dict(bg='#02040b', panel='#030813', alt='#060f20', text='#e6edf7',
+                    muted='#a0b1cb', border='#223551', selected='#173e38', input='#02060f',
+                    header='#060f20', hover='#060f20', link='#6cdac1', accent='#087f69',
+                    cell_border='#30496b', attention_text='#ff8791', **SEMANTIC_COLORS)
     return dict(bg='#f5f8ff', panel='#ffffff', alt='#f0f5ff', text='#263752',
                 muted='#60718c', border='#d4deef', selected='#e0f2ed', input='#ffffff',
                 header='#eaf0fb', hover='#e6eefb', link='#087f69', accent='#087f69',
@@ -43,6 +43,10 @@ def _hex_to_rgb(color: str) -> tuple[int, int, int]:
     return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
 
 
+def colored_hover_background(color: str) -> str:
+    return QColor(color).darker(120).name()
+
+
 def glass_button_style(
     background: str,
     border: str,
@@ -54,7 +58,7 @@ def glass_button_style(
     # Keep the legacy helper signature for callers; all commands now use a
     # restrained flat treatment, without glossy gradients or a shifting label.
     red, green, blue = _hex_to_rgb(background)
-    hover = f'rgb({min(red+12,255)},{min(green+12,255)},{min(blue+12,255)})'
+    hover = colored_hover_background(background)
     pressed = f'rgb({max(red-10,0)},{max(green-10,0)},{max(blue-10,0)})'
     return (
         "QPushButton {"
@@ -96,6 +100,8 @@ def search_mode_button_style(selector: str, *, checked: bool = False) -> str:
     return ''.join(
         f'{selector}[searchMode="{mode}"]{suffix} {{ background: {background}; '
         f'color: {foreground}; border-color: {border}; font-weight: 600; }}'
+        f'{selector}[searchMode="{mode}"]{suffix}:hover:enabled {{ background: {colored_hover_background(background)}; '
+        f'color: {foreground}; border-color: {border}; }}'
         for mode, (background, border, foreground) in SEARCH_MODE_COLORS.items()
     )
 
@@ -111,6 +117,8 @@ def window_style(dark: bool = False) -> str:
         QWidget#databaseSettingsBody, QWidget#instrumentProfileBody,
         QWidget#instrumentProfileEditor, QWidget#instrumentProfilePage {{ background: {c['panel']}; }}
         QLabel {{ background: transparent; }}
+        QFrame[databaseCard="true"] {{ background: {c['panel']};
+            border: 1px solid {c['cell_border']}; border-radius: 8px; }}
         QLabel[uiRole="sectionTitle"] {{ color: {c['text']}; font-weight: 600; padding: 4px 0; }}
         QLabel[uiRole="muted"], QLabel#processingPlaceholder {{ color: {c['muted']}; }}
         QLabel[uiRole="attention"] {{ color: {c['attention_text']}; font-weight: 600; }}
@@ -126,11 +134,14 @@ def window_style(dark: bool = False) -> str:
             border-bottom: 2px solid transparent; padding: 9px 12px; margin-right: 2px; }}
         QTabBar::tab:selected {{ background: {c['panel']}; color: {c['text']};
             border-bottom: 2px solid #22aa8b; font-weight: 600; }}
-        QTabBar::tab:hover:!selected {{ background: {c['hover']}; color: {c['text']}; }}
+        QTabBar::tab:hover:!selected {{ background: {c['hover']}; color: {c['text']}; border-bottom-color: {FINDER_BRAND_BLUE}; }}
         QToolButton#editLayoutButton:checked {{ background: #a62e45; color: #ffffff; border: 1px solid #d05b70; }}
+        QToolButton#editLayoutButton:checked:hover {{ background: {colored_hover_background('#a62e45')}; }}
         QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateTimeEdit {{ background: {c['input']}; color: {c['text']};
             border: 1px solid {c['border']}; border-radius: 6px; min-height: 24px; padding: 3px 8px; selection-background-color: {c['selected']}; }}
         QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateTimeEdit:focus {{ border-color: #22aa8b; }}
+        QLineEdit:hover:enabled, QComboBox:hover:enabled, QSpinBox:hover:enabled,
+        QDoubleSpinBox:hover:enabled, QDateTimeEdit:hover:enabled {{ background: {c['hover']}; border-color: {FINDER_BRAND_BLUE}; }}
         QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QDateTimeEdit:disabled {{ color: {c['muted']}; background: {c['bg']}; }}
         QComboBox {{ padding-right: 23px; }}
         QComboBox::drop-down {{ width: 21px; border: 0; }}
@@ -154,12 +165,16 @@ def window_style(dark: bool = False) -> str:
         QComboBox QAbstractItemView {{ background: {c['panel']}; color: {c['text']}; selection-background-color: {c['selected']}; }}
         QPushButton, QToolButton {{ background: {c['alt']}; color: {c['text']}; border: 1px solid {c['border']};
             border-radius: 6px; padding: 6px 10px; font-weight: 500; }}
-        QPushButton:hover, QToolButton:hover {{ background: {c['hover']}; border-color: #22aa8b; }}
         QPushButton:pressed, QToolButton:pressed {{ background: {c['selected']}; }}
         QPushButton:focus, QToolButton:focus {{ border-color: #22aa8b; }}
+        QPushButton:hover:enabled, QToolButton:hover:enabled {{ background: {c['hover']}; border-color: {FINDER_BRAND_BLUE}; }}
         QPushButton:disabled, QToolButton:disabled {{ color: {c['muted']}; background: {c['bg']}; }}
+        QToolButton[plotToggle="true"]:checked {{ background: {c['selected']}; border-color: {FINDER_BRAND_BLUE}; }}
+        QToolButton[plotToggle="true"]:checked:hover:enabled {{ background: {colored_hover_background(c['selected'])}; border-color: {FINDER_BRAND_BLUE}; }}
         QPushButton[uiRole="primary"] {{ background: #087f69; color: #ffffff; border-color: #119b7f; font-weight: 600; }}
-        QPushButton[uiRole="primary"]:hover {{ background: #09967b; }}
+        QPushButton[uiRole="primary"]:hover:enabled {{ background: {colored_hover_background('#087f69')}; border-color: #119b7f; color: #ffffff; }}
+        QPushButton[uiRole="danger"] {{ background: #a62e45; color: #ffffff; border-color: #d05b70; font-weight: 600; }}
+        QPushButton[uiRole="danger"]:hover:enabled {{ background: {colored_hover_background('#a62e45')}; border-color: #d05b70; color: #ffffff; }}
         QCheckBox {{ spacing: 6px; padding: 2px 0; }}
         QCheckBox::indicator, QTreeView::indicator {{ width: 14px; height: 14px; border: 1px solid {c['muted']};
             border-radius: 4px; background: {c['input']}; }}
@@ -167,7 +182,7 @@ def window_style(dark: bool = False) -> str:
             border-color: #119b7f; image: url("{tick}"); }}
         QCheckBox::indicator:indeterminate, QTreeView::indicator:indeterminate {{ background: #087f69;
             border-color: #119b7f; image: url("{partial}"); }}
-        QCheckBox::indicator:hover {{ border-color: #22aa8b; }}
+        QCheckBox::indicator:hover {{ border-color: {FINDER_BRAND_BLUE}; }}
         QCheckBox:disabled {{ color: {c['muted']}; }}
         QTreeWidget, QTableView, QTableWidget, QTextEdit, QPlainTextEdit {{ background: {c['panel']}; alternate-background-color: {c['alt']};
             color: {c['text']}; border: 1px solid {c['border']}; border-radius: 7px;
@@ -204,8 +219,8 @@ def settings_panel_style(dark: bool = False) -> str:
         QScrollArea#plotViewSettings, QWidget#processingBody, QWidget#plotViewSettingsBody {{ background: {c['panel']}; border: 0; }}
         QWidget#viewSection, QWidget#axisCard {{ background: {c['panel']}; border: 1px solid {c['border']}; border-radius: 8px; }}
         QToolButton#viewSectionHeader, QToolButton#axisCardTitle {{ background: {c['alt']}; color: {c['text']};
-            border: 0; border-radius: 7px; padding: 9px 10px; font-weight: 600; text-align: left; }}
-        QToolButton#viewSectionHeader:hover, QToolButton#axisCardTitle:hover {{ background: {c['hover']}; }}
+            border: 1px solid transparent; border-radius: 7px; padding: 8px 9px; font-weight: 600; text-align: left; }}
+        QToolButton#viewSectionHeader:hover:enabled, QToolButton#axisCardTitle:hover:enabled {{ background: {c['hover']}; border-color: {FINDER_BRAND_BLUE}; }}
         QWidget#viewSectionContent {{ background: transparent; }}
         QLabel#activeProfileLabel {{ background: {c['input']}; border: 1px solid {c['border']};
             border-radius: 6px; padding: 8px; font-weight: 600; }}

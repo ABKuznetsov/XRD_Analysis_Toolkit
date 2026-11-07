@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.7.1 - 2026-11-07
+
+- Keep legacy CIF public IDs on folder/ZIP reimport and carry persistent import origins through prepared-library transfer and storage optimization. Refuse ambiguous legacy matches instead of duplicating or replacing project-linked cards.
+- Start Identify phases with one click; open optional settings using the arrow within the same button. Refine search uses current filters; the red Finish auto search stops automatic work while retaining candidates and selected phases.
+- Identify arbitrary CIFs by their own relative path so adding/removing neighbouring files never reassigns an ID; bound extracted filenames and retain last-record handling for identical numeric COD IDs. Previously stored IDs are kept without automatic renaming.
+- Refuse individual Quant fractions for ill-conditioned phase profiles and recheck saved Quant without discarding saved curves or peak assignments.
+- Evaluate matched-filter convolutions only inside each width segment and its full kernel halo, preserving boundary and radiation-component behavior.
+- Display prepared cards in batches of up to 100 every 50 ms and coalesce their Match/Gain refresh requests.
+- Reuse a loaded card for its diffraction table instead of loading all reflections twice.
+- Cache finite trace arrays and legend baselines during plot navigation, using indexed intervals for sorted traces.
+- Rank SQL peak shortlists by distinct observed-peak evidence rather than raw counts of coincident reflections.
+- Limit XPFF manifest/member/total unpacked sizes and extract members atomically.
+- Include the built-in example XPFF in Python wheels; remove the overlay width estimator's Qt dependency.
+- Read raw angular bounds before accepted-profile preparation, avoiding automatic background fitting on the GUI thread.
+- Add informative source labels, configurable local/online library connections, organic/MOF libraries and database descriptions.
+- Batch CIF preparation and improve COD/Materials Project loading, I/Ic reuse and native startup.
+- Improve macOS fullscreen/project opening, dark-theme contrast and multi-pattern marker display controls.
+
 ## 1.7.0 - 2026-11-06
 
 - Reuse prepared reference libraries with compact SQLite storage and portable library archives.

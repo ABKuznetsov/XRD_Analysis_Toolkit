@@ -1,4 +1,5 @@
 """Capture on Qt, parse/refine on a worker, apply only to the same scan."""
+from xrd_finder.services.source_registry import is_structure_source
 import hashlib
 import json
 from dataclasses import asdict
@@ -28,7 +29,7 @@ def acceptance_key(window, inputs, path):
 @native_cif_session
 def prepare_acceptance(inputs, candidate, path, evidence):
     _phase, structure = create_phase_from_cif(path)
-    if inputs.cache_root and candidate.get('Source') in {'COD','MP','USER','CCDC','OQMD','AFLOW'}:
+    if inputs.cache_root and is_structure_source(candidate.get('Source')):
         from xrd_finder.services.local_phase_cache import LocalPhaseCache
         from xrd_finder.services.reference_preparation import reference_scan_range
         low,high = reference_scan_range(inputs.observed) or (5.,120.)

@@ -61,3 +61,13 @@ Users may import their own CIF files, local phase libraries and locally availabl
 ## General Note
 
 The presence of a database connector or import workflow in XRD Phase Finder does not imply endorsement by the external database project. Users should cite the original data sources in scientific work whenever database-derived structures, reference patterns or metadata are used.
+## Optional organic/framework libraries
+
+Finder provides explicit download/import controls; these datasets are not bundled in the installer.
+
+- **CoRE MOF SI 2024**, Zenodo record [15055758](https://zenodo.org/records/15055758), archive `CoREMOF2024DB_SI_20250204.zip`. Only the authors' computation-ready `SI/CR` ASR/FSR/Ion subset is imported. Source and processing provenance remain visible; the result is a CIF-calculated pattern, not measured powder data.
+- **CURATED COFs v1.0.0**, Daniele Ongari and collaborators, [Zenodo 3352138](https://zenodo.org/records/3352138), [repository](https://github.com/danieleongari/CURATED-COFs/tree/v1.0.0). Original deposited archive, MD5 `210e2c708625eab49b91ac68814288b5`, contains 324 literature-derived COF CIFs. Retain attribution and consult the original papers and authors' geometry caveats. Finder does not execute repository scripts or redistribute the archive in the installer.
+- **QMOF v18**, Andrew S. Rosen and collaborators, [Figshare](https://doi.org/10.6084/m9.figshare.13147324.v18). CC BY 4.0. Cite Rosen et al., *Matter* 4, 1578–1597 (2021), DOI [10.1016/j.matt.2021.02.015](https://doi.org/10.1016/j.matt.2021.02.015), and Rosen et al., *npj Computational Materials* 8 (2022), DOI [10.1038/s41524-022-00796-6](https://doi.org/10.1038/s41524-022-00796-6). Finder uses only relaxed CIFs and labels their DFT origin; no measured powder provenance is implied. The original archive is downloaded on request or imported locally. No bundled conversion scripts are executed.
+- **Organic COD search** uses the existing COD connector and original COD identities, not a separate copy of COD. [COD](https://www.crystallography.net/cod/) dedicates its data to CC0; retain original structure-author attribution.
+- **OMDB-GAP1 v1.1**, [official dataset page](https://omdb.mathub.io/dataset), DOI [10.1002/qute.201900023](https://doi.org/10.1002/qute.201900023). The official download currently requires personal website login. Finder opens the original page and can import a user-provided CIF collection through local connections; it does not bypass authentication or claim an unauthenticated OMDB API.
+

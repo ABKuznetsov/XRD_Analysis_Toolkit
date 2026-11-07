@@ -58,6 +58,7 @@ def source_states(settings: QSettings, match_pdf2: MatchPdf2Like) -> dict[str, b
     return {
         "sources/user_library": bool(settings.value("sources/user_library", True, type=bool)),
         "sources/cod_local": bool(settings.value("sources/cod_local", True, type=bool)),
+        "sources/core_mof": bool(settings.value("sources/core_mof", False, type=bool)),
         "sources/cod_online": bool(settings.value("sources/cod_online", True, type=bool)),
         "sources/rruff": bool(settings.value("sources/rruff", False, type=bool)),
         "sources/match_pdf2": bool(settings.value("sources/match_pdf2", match_pdf2.is_configured(), type=bool)),
@@ -91,6 +92,14 @@ def database_rows(
             str(local_cache_root),
         ],
         database_summary_row(rruff_row),
+        ["CoRE MOF SI", "Available", "Download 2,664 computation-ready MOF CIFs (44 MB archive)",
+         "https://zenodo.org/records/15055758"],
+        ["CURATED COFs", "Not downloaded", "Covalent organic frameworks · CIF collection",
+         "https://zenodo.org/records/3352138"],
+        ["QMOF", "Not downloaded", "Quantum MOF database · DFT-relaxed CIF structures",
+         "https://figshare.com/articles/dataset/QMOF_Database/13147324/18"],
+        ["OMDB", "CIF import", "Organic Materials Database · download on website, then import CIFs",
+         "https://omdb.mathub.io/dataset"],
         match_pdf2_row,
         [
             "CCDC / CSD",

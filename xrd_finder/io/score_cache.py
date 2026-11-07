@@ -85,7 +85,7 @@ def score_signature(window,kind,rows):
     context=dict(format=1,engine=_engine_identity(),kind=kind,rows=row_keys,
         signal=_array(observed),background=_array(w._pattern_finder_background_data(pattern)),
         removed=w._pattern_scoring_background_removed(pattern),scoring=getattr(w,'_scoring_source','Auto'),
-        normalized=bool(getattr(w,'normalize_observed_patterns',False)),
+        normalized=False,  # Display-only; retain the persisted signature shape.
         instrument=w._instrument_profile_for_pattern(pattern).calculation_key(),
         sources=sorted(w._local_cache_sources()),library=w.local_phase_cache.reference_revision(w._local_cache_sources()),
         derived=DERIVED_CACHE_VERSION,required=list(w.selected_element_order),

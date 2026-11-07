@@ -30,6 +30,7 @@ from xrd_finder.services.cache_json import pack_json, unpack_json, peak_prefix
 from xrd_finder.services.cache_storage import storage_policy, storage_version, compact_indexes, COMPACT_STORAGE_VERSION, CURRENT_STORAGE_VERSION
 from xrd_finder.services.normalized_reflections import normalized_reflections, normalize_reflections, range_join, ordered_card_query, indexed_card_count
 from xrd_finder.services.sql_reflection_storage import is_sql_peaks, pack_sql_peaks, unpack_sql_peaks, SqlPeakTextCache
+from xrd_finder.services.reference_labels import ReferenceLabelStore, ensure_label_schema, mp_reference_labels, cif_reference_labels
 
 
 DEFAULT_CACHE_ROOT = default_phase_cache_root()
@@ -38,7 +39,7 @@ DERIVED_CACHE_VERSION = 12
 # completeness contract from the local CIF before consuming the cached lines.
 REINDEXABLE_CACHE_VERSIONS = (9, 10, 11)
 INCOMPLETE_SEARCH_MAX_AGE_SECONDS = 30 * 60
-TRANSFERABLE_LIBRARY_SOURCES = frozenset({"USER", "COD", "MP"})
+TRANSFERABLE_LIBRARY_SOURCES = frozenset({"USER", "COD", "MP", "COREMOF"})
 GEOMETRIC_FINGERPRINT_VERSION = 1
 GEOMETRIC_FINGERPRINT_PEAK_LIMIT = 10
 
@@ -279,6 +280,7 @@ class LocalPhaseCache:
                 )
 
     def upsert_materials_project_entries(self, entries) -> None:
+        entries=list(entries)
         with closing(self._connect()) as connection, connection:
             for entry in entries:
                 self._upsert(
@@ -293,6 +295,10 @@ class LocalPhaseCache:
                     ),
                     keep_cif=True,
                 )
+
+            ReferenceLabelStore.save_on_connection(connection,{
+                ('MP',entry.material_id):mp_reference_labels({'theoretical':getattr(entry,'theoretical',None),
+                    'database_IDs':getattr(entry,'database_ids',{})}) for entry in entries})
 
     def upsert_computational_entries(self, entries) -> None:
         with closing(self._connect()) as connection, connection:
@@ -536,20 +542,9 @@ class LocalPhaseCache:
                                min(best_delta) as best_delta
                         from observed_matches
                         group by phase_id
-                    ),
-                    reflection_matches as (
-                        select phase_id, peak_index, max(intensity) as intensity
-                        from matched_lines
-                        group by phase_id, peak_index
-                    ),
-                    reflection_evidence as (
-                        select phase_id, count(*) as peak_hits, sum(intensity) as matched_intensity
-                        from reflection_matches
-                        group by phase_id
                     )
                     select {self._search_columns(summary_only, 'p.', connection=connection)}
                     from observed_evidence o
-                    join reflection_evidence r on r.phase_id = o.phase_id
                     join phases p on p.rowid = o.phase_id
                     order by strong_anchor_hits desc,
                              anchor_intensity_support desc,
@@ -557,8 +552,6 @@ class LocalPhaseCache:
                              weighted_intensity_support desc,
                              weighted_observed_hits desc,
                              observed_hits desc,
-                             peak_hits desc,
-                             matched_intensity desc,
                              best_delta asc,
                              p.updated_at desc,p.source,p.entry_id
                     limit ?
@@ -932,10 +925,22 @@ class LocalPhaseCache:
     def iic_entries(
         self, keys: Iterable[tuple[str, str]],
     ) -> dict[tuple[str, str], CachedPhaseEntry]:
+        return {(row['source'], row['entry_id']): CachedPhaseEntry(**row)
+                for row in self._candidate_metadata_rows(keys,
+                    ('source', 'entry_id', 'cif_path', 'iic', 'iic_method', 'derived_version'))}
+
+    def candidate_summaries(
+        self, keys: Iterable[tuple[str, str]],
+    ) -> dict[tuple[str, str], CachedPhaseSummary]:
+        """Read table metadata in batches, never atoms or primary reflections."""
+        return {(row['source'], row['entry_id']): CachedPhaseSummary(**row)
+                for row in self._candidate_metadata_rows(keys, tuple(CachedPhaseSummary.__dataclass_fields__))}
+
+    def _candidate_metadata_rows(self, keys, columns):
         requested = list(dict.fromkeys(keys))
         if not requested:
-            return {}
-        entries = {}
+            return []
+        entries = []
         with closing(self._connect()) as connection:
             # Two parameters per key; support older SQLite's 999-variable limit.
             for offset in range(0, len(requested), 450):
@@ -944,15 +949,13 @@ class LocalPhaseCache:
                 rows = connection.execute(
                     f"""
                     with requested(source, entry_id) as (values {values})
-                    select p.source, p.entry_id, p.iic, p.iic_method, p.derived_version
+                    select {', '.join('p.' + column for column in columns)}
                     from requested r
                     join phases p on p.source=r.source and p.entry_id=r.entry_id
                     """,
                     [value for key in batch for value in key],
                 ).fetchall()
-                for row in rows:
-                    entry = CachedPhaseEntry(**dict(row))
-                    entries[(entry.source, entry.entry_id)] = entry
+                entries.extend(dict(row) for row in rows)
         return entries
 
     def preparation_states(
@@ -1034,8 +1037,8 @@ class LocalPhaseCache:
         return [self._row_to_entry(row) for row in rows]
 
     def diffraction_rows(self, source: str, entry_id: str, limit: int = 60, *,
-                         wavelength=None, instrument_profile=None) -> list[list[str]]:
-        entry = self.get(source, entry_id)
+                         wavelength=None, instrument_profile=None, entry=None) -> list[list[str]]:
+        entry = self.get(source, entry_id) if entry is None else entry
         if entry is None or not entry.peaks_json:
             return []
         try:
@@ -1060,42 +1063,9 @@ class LocalPhaseCache:
             ])
         return rows
 
-    def build_index(self, progress=None) -> int:
-        indexed_keys: set[tuple[str, str]] = set()
-        successful = 0
-        with closing(self._connect()) as connection, connection:
-            cached_rows = connection.execute(
-                "select source, entry_id, cif_path from phases where cif_path != '' order by source, entry_id"
-            ).fetchall()
-        existing_rows = [
-            row
-            for row in cached_rows
-            if Path(str(row["cif_path"] or "")).is_file()
-        ]
-        total = len(existing_rows)
-        for position, row in enumerate(existing_rows, start=1):
-            cif_path = Path(str(row["cif_path"] or ""))
-            source = str(row["source"] or "").upper()
-            entry_id = str(row["entry_id"] or "")
-            if progress is not None:
-                progress(f"Recalculating {source} {entry_id} with CrIStMa", position, total)
-            successful += bool(self.index_cif(cif_path, source=source, entry_id=entry_id))
-            indexed_keys.add((source, entry_id))
-
-        for cif_path in self.cif_dir.glob("*.cif"):
-            key = ("COD", cif_path.stem)
-            if key in indexed_keys:
-                continue
-            successful += bool(self.index_cif(cif_path, source=key[0], entry_id=key[1]))
-            indexed_keys.add(key)
-        user_dir = self.root / "user_cif"
-        for cif_path in user_dir.glob("*.cif") if user_dir.exists() else []:
-            key = ("USER", cif_path.stem)
-            if key in indexed_keys:
-                continue
-            successful += bool(self.index_cif(cif_path, source=key[0], entry_id=key[1]))
-            indexed_keys.add(key)
-        return successful
+    def build_index(self, progress=None, *, force=False, cancelled=lambda: False) -> int:
+        from xrd_finder.services.candidate_cif_preparation import prepare_saved_cifs
+        return prepare_saved_cifs(self, progress=progress, force=force, cancelled=cancelled)
 
     def clear_user_library(self) -> None:
         self._clear_sources(["USER"])
@@ -1315,7 +1285,7 @@ class LocalPhaseCache:
             top_peaks_json = self._top_peaks_to_json(peaks)
             # A legacy fallback can still supply search peaks, but never RIR.
             # Both sides of the intensity ratio must use the native engine.
-            existing = self.get(source, entry_id)
+            existing = self.iic_entries(((source, entry_id),)).get((source, entry_id))
             try:
                 previous_iic = json.loads(existing.iic_method) if existing is not None else {}
             except (ValueError, TypeError):
@@ -1331,6 +1301,7 @@ class LocalPhaseCache:
             if hashlib.sha256(cif_path.read_bytes()).hexdigest() != source_hash:
                 raise ValueError('CIF changed during reference preparation')
             derived_version = DERIVED_CACHE_VERSION
+            labels=cif_reference_labels(cif_path,warning=composition_warning) if source.upper()!='MP' else {}
         except Exception as exc:
             self._last_reference_preparation_error = f'{type(exc).__name__}: {exc}'
             if exc.__cause__ is not None:
@@ -1361,7 +1332,10 @@ class LocalPhaseCache:
             derived_version=derived_version,
         )
         with closing(self._connect()) as connection, connection:
-            return self._upsert(connection, entry, keep_cif=False, insert_only=if_absent)
+            saved=self._upsert(connection, entry, keep_cif=False, insert_only=if_absent)
+            if saved and labels:
+                ReferenceLabelStore.save_on_connection(connection,{(source,entry_id):labels})
+            return saved
 
     @staticmethod
     def _requested_d_range(wavelength, two_theta_min=5., two_theta_max=120.):
@@ -1407,7 +1381,7 @@ class LocalPhaseCache:
     def _calculation_support(self, source, entry_id, requested):
         low, high = self._requested_d_range(CU_KA1_WAVELENGTH)
         wavelength = CU_KA1_WAVELENGTH
-        old = self._stored_reference_support(self.get(source, entry_id))
+        old = self._stored_reference_support(self._reference_support_entry(source, entry_id))
         if old and old.get('kind') != 'measured':
             low, high = min(low, old['d_min']), max(high, old['d_max'])
             wavelength = min(wavelength, old['wavelength'])
@@ -1659,7 +1633,7 @@ class LocalPhaseCache:
         path=Path(path)
         try:fingerprint=hashlib.sha256(path.read_bytes()).hexdigest()
         except OSError:fingerprint=None
-        existing=self.get(source,entry_id)
+        existing=self.iic_entries(((source,entry_id),)).get((source,entry_id))
         try:record=json.loads(existing.iic_method) if existing else {}
         except (ValueError,TypeError):record={}
         if (existing is not None and str(path)==existing.cif_path
@@ -1676,7 +1650,7 @@ class LocalPhaseCache:
                 "update phases set iic=?, iic_method=? where source=? and entry_id=? and cif_path=?",
                 (value, method, source, entry_id, str(path)),
             )
-        return self.get(source, entry_id)
+        return self.iic_entries(((source,entry_id),)).get((source,entry_id))
 
     def outdated_iic_entries(self, keys=None) -> list[CachedPhaseEntry]:
         if keys is not None:
@@ -1795,6 +1769,9 @@ class LocalPhaseCache:
 
     def _ensure_schema(self) -> None:
         with closing(self._connect()) as connection, connection:
+            from xrd_finder.services.cif_import_identity import ensure_origin_schema
+            ensure_origin_schema(connection)
+            ensure_label_schema(connection)
             connection.execute("""create table if not exists reference_preparation_failures (
                 source text not null, entry_id text not null, signature text not null,
                 reason text not null, updated_at real not null,
@@ -1965,6 +1942,10 @@ class LocalPhaseCache:
             if self.storage_version >= CURRENT_STORAGE_VERSION:
                 normalize_reflections(connection)
 
+    @property
+    def reference_label_store(self):
+        return ReferenceLabelStore(self.index_path)
+
     def _connect(self) -> sqlite3.Connection:
         if getattr(self, "_read_only", False):
             connection = sqlite3.connect(
@@ -1988,6 +1969,8 @@ class LocalPhaseCache:
             connection.execute(f"delete from phase_peaks where source in ({placeholders})", sources)
             connection.execute(f"delete from phase_fingerprints where source in ({placeholders})", sources)
             connection.execute(f"delete from phase_fingerprint_state where source in ({placeholders})", sources)
+            connection.execute(f"delete from phase_reference_labels where source in ({placeholders})", sources)
+            connection.execute(f"delete from local_cif_origins where source in ({placeholders})", sources)
             connection.execute(f"delete from search_cache where source in ({placeholders})", sources)
         self._remove_cache_dirs([f"embedded_cif/{_embedded_source_dir_name(source)}" for source in sources])
 

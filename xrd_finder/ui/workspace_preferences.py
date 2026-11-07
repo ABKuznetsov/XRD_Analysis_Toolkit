@@ -18,6 +18,10 @@ DEFAULT_TABLE_PROPORTIONS = {
         .15126050420168066, .13445378151260504),
 }
 
+# Reserve a compact column for source labels; retain previous column ratios.
+_candidate_weights = DEFAULT_TABLE_PROPORTIONS['candidates']
+DEFAULT_TABLE_PROPORTIONS['candidates'] = tuple(v/sum(_candidate_weights)*.94 for v in _candidate_weights)+(.06,)
+
 
 def normalized_proportions(values, count):
     if not isinstance(values, (list, tuple)) or len(values) != count or count < 1:

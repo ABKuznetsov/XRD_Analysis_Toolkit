@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class CandidateBatchStatus:
+    found: int | None = None
     local: int = 0
     queued: int = 0
     downloading: int = 0
@@ -19,9 +20,10 @@ class CandidateBatchStatus:
 
 
 def candidate_batch_status_text(status: CandidateBatchStatus) -> str:
+    found = f"found {status.found}" if status.found is not None else f"local {status.local}"
     return (
         "Candidates: "
-        f"local {status.local}, queued {status.queued}, "
+        f"{found}, queued {status.queued}, "
         f"downloading {status.downloading}, indexing {status.indexing}, "
         f"ready {status.ready}, ranking {status.ranking}, "
         f"pending display {status.pending_display}, added {status.displayed}, "
@@ -30,9 +32,9 @@ def candidate_batch_status_text(status: CandidateBatchStatus) -> str:
 
 
 def candidate_batch_detail_text(status: CandidateBatchStatus) -> str:
-    found = status.local + status.displayed
+    found = status.found if status.found is not None else status.local + status.displayed
     loading = status.queued + status.downloading + status.indexing + status.pending_display + status.ranking
-    ready = max(status.ready, status.displayed)
+    ready = status.ready if status.found is not None else max(status.ready, status.displayed)
     parts = [f"Found {found}", f"Loading {loading}", f"Ready {ready}"]
     if status.failed:
         parts.append(f"Failed {status.failed}")
@@ -53,7 +55,7 @@ def candidate_batch_title_text(
         + status.pending_display
         + status.ranking
     )
-    loaded = status.local + status.displayed
+    loaded = status.found if status.found is not None else status.local + status.displayed
     suffix = f" ({status.notice})" if status.notice else ""
     if searching:
         if not loaded:

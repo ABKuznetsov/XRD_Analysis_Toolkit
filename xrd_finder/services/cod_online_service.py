@@ -86,6 +86,14 @@ class CodOnlineService:
     def cif_url(self, cod_id: str) -> str:
         return f"{self._active_base_url}/{cod_id}.cif"
 
+    @cached_property
+    def _http_session(self):
+        from xrd_finder.services.database_http_session import DatabaseHttpSession
+        return DatabaseHttpSession(self._ssl_context)
+
+    def warm_up(self):
+        self._request_bytes('/result?id=1000000&format=count', timeout=3., max_bytes=4096, quiet=True)
+
     def download_cif(self, cod_id: str, target_dir: str | Path, timeout: float = 20.0) -> Path:
         from xrd_finder.services.cod_cif_store import atomic_save_cif, lock_cifs
         target = Path(target_dir)
@@ -97,6 +105,12 @@ class CodOnlineService:
             data = self._request_bytes(f"/{cod_id}.cif", timeout=timeout)
             return atomic_save_cif(output_path, data)
 
+    def download_cifs(self, entry_ids, target_dir: str | Path, *, progress=None,
+                      cancelled=lambda: False, batch_size=100):
+        from xrd_finder.services.cod_bulk import download_cod_cifs
+        return download_cod_cifs(self, entry_ids, target_dir, progress=progress,
+                                 cancelled=cancelled, batch_size=batch_size)
+
     def _search(self, params: dict[str, str], limit: int, timeout: float) -> list[CodEntry]:
         payload = self._request_bytes(
             f"/result?{urlencode(params)}",
@@ -107,7 +121,7 @@ class CodOnlineService:
             raw_entries = raw_entries.get("entries", [])
         return [self._to_entry(item) for item in raw_entries[:limit]]
 
-    def _request_bytes(self, path: str, *, timeout: float) -> bytes:
+    def _request_bytes(self, path: str, *, timeout: float, max_bytes=None, cancelled=None, quiet=False) -> bytes:
         ensure_online_allowed("COD online")
         bases = [self._active_base_url]
         bases.extend(base for base in COD_BASE_URLS if base not in bases)
@@ -119,11 +133,25 @@ class CodOnlineService:
                 headers={"User-Agent": COD_USER_AGENT, "Accept": "application/json, */*"},
             )
             try:
-                with urlopen(request, timeout=timeout, context=self._ssl_context) as response:
-                    payload = response.read()
+                with self._http_session.open(request, timeout=timeout) as response:
+                    if max_bytes is None:
+                        payload = response.read()
+                    else:
+                        from concurrent.futures import CancelledError
+                        payload = bytearray()
+                        while True:
+                            if cancelled is not None and cancelled():
+                                raise CancelledError('COD download cancelled')
+                            chunk = response.read(min(256 * 1024, max_bytes + 1 - len(payload)))
+                            if not chunk:
+                                break
+                            payload.extend(chunk)
+                            if len(payload) > max_bytes:
+                                raise ValueError('COD response exceeds the download limit')
+                        payload = bytes(payload)
             except (URLError, TimeoutError, ssl.SSLError, OSError) as exc:
                 last_error = exc
-                if index + 1 < len(bases):
+                if not quiet and index + 1 < len(bases):
                     next_host = bases[index + 1].split("//", 1)[-1].split("/", 1)[0]
                     if base_url == COD_BASE_URLS[0]:
                         self._emit_status(
@@ -133,17 +161,18 @@ class CodOnlineService:
                         self._emit_status(f"COD: {next_host} unavailable; trying another server...")
                 continue
 
-            if base_url != COD_BASE_URLS[0] and self._active_base_url != base_url:
+            if not quiet and base_url != COD_BASE_URLS[0] and self._active_base_url != base_url:
                 mirror_host = base_url.split("//", 1)[-1].split("/", 1)[0]
                 self._emit_status(f"COD: connected through mirror {mirror_host}")
             self._active_base_url = base_url
             return payload
 
         if last_error is not None:
-            self._emit_status(
-                "Online database connection is unavailable for COD. Local data is shown. "
-                "Check VPN or proxy settings if online databases should be reachable."
-            )
+            if not quiet:
+                self._emit_status(
+                    "Online database connection is unavailable for COD. Local data is shown. "
+                    "Check VPN or proxy settings if online databases should be reachable."
+                )
             raise last_error
         raise RuntimeError("No COD servers are configured.")
 

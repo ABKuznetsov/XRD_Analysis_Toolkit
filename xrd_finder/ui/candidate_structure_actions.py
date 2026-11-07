@@ -1,4 +1,5 @@
 from __future__ import annotations
+from xrd_finder.services.source_registry import is_structure_source
 
 from pathlib import Path
 
@@ -24,7 +25,7 @@ class PhaseFinderCandidateStructureActionsMixin:
     def _candidate_rows(self) -> list[dict[str, str]]:
         rows = []
         for candidate in self.candidate_table.all_row_values():
-            if candidate.get("Entry") and self._candidate_source(candidate) in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"}:
+            if candidate.get("Entry") and is_structure_source(self._candidate_source(candidate)):
                 rows.append(candidate)
         return rows
 
@@ -40,7 +41,7 @@ class PhaseFinderCandidateStructureActionsMixin:
         if self._candidate_source(candidate) == "PDF2" and candidate.get("Entry"):
             self._preview_pdf2_reference(candidate, show_errors=False, preview_token=preview_token)
             return
-        if self._candidate_source(candidate) not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"} or not candidate.get("Entry"):
+        if not is_structure_source(self._candidate_source(candidate)) or not candidate.get("Entry"):
             return
         self._with_candidate_cif_ready(
             candidate,
@@ -64,7 +65,8 @@ class PhaseFinderCandidateStructureActionsMixin:
         embedded_path = self._candidate_embedded_cif_path(candidate)
         if embedded_path is not None:
             return embedded_path
-        if source in {"USER", "CCDC"} and entry_id:
+        from xrd_finder.services.source_registry import is_custom_source
+        if (source in {"USER", "CCDC", "COREMOF"} or is_custom_source(source)) and entry_id:
             cached_path = self.local_phase_cache.cif_path(source, entry_id)
             if cached_path is not None:
                 return cached_path
@@ -72,7 +74,15 @@ class PhaseFinderCandidateStructureActionsMixin:
                 project_path = self._candidate_local_cif_path(candidate)
                 if project_path is not None:
                     return project_path
-            raise ValueError("CIF is not in the user phase library. Save or import it first.")
+            if is_custom_source(source):
+                client = getattr(self.candidate_search_service, 'custom_sources', {}).get(source)
+                if client is not None:
+                    self._require_candidate_network_allowed(source, entry_id)
+                    cif_path = client.download_cif(entry_id, self.local_phase_cache.root/(source.lower()+'_cif'))
+                    if not self.local_phase_cache.index_cif(cif_path, source=source, entry_id=entry_id):
+                        raise ValueError('The downloaded CIF could not be prepared as a crystal structure.')
+                    return cif_path
+            raise ValueError("CIF is not in the local library. Prepare this database or search its online source first.")
         if source == "COD" and entry_id:
             cached_path = self.local_phase_cache.cif_path("COD", entry_id)
             if cached_path is not None:
@@ -107,7 +117,7 @@ class PhaseFinderCandidateStructureActionsMixin:
             cif_path = self.oqmd.download_cif(entry_id, target_dir, url_hint=candidate.get("Notes", ""), formula_hint=candidate.get("Formula", ""))
             self.local_phase_cache.index_cif(cif_path, source="OQMD", entry_id=entry_id)
             return cif_path
-        raise ValueError("Select a saved COD, CCDC, USER, Materials Project, AFLOW, or OQMD row with an entry id.")
+        raise ValueError("Select a CIF structure card with a database entry ID.")
 
     def _require_candidate_network_allowed(self, source: str, entry_id: str) -> None:
         if getattr(self, "_suppress_candidate_network", False):
@@ -128,7 +138,7 @@ class PhaseFinderCandidateStructureActionsMixin:
         entry_id = candidate.get("Entry", "")
         if source == "USER":
             return self._candidate_local_cif_path(candidate) is not None
-        if source not in {"COD", "MP", "CCDC", "AFLOW", "OQMD"} or not entry_id:
+        if not is_structure_source(source) or not entry_id:
             return False
         entry = self.local_phase_cache.get(source, entry_id)
         return bool(
@@ -187,7 +197,7 @@ class PhaseFinderCandidateStructureActionsMixin:
     ) -> None:
         source = self._candidate_source(candidate)
         entry_id = candidate.get("Entry", "")
-        if source not in {"COD", "MP", "CCDC", "AFLOW", "OQMD"} or not entry_id:
+        if not is_structure_source(source) or not entry_id:
             return
         path = Path(cif_path) if cif_path is not None else self.local_phase_cache.cif_path(source, entry_id)
         if path is None or not path.is_file():
@@ -296,7 +306,7 @@ class PhaseFinderCandidateStructureActionsMixin:
         if source == "USER":
             QMessageBox.information(self, "Download CIF", "This CIF is already in the user phase library.")
             return
-        if source not in {"COD", "MP", "CCDC", "AFLOW", "OQMD"} or not candidate.get("Entry"):
+        if not is_structure_source(source) or not candidate.get("Entry"):
             QMessageBox.information(self, "Download CIF", "Only CIF-backed online rows can be saved to the user phase library.")
             return
         saved_id = candidate.get("Entry", "")
@@ -339,7 +349,7 @@ class PhaseFinderCandidateStructureActionsMixin:
     def _candidate_has_structure(self, candidate: dict[str, str] | None) -> bool:
         if not candidate:
             return False
-        return self._candidate_source(candidate) in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"} and bool(candidate.get("Entry"))
+        return is_structure_source(self._candidate_source(candidate)) and bool(candidate.get("Entry"))
 
     def _add_candidate_to_project(self, candidate: dict[str, str]):
         cif_path = self._candidate_cif_path(candidate)

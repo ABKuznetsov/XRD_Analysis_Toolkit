@@ -4,7 +4,7 @@ from PySide6.QtCore import QEvent, QSize, Signal, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLayout, QMenu, QSizePolicy, QToolButton, QWidget
 
-from xrd_finder.ui.theme import is_dark_theme, theme_colors, search_mode_button_style, SEARCH_MODE_COLORS, FINDER_BRAND_BLUE
+from xrd_finder.ui.theme import is_dark_theme, theme_colors, search_mode_button_style, SEARCH_MODE_COLORS, FINDER_BRAND_BLUE, colored_hover_background
 from xrd_finder.ui.toolbar_icons import toolbar_icon
 
 
@@ -14,6 +14,7 @@ class FinderTopToolBar(QWidget):
     saveProjectRequested = Signal()
     importRequested = Signal()
     autoSearchRequested = Signal()
+    autoSearchSettingsRequested = Signal()
     peakSearchRequested = Signal()
     resetDataRequested = Signal()
     resetViewRequested = Signal()
@@ -42,6 +43,18 @@ class FinderTopToolBar(QWidget):
             'Identify phases', 'search', 'Identify candidate phases from the active XRD pattern; scores are not probabilities', self.autoSearchRequested)
         self.auto_search_button.setProperty('searchMode', 'auto')
         self.auto_search_button.setCheckable(True)
+        self.auto_search_button.setObjectName('identifyPhasesButton')
+        self.auto_search_settings_button = self._button(
+            '', '', 'Search settings: local library, instrument profile and Le Bail', self.autoSearchSettingsRequested)
+        self.auto_search_settings_button.setObjectName('identifyPhasesSettings')
+        self.auto_search_settings_button.setAccessibleName('Identify phases settings')
+        self.auto_search_settings_button.setArrowType(Qt.ArrowType.DownArrow)
+        self.auto_search_settings_button.setCheckable(True)
+        self.auto_search_control = QFrame(self)
+        self.auto_search_control.setObjectName('autoSearchControl')
+        split = QHBoxLayout(self.auto_search_control)
+        split.setContentsMargins(0,0,0,0);split.setSpacing(0)
+        split.addWidget(self.auto_search_button);split.addWidget(self.auto_search_settings_button)
         self.peak_search_button = self._button(
             'Peak search', 'peaks', 'Select peaks on the active pattern: left-click to mark, right-click to remove. '
             'Then run Peak search in the element panel.', self.peakSearchRequested)
@@ -60,7 +73,7 @@ class FinderTopToolBar(QWidget):
 
         self._groups = [
             self._group(layout, [self.new_button, self.open_button, self.save_button, self.import_button]),
-            self._group(layout, [self.auto_search_button, self.peak_search_button, self.reset_data_button, self.reset_view_button]),
+            self._group(layout, [self.auto_search_control, self.peak_search_button, self.reset_data_button, self.reset_view_button]),
         ]
         layout.addStretch(1)
         self._groups.append(self._group(layout, [self.database_button, self.view_button, self.instrument_button]))
@@ -76,7 +89,7 @@ class FinderTopToolBar(QWidget):
                           self.database_button, self.instrument_button]
         self._overflow_actions: dict[QToolButton, QAction] = {}
         for button in self._buttons:
-            if button in (self.auto_search_button, self.more_button):
+            if button in (self.auto_search_button, self.auto_search_settings_button, self.more_button):
                 continue
             action = menu.addAction(button.text())
             action.triggered.connect(lambda _checked=False, source=button: source.click())
@@ -221,15 +234,24 @@ class FinderTopToolBar(QWidget):
                 f'QFrame#toolbarGroup {{ background: {group}; border: 1px solid {FINDER_BRAND_BLUE}; border-radius: 8px; }}'
                 f'QWidget#finderTopToolBar QToolButton {{ background: transparent; color: {text}; '
                 'border: 1px solid transparent; border-radius: 6px; padding: 4px 9px; font-weight: 500; }'
-                f'QWidget#finderTopToolBar QToolButton:hover {{ background: {hover}; }}'
                 f'QWidget#finderTopToolBar QToolButton:pressed {{ background: {hover}; border-color: #21b99a; }}'
-                'QWidget#finderTopToolBar QToolButton:checked { background: #176b5b; color: #ffffff; border-color: #37b89c; }'
                 'QWidget#finderTopToolBar QToolButton:focus { border-color: #21b99a; }'
+                f'QWidget#finderTopToolBar QToolButton:hover {{ background: {hover}; border-color: {FINDER_BRAND_BLUE}; }}'
+                'QWidget#finderTopToolBar QToolButton:checked { background: #176b5b; color: #ffffff; border-color: #37b89c; }'
+                f'QWidget#finderTopToolBar QToolButton:checked:hover {{ background: {colored_hover_background("#176b5b")}; }}'
                 'QWidget#finderTopToolBar QToolButton#editLayoutButton:checked { background: #a62e45; color: #ffffff; border-color: #d05b70; }'
+                f'QWidget#finderTopToolBar QToolButton#editLayoutButton:checked:hover {{ background: {colored_hover_background("#a62e45")}; }}'
                 'QWidget#finderTopToolBar QToolButton#contextHelpButton:checked { background: #7c3aed; color: #ffffff; border-color: #a78bfa; }'
+                f'QWidget#finderTopToolBar QToolButton#contextHelpButton:checked:hover {{ background: {colored_hover_background("#7c3aed")}; }}'
                 f'QWidget#finderTopToolBar QToolButton:disabled {{ background: transparent; color: {muted}; border-color: transparent; }}'
                 'QWidget#finderTopToolBar QToolButton::menu-indicator { image: none; width: 0px; }'
                 + search_mode_button_style('QWidget#finderTopToolBar QToolButton', checked=True)
+                + f'QFrame#autoSearchControl {{ border:1px solid {border}; border-radius:6px; background:transparent; }}'
+                + f'QFrame#autoSearchControl[active=true] {{ background:{SEARCH_MODE_COLORS["auto"][0]}; border-color:{SEARCH_MODE_COLORS["auto"][1]}; }}'
+                + 'QWidget#finderTopToolBar QToolButton#identifyPhasesButton { border:0; border-radius:5px; }'
+                + f'QWidget#finderTopToolBar QToolButton#identifyPhasesSettings {{ border:0; border-left:1px solid {border}; padding:4px 5px; border-radius:0; }}'
+                + f'QFrame#autoSearchControl[active=true] QToolButton#identifyPhasesSettings {{ background:transparent; color:{SEARCH_MODE_COLORS["auto"][2]}; }}'
+                + f'QFrame#autoSearchControl[active=true] QToolButton#identifyPhasesSettings:hover {{ background:{colored_hover_background(SEARCH_MODE_COLORS["auto"][0])}; }}'
             )
             self.more_button.menu().setStyleSheet(
                 f'QMenu {{ background: {group}; color: {text}; border: 1px solid {border}; padding: 5px; }}'
@@ -241,7 +263,8 @@ class FinderTopToolBar(QWidget):
                 mode = button.property('searchMode')
                 color = SEARCH_MODE_COLORS[mode][2] if mode in SEARCH_MODE_COLORS and button.isChecked() else text
                 if button.objectName()=='contextHelpButton' and button.isChecked():color='#ffffff'
-                button.setIcon(toolbar_icon(button.property('toolbarIcon'), color, muted))
+                if button.property('toolbarIcon'):
+                    button.setIcon(toolbar_icon(button.property('toolbarIcon'), color, muted))
             self._sync_overflow_actions()
         finally:
             self._restyling = False
@@ -250,6 +273,9 @@ class FinderTopToolBar(QWidget):
         self.auto_search_button.setEnabled(not busy)
 
     def set_search_mode(self, mode: str) -> None:
+        self.auto_search_control.setProperty('active',mode=='auto')
+        self.auto_search_control.style().unpolish(self.auto_search_control)
+        self.auto_search_control.style().polish(self.auto_search_control)
         self.auto_search_button.setChecked(mode == 'auto')
         self.peak_search_button.setChecked(mode == 'peaks')
         text = '#e3eaf2' if is_dark_theme(self) else '#334155'

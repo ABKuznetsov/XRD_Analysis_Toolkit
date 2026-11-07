@@ -59,6 +59,21 @@ def mass_fractions(scales, cell_masses, cell_volumes) -> np.ndarray:
     return contributions/total if math.isfinite(total) and total>0 else np.full_like(s,np.nan)
 
 
+def normalized_profile_error(normalized):
+    """Identifiability guard shared by fresh fits and restored project results."""
+    singular_values = np.linalg.svd(normalized, compute_uv=False)
+    if (len(singular_values) < normalized.shape[1] or singular_values[-1] <=
+            singular_values[0] * max(normalized.shape) * np.finfo(float).eps):
+        return 'Selected phase profiles are linearly dependent; individual mass fractions cannot be separated'
+    condition = singular_values[0] / singular_values[-1]
+    # Full rank still allows nearly identical columns to amplify small data
+    # perturbations by orders of magnitude and produce arbitrary fractions.
+    if condition > 1.e3:
+        return (f'Selected phase profiles are nearly indistinguishable '
+                f'(condition number {condition:.3g}); individual mass fractions are unreliable')
+    return ''
+
+
 def unit_cell_volume(cell) -> float:
     def value(name):
         measured=getattr(cell,name)
@@ -223,8 +238,9 @@ def fit_accepted_phases(items, x, target, context, instrument, calculator, *,
         if not np.all(norms>0):
             return unavailable('A selected phase has no usable calculated intensity within the scan range')
         normalized=weighted/norms
-        if np.linalg.matrix_rank(normalized)<len(items):
-            return unavailable('Selected phase profiles are linearly dependent; individual mass fractions cannot be separated')
+        separation_error = normalized_profile_error(normalized)
+        if separation_error:
+            return unavailable(separation_error)
         scales,_=nnls(normalized,target*weights)
         scales=scales/norms
         fractions=mass_fractions(scales,masses,volumes)

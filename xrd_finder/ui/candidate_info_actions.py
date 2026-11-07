@@ -1,6 +1,6 @@
 from __future__ import annotations
+from xrd_finder.services.source_registry import is_structure_source
 
-import json
 import math
 import hashlib
 import json
@@ -227,7 +227,7 @@ class PhaseFinderCandidateInfoActionsMixin:
         if self._candidate_source(candidate) == "PDF2" and candidate.get("Entry"):
             self._enrich_candidate_with_pdf2_info(candidate)
             return
-        if self._candidate_source(candidate) not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"} or not candidate.get("Entry"):
+        if not is_structure_source(self._candidate_source(candidate)) or not candidate.get("Entry"):
             return
         if self._enrich_candidate_from_local_cache(candidate):
             return
@@ -275,8 +275,8 @@ class PhaseFinderCandidateInfoActionsMixin:
         )
         if not has_derived_data:
             return False
-        if entry.name:
-            candidate["Phase"] = entry.name
+        if entry.name or source == 'MP' and entry.formula:
+            candidate["Phase"] = self.candidate_search_service.phase_display_name(source, entry.formula, entry.name)
         if entry.formula:
             candidate["Formula"] = self.candidate_search_service.display_formula(entry.formula)
         if entry.spacegroup:
@@ -304,7 +304,7 @@ class PhaseFinderCandidateInfoActionsMixin:
                 atom_lines.append(f"{atom[0]} {atom[1]} ({atom[2]}, {atom[3]}, {atom[4]}{occupancy})")
             suffix = "" if len(atom_rows) <= 48 else f"\n... +{len(atom_rows) - 48} atoms"
             candidate["Atoms"] = "\n".join(atom_lines) + suffix
-        diffraction_rows = self._cached_diffraction_rows_for_candidate(candidate)
+        diffraction_rows = self._cached_diffraction_rows_for_candidate(candidate, entry=entry)
         if diffraction_rows:
             candidate["_DiffractionRows"] = diffraction_rows
         if entry.source_text and not candidate.get("Notes"):
@@ -319,7 +319,8 @@ class PhaseFinderCandidateInfoActionsMixin:
         if candidate.get("_IicProvenance") == "reference":
             return False
         if entry is None and lookup_cache:
-            entry = self.local_phase_cache.get(self._candidate_source(candidate), candidate.get("Entry", ""))
+            key = self._candidate_source(candidate), candidate.get("Entry", "")
+            entry = self.local_phase_cache.iic_entries((key,)).get(key)
         if entry is None:
             # A portable project can retain a current, traceable snapshot even
             # when its original database card is not present on this computer.
@@ -411,7 +412,7 @@ class PhaseFinderCandidateInfoActionsMixin:
         enrich_candidate_from_pdf2_details(candidate, details, peaks)
 
 
-    def _cached_diffraction_rows_for_candidate(self, candidate: dict[str, str]) -> list[list[str]]:
+    def _cached_diffraction_rows_for_candidate(self, candidate: dict[str, str], *, entry=None) -> list[list[str]]:
         if self._candidate_embedded_cif_path(candidate) is not None:
             return []
         source = self._candidate_source(candidate)
@@ -422,7 +423,7 @@ class PhaseFinderCandidateInfoActionsMixin:
             instrument = self._instrument_profile_for_pattern(self._active_pattern())
             rows = self.local_phase_cache.diffraction_rows(source, entry_id,
                 wavelength=float(instrument.radiation.components[0].wavelength_angstrom),
-                instrument_profile=instrument)
+                instrument_profile=instrument, entry=entry)
         except Exception:
             return []
         return rows

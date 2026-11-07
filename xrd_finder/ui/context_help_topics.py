@@ -81,13 +81,14 @@ def resolve_help(window,widget,global_pos=None):
             obj=getattr(owner,name,None)
             if isinstance(obj,QWidget):direct[obj]=topic
     add(bar,{'new_button':'projects.files','open_button':'projects.files','save_button':'projects.save',
-        'import_button':'projects.import','auto_search_button':'auto-search.setup','peak_search_button':'peaks.select',
+        'import_button':'projects.import','auto_search_button':'auto-search.setup','auto_search_settings_button':'auto-search.setup','peak_search_button':'peaks.select',
         'reset_data_button':'processing.reset','reset_view_button':'appearance-export.aspect',
         'database_button':'databases.sources','view_button':'appearance-export.plot','instrument_button':'instrument.saved',
         'layout_button':'appearance-export.layout','help_button':'appearance-export.planned','more_button':'appearance-export.layout'})
     add(controls,{'pattern_display_mode':'multi.all','plot_aspect_mode':'appearance-export.aspect',
         'normalize_patterns_checkbox':'multi.normalize','pattern_offset_slider':'multi.normalize',
-        'correct_zero_checkbox':'processing.zero','cursor_position_status_label':'appearance-export.plot'})
+        'correct_zero_checkbox':'processing.zero','all_observed_black_button':'appearance-export.plot',
+        'cursor_position_status_label':'appearance-export.plot'})
     add(window,{'tree':'tree.active','project_controls':'tree.series','candidate_table':'phases.candidates',
         'match_table':'phases.edit','match_plot':'appearance-export.plot','compound_card':'phases.preview',
         'background_status_label':'auto-search.status','database_panel':'databases.sources',
@@ -95,7 +96,7 @@ def resolve_help(window,widget,global_pos=None):
         'finder_action_bar':'processing.original'})
     add(window.element_table,{'mode_button':'manual-search.gate'})
     add(window.composition_panel,{'search_button':'manual-search.run','reset_button':'manual-search.elements',
-        'rank_by_probability_checkbox':'auto-search.match','inorganics_checkbox':'manual-search.run',
+        'inorganics_checkbox':'manual-search.run',
         'organics_checkbox':'manual-search.run','structural_data_checkbox':'manual-search.run',
         'reference_patterns_checkbox':'manual-search.run','ccdc_doi_input':'manual-search.formula'})
     add(getattr(window,'database_panel',None),{'materials_project_api_key_input':'databases.credentials'})
@@ -130,6 +131,24 @@ def resolve_help(window,widget,global_pos=None):
     while isinstance(current,QWidget):chain.append(current);current=current.parentWidget()
     element_buttons=window.element_table._buttons
     for target in chain:
+        if target.property('databaseHelpName'):
+            return target,HelpArticle(target.property('databaseHelpName'),
+                target.property('databaseHelpDetails'),
+                'Choose a source appropriate to your sample and check what type of reference it supplies.',
+                target.property('databaseHelpUsage'),'databases.sources')
+        if target.objectName() == 'databaseOverviewTable' and global_pos is not None:
+            index = target.indexAt(target.viewport().mapFromGlobal(global_pos))
+            if index.isValid():
+                from xrd_finder.ui.database_descriptions import database_description
+                item = target.item(index.row(), 0)
+                description = database_description(item.text()) if item is not None else None
+                if description:
+                    return target,HelpArticle(description.name, description.details,
+                        'Identify the source and reference type before interpreting its candidates.',
+                        description.usage,'databases.sources')
+                return target,_article('databases.sources',item.text() if item else None,
+                    what='A user-configured CIF database connection.',
+                    how='Use Add / manage database connections to edit or enable this collection.')
         if type(target).__name__=='PlotExportDialog':direct[target]='appearance-export.image'
         symbol=next((s for s,b in element_buttons.items() if b is target),None)
         if symbol:

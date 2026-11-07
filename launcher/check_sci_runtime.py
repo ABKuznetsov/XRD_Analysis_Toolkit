@@ -10,6 +10,7 @@ from pathlib import Path
 
 CORE_MODULES = {
     "certifi": "certifi",
+    "urllib3": "urllib3",
     "cristma": "cristma",
     "numpy": "numpy",
     "packaging": "packaging",

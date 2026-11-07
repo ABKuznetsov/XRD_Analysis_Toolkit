@@ -19,7 +19,7 @@ def context_prompt(window,step):
             return 'No elements selected. Leave others allowed until you select a known set; Exclude others now would exclude everything.'
         return 'Other elements are allowed. If your selected set is complete, click Exclude others; otherwise keep them allowed.'
     if step.id in {'auto-search.setup','library.empty'} and _visible(getattr(window,'_auto_search_setup_popup',None)):
-        return 'Search setup is already open. Review the local card count, then continue to profile settings. Press Run search only when ready.'
+        return 'Search setup is already open. Review the local card count, then continue to profile settings. Press Identify phases only when ready.'
     return short_prompt(step)
 
 
@@ -118,11 +118,11 @@ def reveal_target(window,key):
             return bar.import_button,'Import or select a measurement first; search setup needs an active XRD.'
         popup=getattr(w,'_auto_search_setup_popup',None)
         if key=='auto-setup':
-            return (popup if _visible(popup) else bar.auto_search_button),'Review setup before pressing Run search. A second toolbar click starts the search.'
+            return (popup if _visible(popup) else bar.auto_search_settings_button),'Use the down arrow for settings. The main Identify phases button starts the search.'
         from xrd_finder.ui.auto_search_setup import AutoSearchSetupPopup
         if popup is None or not isValid(popup):popup=w._auto_search_setup_popup=AutoSearchSetupPopup(w)
         if not popup.isVisible():popup.open()
-        return (popup.le_bail if key=='auto-lebail' else popup.profile_combo),'Setup only. Press Run search yourself when you are ready.'
+        return (popup.le_bail if key=='auto-lebail' else popup.profile_combo),'Setup only. Press Identify phases yourself when you are ready.'
     if key in {'processing','background','smoothing','crop'}:
         w._show_menu_panel(w.finder_action_bar)
         if key=='processing':return w.finder_action_bar,''

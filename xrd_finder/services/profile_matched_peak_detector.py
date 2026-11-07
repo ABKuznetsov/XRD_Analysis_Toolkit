@@ -130,12 +130,8 @@ def profile_matched_peak_hypotheses(
             kernel_energy = float(np.dot(matched_kernel, matched_kernel))
             if kernel_energy <= 0.0:
                 continue
-            numerator = np.convolve(signal, matched_kernel[::-1], mode="same")
-            local_energy = np.convolve(
-                signal_squared,
-                np.ones(len(kernel), dtype=float),
-                mode="same",
-            )
+            numerator = _segment_convolution(signal, matched_kernel[::-1], left, right)
+            local_energy = _segment_convolution(signal_squared, np.ones(len(kernel)), left, right)
             amplitude = numerator / kernel_energy
             profile_match = numerator / np.sqrt(
                 np.maximum(kernel_energy * local_energy, 1.0e-24)
@@ -147,9 +143,9 @@ def profile_matched_peak_hypotheses(
             # Integrated matched-filter significance rewards a broad peak only
             # when the signal follows the broad kernel across its full support.
             quality = matched_snr * np.square(match_weight)
-            quality_maps[scale_index, left:right] = quality[left:right]
-            amplitude_maps[scale_index, left:right] = amplitude[left:right]
-            match_maps[scale_index, left:right] = profile_match[left:right]
+            quality_maps[scale_index, left:right] = quality
+            amplitude_maps[scale_index, left:right] = amplitude
+            match_maps[scale_index, left:right] = profile_match
             width_maps[scale_index, left:right] = fwhm
             edge_left = max(left, half_points)
             edge_right = min(right, len(x_values) - half_points)
@@ -312,6 +308,21 @@ def profile_matched_peak_hypotheses(
     ]
     flagged.sort(key=lambda item: (-item.confidence, -item.local_snr, item.position))
     return tuple(flagged[: max(0, int(limit))])
+
+
+def _segment_convolution(signal, kernel, left, right):
+    """Same zero-padded convolution, evaluated only in the requested segment.
+
+    Keep the entire kernel halo across segment boundaries; slicing the input
+    without this halo would change detection at every width-bin boundary.
+    """
+    half = len(kernel) // 2
+    start, end = max(0, left - half), min(len(signal), right + half)
+    local = signal[start:end]
+    before, after = max(0, half - left), max(0, right + half - len(signal))
+    if before or after:
+        local = np.pad(local, (before, after))
+    return np.convolve(local, kernel, mode='valid')
 
 
 def _deduplicate_hypotheses(

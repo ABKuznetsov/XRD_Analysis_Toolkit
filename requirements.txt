@@ -1,4 +1,5 @@
 certifi
+urllib3>=2.2,<3
 cristma==0.1.0b14
 numpy
 packaging

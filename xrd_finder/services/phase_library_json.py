@@ -9,6 +9,7 @@ import tempfile
 
 from xrd_finder.services.cache_json import unpack_json
 from xrd_finder.services.sql_reflection_storage import unpack_sql_peaks
+from xrd_finder.services.source_registry import is_custom_source
 
 
 def export_phase_json(cache, path, *, sources, library_name, progress=None, cancelled=lambda:False):
@@ -83,7 +84,12 @@ def _transfer_identity(entry,index,allowed):
     if not isinstance(entry,dict):
         return None
     source = str(entry.get('source') or '').upper()
-    if source not in allowed or not str(entry.get('cif_text') or '').strip():
+    if allowed is None:
+        from xrd_finder.services.local_phase_cache import TRANSFERABLE_LIBRARY_SOURCES
+        supported = source in TRANSFERABLE_LIBRARY_SOURCES or is_custom_source(source)
+    else:
+        supported = source in allowed
+    if not supported or not str(entry.get('cif_text') or '').strip():
         return None
     entry_id = str(entry.get('entry_id') or f'user_phase_{index+1}').strip() or f'user_phase_{index+1}'
     return source,entry_id
@@ -99,8 +105,12 @@ def import_phase_json(cache,path, *, allowed_sources=None,progress=None,cancelle
     from xrd_finder.services.phase_json_reader import iter_phase_entries
 
     source_path = Path(path).resolve()
-    allowed = {str(s or '').upper() for s in (allowed_sources or TRANSFERABLE_LIBRARY_SOURCES)}
-    allowed &= set(TRANSFERABLE_LIBRARY_SOURCES)
+    allowed = ({str(s or '').upper() for s in allowed_sources}
+               if allowed_sources is not None else None)
+    # Named sources may be transferred without connection credentials. Keep
+    # explicit source restrictions (e.g. Import user library) effective.
+    if allowed is not None:
+        allowed = {s for s in allowed if s in TRANSFERABLE_LIBRARY_SOURCES or is_custom_source(s)}
     def check():
         if cancelled():
             raise CancelledError('Phase library import cancelled; committed batches retained')

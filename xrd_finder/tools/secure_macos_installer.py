@@ -224,6 +224,8 @@ def _prepare_app_bundle(
     icon_path = app_payload_dir / "icon.png"
     if icon_path.is_file():
         shutil.copy2(icon_path, resources_dir / "icon.png")
+        from xrd_finder.tools.macos_documents import write_icon
+        write_icon(icon_path, resources_dir / 'icon.icns')
 
     (contents_dir / "Info.plist").write_text(_info_plist(version), encoding="utf-8")
     launcher_path = macos_dir / "xrd-phase-finder"
@@ -273,6 +275,10 @@ SEED_ROOT="/Library/Application Support/XRD Phase Finder/SecureSeed"
 
 xattr -dr com.apple.quarantine "$APP_BUNDLE" >/dev/null 2>&1 || true
 touch "$APP_BUNDLE" >/dev/null 2>&1 || true
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [ -x "$LSREGISTER" ]; then
+    "$LSREGISTER" -f "$APP_BUNDLE" >/dev/null 2>&1 || true
+fi
 
 CONSOLE_USER="$(/usr/sbin/scutil <<<'show State:/Users/ConsoleUser' | /usr/bin/awk '/Name :/ {print $3; exit}')"
 if [ -z "$CONSOLE_USER" ] || [ "$CONSOLE_USER" = "loginwindow" ] || [ "$CONSOLE_USER" = "_mbsetupuser" ]; then
@@ -421,7 +427,9 @@ def _default_data_root() -> Path:
 
 
 def _info_plist(version: str) -> str:
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
+    import plistlib
+    from xrd_finder.tools.macos_documents import document_info
+    original = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -452,6 +460,7 @@ def _info_plist(version: str) -> str:
 </dict>
 </plist>
 """
+    return plistlib.dumps(document_info(plistlib.loads(original.encode())), sort_keys=False).decode()
 
 
 def _app_bundle_launcher() -> str:

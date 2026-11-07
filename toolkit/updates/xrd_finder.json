@@ -1,13 +1,13 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "channel": "stable",
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
-  "published_at": "2026-11-06",
+  "published_at": "2026-11-07",
   "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_Setup_v1_7_0.exe",
-  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.0",
+  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.1",
   "assets": [
     {
       "name": "XRD_Phase_Finder_Setup_v1_7_0.exe",
@@ -18,12 +18,12 @@
       "size_bytes": 5615189
     },
     {
-      "name": "XRD_Phase_Finder_macOS_1.7.0.pkg",
+      "name": "XRD_Phase_Finder_macOS_1.7.1.pkg",
       "type": "installer",
       "platform": "macos",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_macOS_1.7.0.pkg",
-      "sha256": "590c6d291325c33dd659a771a211b6f440e557f6ca37b42984f17f193bd5a807",
-      "size_bytes": 5364029
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.1/XRD_Phase_Finder_macOS_1.7.1.pkg",
+      "sha256": "87b78fad771bedb5bb7914cc9bc318a1a3230d4d20770646242e18b125d5a80c",
+      "size_bytes": 6630996
     },
     {
       "name": "XRD_Phase_Finder_1.6.9_amd64.deb",
@@ -35,24 +35,26 @@
     }
   ],
   "summary": [
-    "Reuse prepared reference libraries with compact SQLite storage and portable library archives.",
-    "Improve startup and keep initial preparation outside the main window.",
-    "Restore saved profiles and peak assignments consistently, including Le Bail results.",
-    "Preserve existing calculated I/Ic values and calculate eligible missing values despite noncritical CIF warnings.",
-    "Handle transient Windows worker-file locks without losing completed results."
+    "Preserve project-linked CIF IDs and prevent duplicate cards on legacy library reimport.",
+    "Start Identify phases with one click; use its integrated arrow for settings and Finish auto search to retain results.",
+    "Add database provenance labels, organic/MOF connections and clearer database descriptions.",
+    "Improve peak detection, batched card loading, native startup and macOS project opening.",
+    "Protect XPFF extraction and refuse unreliable Quant for indistinguishable phase profiles."
   ],
   "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_Setup_v1_7_0.exe",
   "installer_sha256": "317bb6b23b64d1faec9b4fc2377f2c85b3a7580b74b678db6a371b297e7c25ce",
   "installer_filename": "XRD_Phase_Finder_Setup_v1_7_0.exe",
   "installer_size_bytes": 5615189,
-  "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_macOS_1.7.0.pkg",
-  "macos_installer_sha256": "590c6d291325c33dd659a771a211b6f440e557f6ca37b42984f17f193bd5a807",
+  "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.1/XRD_Phase_Finder_macOS_1.7.1.pkg",
+  "macos_installer_sha256": "87b78fad771bedb5bb7914cc9bc318a1a3230d4d20770646242e18b125d5a80c",
   "platform_versions": {
     "windows": "1.7.0",
-    "macos": "1.7.0",
+    "macos": "1.7.1",
     "linux": "1.6.9"
   },
-  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.0",
+  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.1",
   "linux_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_1.6.9_amd64.deb",
-  "linux_installer_sha256": "2e602c7c099dcacdfa70335143c8ddcd33065fdb9f3eb29ace0abd8bdaada61a"
+  "linux_installer_sha256": "2e602c7c099dcacdfa70335143c8ddcd33065fdb9f3eb29ace0abd8bdaada61a",
+  "macos_installer_filename": "XRD_Phase_Finder_macOS_1.7.1.pkg",
+  "macos_installer_size_bytes": 6630996
 }

@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QApplication,QCheckBox,QDialog,QHBoxLayout,QLabel,
 from PySide6.QtSvgWidgets import QSvgWidget
 from shiboken6 import isValid
 
-from xrd_finder.ui.theme import theme_colors
+from xrd_finder.ui.theme import FINDER_BRAND_BLUE, colored_hover_background, theme_colors
 
 
 OFFER_SETTING='learning/offer_on_startup'
@@ -63,9 +63,9 @@ class LearningWelcomeDialog(QDialog):
             QCheckBox::indicator {{ width:18px; height:18px; }}
             QPushButton {{ color:{c['text']}; background:{c['alt']}; border:1px solid {c['border']};
                 border-radius:8px; font-size:15px; font-weight:600; padding:7px 14px; }}
-            QPushButton:hover {{ border-color:#22aa8b; background:{c['hover']}; }}
+            QPushButton:hover {{ border-color:{FINDER_BRAND_BLUE}; background:{c['hover']}; }}
             QPushButton#welcomePrimary {{ background:#087f69; color:white; border-color:#119b7f; }}
-            QPushButton#welcomePrimary:hover {{ background:#09967b; }}
+            QPushButton#welcomePrimary:hover {{ background:{colored_hover_background('#087f69')}; border-color:#119b7f; }}
             QPushButton#welcomeSkip {{ background:transparent; border:0; color:{c['muted']}; font-weight:400; font-size:14px; }}
         ''')
         self.overview_button.clicked.connect(lambda:self._start('overview'))

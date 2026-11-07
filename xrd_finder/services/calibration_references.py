@@ -1,13 +1,14 @@
 """Select actual calibration CIFs without borrowing the main pattern's filters."""
 from concurrent.futures import CancelledError
 from pathlib import Path
+from xrd_finder.services.source_registry import is_structure_source, is_custom_source
 
 from xrd_finder.services.candidate_rows import normalize_candidate_row
 from xrd_finder.services.network import ensure_online_allowed
 from xrd_finder.finder.composition_validation import chemical_search_key
 
 
-STRUCTURE_SOURCES = frozenset({'COD', 'USER', 'CCDC', 'MP', 'AFLOW', 'OQMD'})
+STRUCTURE_SOURCES = frozenset({'COD', 'USER', 'CCDC', 'MP', 'AFLOW', 'OQMD', 'COREMOF'})
 
 
 class CalibrationReferenceLibrary:
@@ -29,7 +30,8 @@ class CalibrationReferenceLibrary:
         progress('Searching structure databases…', 0, 0)
         # All installed structure sources are eligible; element/source filters
         # from the unrelated sample being studied must not hide its standard.
-        entries = self.cache.search(text=query, sources=sorted(STRUCTURE_SOURCES),
+        from xrd_finder.services.source_registry import saved_custom_sources
+        entries = self.cache.search(text=query, sources=sorted(STRUCTURE_SOURCES)+saved_custom_sources(self.cache),
             limit=300, summary_only=True, deduplicate=False, cancelled=cancelled)
         rows.extend(dict(Source=e.source, Entry=e.entry_id, Formula=e.formula,
                          Phase=e.name, Spacegroup=e.spacegroup) for e in entries)
@@ -38,7 +40,7 @@ class CalibrationReferenceLibrary:
                 progress=progress, partial_results=lambda _rows:None, cancelled=cancelled)
             for raw in remote:
                 row = normalize_candidate_row(raw)
-                if row[0] in STRUCTURE_SOURCES and row[1]:
+                if is_structure_source(row[0]) and row[1]:
                     rows.append(dict(zip(('Source','Entry','Formula','Phase','Spacegroup','Notes'),row[:6])))
         if cancelled(): raise CancelledError('Reference search cancelled.')
         result = []; seen = set()
@@ -52,10 +54,10 @@ class CalibrationReferenceLibrary:
         source, entry = row.get('Source',''), row.get('Entry','')
         if source == 'PROJECT':
             path = Path(row.get('_Path',''))
-        elif source in STRUCTURE_SOURCES:
+        elif is_structure_source(source):
             path = self.cache.cif_path(source, entry)
             if path is None:
-                if source not in {'COD','MP','AFLOW','OQMD'} or self.resolver is None:
+                if (source not in {'COD','MP','AFLOW','OQMD'} and not is_custom_source(source)) or self.resolver is None:
                     raise ValueError('This card has no available CIF. Import or download its structure first.')
                 ensure_online_allowed('Calibration CIF download')
                 progress(f'Loading CIF · {source} {entry}…', 0, 0)

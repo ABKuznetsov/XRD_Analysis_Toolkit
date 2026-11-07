@@ -107,6 +107,9 @@ class PreparedLibraryTransfer(QObject):
                 elif source=='MP':
                     self.owner.settings.setValue('materials_project/enabled',True)
                     if panel is not None:panel.set_materials_project_checked(True)
+                elif source=='COREMOF':
+                    self.owner.settings.setValue('sources/core_mof',True)
+                    if panel is not None:panel.set_source_checked('sources/core_mof',True)
             self.owner._refresh_database_rows()
             if json_path is not None:self.owner._refresh_user_phase_library_window()
 

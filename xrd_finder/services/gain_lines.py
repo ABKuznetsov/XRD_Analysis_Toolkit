@@ -1,4 +1,5 @@
 from __future__ import annotations
+from xrd_finder.services.source_registry import is_structure_source
 
 import hashlib
 import json
@@ -102,7 +103,7 @@ class GainLineMixin:
             return []
         source = self._candidate_source(candidate)
         entry_id = candidate.get("Entry", "")
-        if source not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"} or not entry_id:
+        if not is_structure_source(source) or not entry_id:
             return []
         entry = self.local_phase_cache.get(source, entry_id)
         if entry is None or not entry.peaks_json or entry.derived_version != DERIVED_CACHE_VERSION:
@@ -275,6 +276,6 @@ class GainLineMixin:
                     if path.exists():
                         return path
             return None
-        if source in {"COD", "CCDC", "MP", "AFLOW", "OQMD"}:
+        if is_structure_source(source):
             return self.local_phase_cache.cif_path(source, entry_id)
         return None

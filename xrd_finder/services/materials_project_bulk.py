@@ -1,24 +1,18 @@
 """Bounded MP summary downloads; existing CIF conversion and rare single-ID fallback."""
 from concurrent.futures import CancelledError
-from dataclasses import dataclass,field
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 import re,tempfile,time
 from urllib.error import HTTPError
 
 from xrd_finder.services.cod_cif_store import atomic_save_cif
+from xrd_finder.services.candidate_cif_batches import (
+    CandidateCifDownloads as MpCandidateDownloads, CifBatchDownloadResult as MpBulkDownloadResult,
+)
 
 MAX_BATCH=100
 MAX_CIF_BYTES=8*1024*1024
 STOP_CODES=(401,403,429,500,502,503,504)
-
-
-@dataclass
-class MpBulkDownloadResult:
-    paths: dict[str,Path]=field(default_factory=dict)
-    errors: dict[str,str]=field(default_factory=dict)
-    downloaded: int=0
-    reused: int=0
 
 
 def _check(cancelled):

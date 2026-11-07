@@ -1,4 +1,4 @@
-"""Compact two-click search settings anchored to Identify phases."""
+"""Optional settings for the one-click Identify phases split button."""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -66,9 +66,6 @@ class AutoSearchSetupPopup(QFrame):
         self._place_timer.setSingleShot(True)
         self._place_timer.timeout.connect(self._place)
         self._button = window.finder_top_toolbar.auto_search_button
-        self._button_text = self._button.text()
-        self._button_tooltip = self._button.toolTip()
-        self._button_minimum = self._button.minimumWidth()
         self._build()
         window._system_theme_observer.changed.connect(self._apply_style)
         self._apply_style()
@@ -162,7 +159,7 @@ class AutoSearchSetupPopup(QFrame):
         self.retry = QToolButton();self.retry.setText('Retry');self.retry.setToolTip('Retry reading the reference library')
         self.retry.clicked.connect(self._refresh_inventory);self.retry.hide()
         row.addWidget(self.retry);body.addLayout(row)
-        hint = QLabel('Click Run search again to start.')
+        hint = QLabel('Click Identify phases to start with these settings.')
         hint.setProperty('uiRole','muted');hint.setWordWrap(True);body.addWidget(hint)
         self.profile_combo.currentIndexChanged.connect(self._profile_changed)
         self.profile_enhancement.toggled.connect(self._enhancement_changed)
@@ -176,7 +173,7 @@ class AutoSearchSetupPopup(QFrame):
                 w._structural_data_enabled(),w._reference_patterns_enabled(),
                 w._match_pdf2_enabled(),w._source_enabled('sources/rruff',False))
 
-    def open(self):
+    def open(self, *, visible=True):
         self._closed=False;self._pending_start=False;self._inventory=None;self._inventory_error=False
         self.pattern_id=self.window._active_pattern().id
         self.project_id=id(self.window.project)
@@ -205,13 +202,13 @@ class AutoSearchSetupPopup(QFrame):
             self.window.settings.value('auto_search/le_bail', False, type=bool))
         self.le_bail.setChecked(bool(available and preference))
         self.le_bail.blockSignals(False)
-        self._button_minimum=self._button.minimumWidth()
-        self._button.setMinimumWidth(max(self._button.width(),self._button_minimum))
-        self._button.setText('Run search');self._button.setAccessibleName('Run search');self._button.setChecked(True)
-        self._button.setToolTip('Run search with these settings')
-        self.show();self.raise_();self._place()
-        QApplication.instance().installEventFilter(self)
+        if visible:self._reveal()
         self._refresh_inventory()
+
+    def _reveal(self):
+        self.show();self.raise_();self._place()
+        self.window.finder_top_toolbar.auto_search_settings_button.setChecked(True)
+        QApplication.instance().installEventFilter(self)
 
     def _remember_profile_choice(self):
         profile=self.profile_combo.currentData()
@@ -222,7 +219,6 @@ class AutoSearchSetupPopup(QFrame):
 
     def _profile_changed(self,*_args):
         self._pending_start=False
-        if not self._closed:self._button.setText('Run search')
         if self.profile_combo.currentData() is not None:self._remember_profile_choice()
 
     def _open_profile_settings(self):
@@ -238,13 +234,11 @@ class AutoSearchSetupPopup(QFrame):
 
     def _enhancement_changed(self,checked):
         self._pending_start=False
-        if not self._closed:self._button.setText('Run search')
         self.window.settings.setValue('auto_search/use_profile_widths',bool(checked))
         self.profile_combo.setEnabled(bool(checked))
 
     def _le_bail_changed(self, *_args):
         self._pending_start=False
-        if not self._closed:self._button.setText('Run search')
 
     def effective_profile(self):
         profile=self.profile_combo.currentData()
@@ -289,7 +283,7 @@ class AutoSearchSetupPopup(QFrame):
                 self.status.setText('Local count unavailable. Enabled reference patterns can still be searched.')
             else:
                 self._inventory_error=True;self.status.setText('Could not check references. Retry or open Manage databases.')
-            self.status.setToolTip(message or details);self.status.show();self._button.setText('Run search')
+            self.status.setToolTip(message or details);self.status.show();self._reveal()
             self._place_timer.start(0)
         w._run_background_task('Search setup','Checking available reference data…',
             lambda:search_inventory(cache,**inputs),done,failed,operation_name='search.setup.inventory')
@@ -300,12 +294,12 @@ class AutoSearchSetupPopup(QFrame):
         if pattern is None or pattern.id!=self.pattern_id or id(w.project)!=self.project_id:
             self.hide();return
         if self._inventory_filter_key!=self._filter_key():self._refresh_inventory()
-        if self._inventory_error:return
+        if self._inventory_error:self._reveal();return
         if self._inventory is None:
-            self._pending_start=True;self._button.setText('Starting…');return
+            self._pending_start=True;return
         self._pending_start=False
         available=w._structural_data_enabled() and (self._inventory.eligible_ready+self._inventory.eligible_preparation)
-        if not (available or self._external_references):self._button.setText('Run search');return
+        if not (available or self._external_references):self._reveal();return
         profile=self.effective_profile()
         if profile.calculation_key()!=w._active_instrument_profile().calculation_key():
             if not w._apply_instrument_profile(profile,selected=False,refresh=False):return
@@ -341,13 +335,19 @@ class AutoSearchSetupPopup(QFrame):
             self.setGeometry(x,y,width,height);self.raise_()
         finally:self._placing=False
 
-    def hideEvent(self,event):
+    def _close_setup(self):
         self._help_popup.hide()
         self._closed=True;self._pending_start=False;self._generation+=1;self._cancel.set();self._place_timer.stop()
         QApplication.instance().removeEventFilter(self)
-        self._button.setText(self._button_text);self._button.setAccessibleName(self._button_text)
-        self._button.setToolTip(self._button_tooltip);self._button.setMinimumWidth(self._button_minimum)
+        self.window.finder_top_toolbar.auto_search_settings_button.setChecked(False)
         self.window.finder_top_toolbar.set_search_mode(self.window._search_mode)
+
+    def hide(self):
+        if self.isVisible():super().hide()
+        else:self._close_setup()
+
+    def hideEvent(self,event):
+        self._close_setup()
         super().hideEvent(event)
 
     def eventFilter(self,watched,event):
@@ -356,7 +356,8 @@ class AutoSearchSetupPopup(QFrame):
         if QApplication.activeModalWidget() is not None:return False
         if event.type()==QEvent.Type.KeyPress and event.key()==Qt.Key.Key_Escape:self.hide();return True
         if event.type()==QEvent.Type.MouseButtonPress and isinstance(watched,QWidget):
-            in_button=self._button.rect().contains(self._button.mapFromGlobal(event.globalPosition().toPoint()))
+            control=self.window.finder_top_toolbar.auto_search_control
+            in_button=control.rect().contains(control.mapFromGlobal(event.globalPosition().toPoint()))
             if self.window.isAncestorOf(watched) and not self.isAncestorOf(watched) and watched is not self and not in_button:self.hide()
         return False
 
@@ -364,5 +365,12 @@ class AutoSearchSetupPopup(QFrame):
 def show_auto_search_setup(window):
     popup=getattr(window,'_auto_search_setup_popup',None)
     if popup is None:popup=window._auto_search_setup_popup=AutoSearchSetupPopup(window)
-    if popup.isVisible():popup.start_search()
+    if popup.isVisible():popup.hide()
     else:popup.open()
+
+
+def run_auto_search(window):
+    popup=getattr(window,'_auto_search_setup_popup',None)
+    if popup is None:popup=window._auto_search_setup_popup=AutoSearchSetupPopup(window)
+    if popup._closed:popup.open(visible=False)
+    popup.start_search()

@@ -21,9 +21,12 @@ mkdir -p "$SCI_ROOT" "$XRD_FINDER_USER_ROOT" "$SCI_LOGS"
 # A prepared runtime goes straight to Finder. No Tk window, network request,
 # scientific imports in a probe, or minimum splash-screen display time.
 if [ -x "$SCI_ENV/bin/python" ] && [ -f "$APP_ROOT/launcher/fast_start.py" ]; then
-    if /usr/bin/arch "-$SCI_ARCH" "$SCI_ENV/bin/python" "$APP_ROOT/launcher/fast_start.py" \
-        --data-root "$XRD_FINDER_USER_ROOT/data" --logs-root "$SCI_LOGS" "$@"; then
-        exit 0
+    if /usr/bin/arch "-$SCI_ARCH" "$SCI_ENV/bin/python" "$APP_ROOT/launcher/fast_start.py" --probe; then
+        NATIVE_LOGS="${XRD_FINDER_LOG_DIR:-$SCI_LOGS}"
+        mkdir -p "$NATIVE_LOGS"
+        exec /usr/bin/arch "-$SCI_ARCH" "$SCI_ENV/bin/python" "$APP_ROOT/launcher/fast_start.py" \
+            --in-process --data-root "$XRD_FINDER_USER_ROOT/data" --logs-root "$SCI_LOGS" "$@" \
+            >>"$NATIVE_LOGS/xrd_finder_console.log" 2>&1
     else
         START_STATUS=$?
     fi
@@ -78,4 +81,4 @@ if [ -f "${XRD_FINDER_DATA_DIR:-$XRD_FINDER_USER_ROOT/data}/settings/security.js
 fi
 "$APP_ROOT/launcher/setup_sci_env.command"
 exec /usr/bin/arch "-$SCI_ARCH" "$SCI_ENV/bin/python" "$APP_ROOT/launcher/fast_start.py" \
-    --data-root "$XRD_FINDER_USER_ROOT/data" --logs-root "$SCI_LOGS" "$@"
+    --in-process --data-root "$XRD_FINDER_USER_ROOT/data" --logs-root "$SCI_LOGS" "$@"

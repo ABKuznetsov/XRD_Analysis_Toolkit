@@ -1,4 +1,5 @@
 from __future__ import annotations
+from xrd_finder.services.source_registry import is_structure_source
 
 from contextlib import closing, contextmanager
 from concurrent.futures import CancelledError
@@ -278,7 +279,7 @@ def create_local_reference_peak_loader(
                 pdf2.diffraction_peaks(entry_id),
                 active_wavelength,
             ), two_theta_range)
-        if source not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD"}:
+        if not is_structure_source(source):
             return []
         columns = ('derived_version,substr(peaks_json,1,1024) as first_lines'
                    if prepared_only else 'derived_version')
@@ -331,7 +332,7 @@ def create_local_reference_peak_loader(
     connection.row_factory = sqlite3.Row
     def load_batch(rows,cancelled):
         keys = [(str(row[0] or '').strip().upper(),str(row[1] or '').strip()) for row in rows if len(row)>1]
-        keys = [key for key in keys if key[0] in {'COD','USER','MP','CCDC','AFLOW','OQMD'} and key[1]]
+        keys = [key for key in keys if is_structure_source(key[0]) and key[1]]
         requested_wavelength = (float(instrument_profile.radiation.components[0].wavelength_angstrom)
                                if instrument_profile is not None else primary_wavelength)
         low,high = cache._requested_d_range(requested_wavelength,*(two_theta_range or (5.,120.)))

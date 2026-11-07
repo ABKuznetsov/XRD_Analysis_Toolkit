@@ -82,14 +82,17 @@ def formula_html(text: str) -> str:
 class FormulaDisplayDelegate(QStyledItemDelegate):
     """Paint chemistry without replacing any QTableWidgetItem model value."""
 
+    def _display_html(self, text):
+        return formula_html(text)
+
     def initStyleOption(self, option, index):
         super().initStyleOption(option, index)
         option.text = canonical_display_formula(str(index.data() or ''))
 
     def paint(self, painter, option, index):
         raw = str(index.data() or '')
-        html = formula_html(raw)
-        if '<sub>' not in html:
+        html = self._display_html(raw)
+        if '<sub>' not in html and '<i>' not in html:
             return super().paint(painter, option, index)
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)

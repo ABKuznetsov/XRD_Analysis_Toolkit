@@ -9,6 +9,7 @@ from pathlib import Path
 import sqlite3
 
 from xrd_finder.services.local_phase_cache import LocalPhaseCache, DERIVED_CACHE_VERSION
+from xrd_finder.services.source_registry import organic_material_sql
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,8 +37,7 @@ def search_inventory(cache: LocalPhaseCache, *, sources, required_elements=(), e
             conditions.append(('not ' if negative else '') +
                 'exists(select 1 from phase_elements e where e.source=p.source and e.entry_id=p.entry_id and e.element=?)')
             params.append(element)
-    organic = ("exists(select 1 from phase_elements e where e.source=p.source and e.entry_id=p.entry_id and e.element='C') "
-               "and exists(select 1 from phase_elements e where e.source=p.source and e.entry_id=p.entry_id and e.element='H')")
+    organic = organic_material_sql()
     if not allow_inorganic and not allow_organic:
         conditions.append('0')
     elif not allow_inorganic:

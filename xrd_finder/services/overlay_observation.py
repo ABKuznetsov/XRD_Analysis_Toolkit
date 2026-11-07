@@ -4,7 +4,7 @@ import numpy as np
 
 from xrd_finder.services.preprocessing_service import estimate_background
 from xrd_finder.ui.peak_matching import observed_peak_positions
-from xrd_finder.ui.pattern_plot_helpers import estimate_profile_fwhm
+from xrd_finder.services.gain_peak_width import estimate_profile_fwhm
 
 
 class OverlayObservationCancelled(RuntimeError):

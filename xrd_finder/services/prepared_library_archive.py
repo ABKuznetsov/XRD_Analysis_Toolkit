@@ -16,9 +16,12 @@ from xrd_finder.services.cod_cif_store import atomic_save_cif, lock_cifs
 from xrd_finder.services.local_phase_cache import DERIVED_CACHE_VERSION
 from xrd_finder.services.cache_storage import COMPACT_STORAGE_VERSION, SUPPORTED_STORAGE_VERSIONS, rewrite_payloads, optimize_database_copy
 from xrd_finder.services.normalized_reflections import normalized_reflections, denormalize_reflections, validate_normalized_schema
+from xrd_finder.services.reference_labels import ensure_label_schema
+from xrd_finder.services.cif_import_identity import ensure_origin_schema, validate_origins, bind_origins
 
 PHASE_TABLES = ('phases','phase_elements','phase_peaks','phase_fingerprints',
-                'phase_fingerprint_state','phase_chemistry','reference_preparation_failures')
+                'phase_fingerprint_state','phase_chemistry','reference_preparation_failures','phase_reference_labels',
+                'local_cif_origins')
 TABLES = PHASE_TABLES+('search_cache',)
 MAX_UNPACKED_BYTES = 64*1024**3
 
@@ -70,6 +73,11 @@ def export_prepared_library(cache, path, *, progress=None, cancelled=lambda: Fal
                 denormalize_reflections(saved,cancelled=cancelled)
                 saved.execute('pragma user_version=0')
         with closing(sqlite3.connect(snapshot)) as saved:
+            with saved:
+                ensure_label_schema(saved)
+                ensure_origin_schema(saved)
+                saved.execute('delete from local_cif_origins where not exists (select 1 from phases p where p.source=local_cif_origins.source and p.entry_id=local_cif_origins.entry_id)')
+                saved.execute('delete from phase_reference_labels where not exists (select 1 from phases p where p.source=phase_reference_labels.source and p.entry_id=phase_reference_labels.entry_id)')
             rows = saved.execute('select source,entry_id,cif_path from phases').fetchall()
             paths = {Path(row[2]).resolve() for row in rows if row[2] and Path(row[2]).is_file()}
             paths.update(item.resolve() for item in cache.root.rglob('*.cif') if item.is_file())
@@ -151,7 +159,7 @@ def _validate_database(saved, destination):
         raise ValueError('The prepared SQLite library is damaged')
 
 
-def _incoming_matches(destination, *, progress, cancelled):
+def _incoming_matches(destination, *, progress, cancelled, tables=TABLES):
     """Compare affected rows in the write snapshot, without materializing a library.
 
     Count auxiliary rows as well as their values: a matching card header alone
@@ -159,9 +167,9 @@ def _incoming_matches(destination, *, progress, cancelled):
     unrelated cached queries are outside this archive's replacement scope.
     """
     missing = object()
-    for index,table in enumerate(TABLES,1):
+    for index,table in enumerate(tables,1):
         if progress:
-            progress('Checking existing prepared records',index,len(TABLES))
+            progress('Checking existing prepared records',index,len(tables))
         _check(cancelled)
         columns = destination.execute('pragma main.table_info('+table+')').fetchall()
         keys = [row[1] for row in sorted(columns,key=lambda row:row[5]) if row[5]]
@@ -233,7 +241,18 @@ def import_prepared_library(cache, path, *, progress=None, cancelled=lambda: Fal
             saved.execute('pragma trusted_schema=off')
             if saved.execute('pragma user_version').fetchone()[0] != manifest.get('storage_version',0):
                 raise ValueError('Prepared library storage version does not match its manifest')
+            # Older libraries have no optional provenance labels. Adding an
+            # empty, fixed-schema table requires no recalculation of reflections.
+            has_labels = saved.execute("select 1 from sqlite_master where type='table' and name='phase_reference_labels'").fetchone() is not None
+            # Origins are additive identity metadata. An older archive must not
+            # erase a destination's established path-to-public-ID bindings.
+            comparison_tables = tuple(t for t in TABLES if t!='local_cif_origins'
+                                      and (has_labels or t!='phase_reference_labels'))
+            with saved:
+                ensure_label_schema(saved)
+                ensure_origin_schema(saved)
             _validate_database(saved,destination)
+            validate_origins(saved)
             # Dictionary IDs belong to one database. Merge by public card keys,
             # never copy foreign numeric IDs into another laboratory's library.
             with saved:
@@ -279,9 +298,16 @@ def import_prepared_library(cache, path, *, progress=None, cancelled=lambda: Fal
                 destination.set_progress_handler(lambda:1 if cancelled() else 0,10000)
                 with destination:
                     destination.execute('begin immediate')
-                    if not _incoming_matches(destination,progress=progress,cancelled=cancelled):
+                    for source, in destination.execute('select distinct source from incoming.local_cif_origins'):
+                        _check(cancelled)
+                        bind_origins(destination,source,dict(destination.execute(
+                            'select relative_path,entry_id from incoming.local_cif_origins where source=?',(source,))),
+                            check=lambda:_check(cancelled))
+                    if not _incoming_matches(destination,progress=progress,cancelled=cancelled,tables=comparison_tables):
                         for index,table in enumerate(TABLES,1):
                             _check(cancelled)
+                            if table=='local_cif_origins':
+                                continue  # Merged above, with no public-ID reassignment.
                             if table!='phases' and table!='search_cache':
                                 destination.execute(f'delete from {table} where exists (select 1 from incoming.phases p where p.source={table}.source and p.entry_id={table}.entry_id)')
                             columns = [row[1] for row in destination.execute('pragma table_info('+table+')')]

@@ -1,10 +1,11 @@
 [project]
 name = "xrd-phase-finder"
-version = "1.7.0"
+version = "1.7.1"
 description = "Cross-platform XRD phase finder for powder diffraction search-match workflows."
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "certifi",
+    "urllib3>=2.2,<3",
     "cristma==0.1.0b14",
     "numpy",
     "packaging",
@@ -33,3 +34,4 @@ include = ["xrd_finder*"]
 [tool.setuptools.package-data]
 "xrd_finder.core" = ["corundum_reference.cif", "cod_inorganic_*.ids"]
 "xrd_finder.ui" = ["assets/*.svg"]
+"xrd_finder.examples" = ["*.xpff"]

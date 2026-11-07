@@ -65,6 +65,9 @@ def build_phase_finder_menu_bar(owner: QWidget) -> QMenuBar:
     owner.show_grid_action.setChecked(True)
     _add_owner_action(view_menu, "Autoscale", owner, "_reset_match_plot_view")
     _add_owner_action(view_menu, "Reset zoom", owner, "_reset_match_plot_view")
+    view_menu.addSeparator()
+    from xrd_finder.ui.fullscreen import FullscreenController
+    owner._fullscreen_controller = FullscreenController(owner, view_menu)
 
     instrument_menu = menu_bar.addMenu("Instrument")
     instrument_menu.addAction(

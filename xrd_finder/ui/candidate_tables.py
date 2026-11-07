@@ -8,6 +8,7 @@ from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor
 from xrd_finder.ui.theme import is_dark_theme, theme_colors
 from xrd_finder.ui.formula_display import FormulaDisplayDelegate, canonical_display_formula
+from xrd_finder.ui.space_group_display import SpaceGroupDisplayDelegate
 from xrd_finder.ui.workspace_preferences import DEFAULT_TABLE_PROPORTIONS, normalized_proportions
 from PySide6.QtWidgets import (
     QHeaderView,
@@ -83,6 +84,12 @@ class _ScoreDisplayDelegate(QStyledItemDelegate):
                 QToolTip.showText(event.globalPos(), message, view)
                 return True
         return super().helpEvent(event, view, option, index)
+
+
+class _SourceDisplayDelegate(QStyledItemDelegate):
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option,index)
+        option.text = self.parent()._source_names.get(option.text,option.text)
 
 
 class _ColumnLayoutTableWidget(QTableWidget):
@@ -281,20 +288,24 @@ class CandidateTableWidget(_ColumnLayoutTableWidget):
     rowActivated = Signal(int)
     addRequested = Signal()
     contextRequested = Signal(QPoint)
+    referenceRowsChanged = Signal()
 
     MATCH_HEADER = "Match (%)"
     GAIN_HEADER = "Gain (%)"
-    HEADERS = ["Source", "Entry", "Formula", "Phase", "Sp. gr.", MATCH_HEADER, GAIN_HEADER, "I/Ic"]
-    DISPLAY_HEADERS = ["Source", "Database ID", "Formula", "Phase name", "Sp. group", "Match score (%)", GAIN_HEADER, "I/Ic"]
+    HEADERS = ["Source", "Entry", "Formula", "Phase", "Sp. gr.", MATCH_HEADER, GAIN_HEADER, "I/Ic", "Labels"]
+    DISPLAY_HEADERS = ["Source", "Database ID", "Formula", "Phase name", "Sp. group", "Match score (%)", GAIN_HEADER, "I/Ic", "Labels"]
 
     def __init__(self, rows: list[list[str]], parent=None) -> None:
         super().__init__(0, len(self.HEADERS), parent)
+        self._reference_labels = {}
         self._gain_active = False
         self._selected_peak_scoring = False
         self._requested_gain_stage = False
         self._user_sort_column = None
         self._user_sort_order = Qt.SortOrder.AscendingOrder
         self._selected_phase_colors: dict[tuple[str, str], str] = {}
+        self._source_names = {'COREMOF':'CoRE MOF','LIB_514D4F460018':'QMOF',
+                              'LIB_434F46001000':'CURATED COFs','LIB_4F4D44420001':'OMDB CIFs'}
         self._match_failures = {}
         self._match_unavailable = set()
         self._score_context = dict(has_pattern=False, match_enabled=True, gain_enabled=False,
@@ -313,14 +324,21 @@ class CandidateTableWidget(_ColumnLayoutTableWidget):
             "Right click: add, calculate overlay, or export CIF."
         )
         self.setHorizontalHeaderLabels(self.DISPLAY_HEADERS)
+        self.horizontalHeader().moveSection(8, 2)
+        self.setItemDelegateForColumn(0, _SourceDisplayDelegate(self))
         self.setItemDelegateForColumn(1, _PhaseColorDelegate(self))
         self.setItemDelegateForColumn(2, FormulaDisplayDelegate(self))
         self.setItemDelegateForColumn(3, FormulaDisplayDelegate(self))
+        self.setItemDelegateForColumn(4, SpaceGroupDisplayDelegate(self))
         self.setItemDelegateForColumn(5, _ScoreDisplayDelegate(self))
         self.setItemDelegateForColumn(6, _ScoreDisplayDelegate(self))
-        iic_header = self.horizontalHeaderItem(len(self.HEADERS) - 1)
+        iic_header = self.horizontalHeaderItem(7)
         if iic_header is not None:
             iic_header.setToolTip("~: calculated ideal-powder I/Ic using CrIStMa, Cu K-alpha1 and a cached corundum reference. Blank: unavailable or pending update. Not a measured reference value.")
+        self.horizontalHeaderItem(8).setToolTip(
+            'Source labels: MP ★ = experimental ICSD match; PDF * = Star quality. '
+            'D = deleted card; — = information unavailable. Hover over a cell for details. '
+            'Labels do not change Match or Gain.')
         self.verticalHeader().setVisible(False)
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -342,6 +360,60 @@ class CandidateTableWidget(_ColumnLayoutTableWidget):
         )
         self.horizontalHeader().setSectionsClickable(True)
         self.horizontalHeader().sectionClicked.connect(self._sort_from_header)
+
+    def reference_keys(self):
+        return [key for row in range(self.rowCount())
+                if (key := self._candidate_key_from_values(self._row_texts(row))) is not None]
+
+    def set_source_names(self, names):
+        self._source_names.update(names)
+        self.viewport().update()
+
+    def reference_label_info(self, row):
+        from xrd_finder.services.reference_labels import label_info
+        key = self._candidate_key_from_values(self._row_texts(row))
+        return label_info(key[0] if key else '', self._reference_labels.get(key))
+
+    def set_reference_labels(self, records):
+        self._reference_labels.update(records)
+        blocked = self.blockSignals(True)
+        try:
+            self._apply_reference_labels()
+        finally:
+            self.blockSignals(blocked)
+        self.refresh_user_sort()
+
+    def _apply_reference_labels(self):
+        for row in range(self.rowCount()):
+            key = self._candidate_key_from_values(self._row_texts(row))
+            info = self.reference_label_info(row)
+            item = self.item(row, 8)
+            if item is None:
+                item = QTableWidgetItem()
+                self.setItem(row, 8, item)
+            item.setText(info.text if key else '')
+            item.setToolTip(info.tooltip if key else '')
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def column_layout_state(self):
+        state = super().column_layout_state()
+        state['labels_layout_version'] = 1
+        return state
+
+    def restore_column_layout(self, state, proportions=None):
+        # Add the new display column without discarding the user's old layout.
+        if isinstance(state, dict) and sorted(state.get('order', [])) == list(range(8)):
+            weights = normalized_proportions(state.get('proportions'), 8)
+            if weights:
+                state = dict(state, order=state['order']+[8],
+                             proportions=[v*.94 for v in weights]+[.06])
+        if isinstance(state, dict) and state.get('labels_layout_version') != 1:
+            order = state.get('order', [])
+            if sorted(order) == list(range(9)):
+                order = [column for column in order if column != 8]
+                order.insert(order.index(1)+1, 8)
+                state = dict(state, order=order)
+        return super().restore_column_layout(state, proportions)
 
     def _sort_from_header(self, column: int) -> None:
         if self._user_sort_column == column:
@@ -376,6 +448,8 @@ class CandidateTableWidget(_ColumnLayoutTableWidget):
         def sort_value(row):
             item = self.item(row, column)
             text = item.text().strip() if item is not None else ''
+            if column == 0:
+                text = self._source_names.get(text,text)
             if column in (2, 3):
                 text = canonical_display_formula(text)
             if column in (1, 5, 6, 7):
@@ -485,6 +559,7 @@ class CandidateTableWidget(_ColumnLayoutTableWidget):
                     self.setItem(row_index, col_index, QTableWidgetItem(value))
             self._apply_score_arrows()
             self._apply_selected_phase_colors()
+            self._apply_reference_labels()
             self._capture_ranking_order()
             self._apply_user_sort()
             self._resize_columns()
@@ -500,6 +575,7 @@ class CandidateTableWidget(_ColumnLayoutTableWidget):
             self.blockSignals(previous_block_state)
             self.setUpdatesEnabled(True)
         self.viewport().update()
+        self.referenceRowsChanged.emit()
 
     def upsert_rows(
         self,
@@ -550,6 +626,7 @@ class CandidateTableWidget(_ColumnLayoutTableWidget):
                 added += 1
             self._apply_score_arrows()
             self._apply_selected_phase_colors()
+            self._apply_reference_labels()
             self._capture_ranking_order()
             self._apply_user_sort()
             self.restore_context(context, select_first_if_missing=False)
@@ -557,6 +634,7 @@ class CandidateTableWidget(_ColumnLayoutTableWidget):
             self.blockSignals(previous_block_state)
             self.setUpdatesEnabled(True)
         self.viewport().update()
+        self.referenceRowsChanged.emit()
         return added, updated
 
     def _update_row_values(self, row_index: int, values: list[str]) -> None:
@@ -690,9 +768,9 @@ class CandidateTableWidget(_ColumnLayoutTableWidget):
         return [self.row_values(row) for row in range(self.rowCount())]
 
     def set_iic(self, row: int, value: str) -> None:
-        if not value or row < 0 or row >= self.rowCount():
+        if row < 0 or row >= self.rowCount():
             return
-        item = self.item(row, self.columnCount() - 1)
+        item = self.item(row, self._column_index("I/Ic"))
         if item is not None:
             item.setText(value)
             self._schedule_user_sort()
@@ -877,6 +955,7 @@ class CandidateTableWidget(_ColumnLayoutTableWidget):
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(8, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         if self.rowCount() <= 80:
             self.resizeColumnsToContents()
@@ -892,6 +971,7 @@ class CandidateTableWidget(_ColumnLayoutTableWidget):
         self.setColumnWidth(5, max(6,round(128*density)))
         self.setColumnWidth(6, max(6,round(108*density)))
         self.setColumnWidth(7, max(6,round(72*density)))
+        self.setColumnWidth(8, max(6,round(76*density)))
         self._apply_column_layout_lock()
 
 

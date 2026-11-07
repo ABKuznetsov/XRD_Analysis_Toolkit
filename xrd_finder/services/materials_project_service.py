@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import cached_property
 import json
 import math
 from pathlib import Path
@@ -20,6 +21,8 @@ class MaterialsProjectEntry:
     name: str = ""
     spacegroup: str = ""
     energy_above_hull: str = ""
+    theoretical: bool | None = None
+    database_ids: dict = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -158,7 +161,7 @@ class MaterialsProjectService:
     ) -> list[MaterialsProjectEntry]:
         if not self.status(check_client=True).configured:
             return []
-        fields = ["material_id", "formula_pretty", "symmetry", "energy_above_hull"]
+        fields = ["material_id", "formula_pretty", "symmetry", "energy_above_hull", "theoretical", "database_IDs"]
         base_kwargs: dict[str, str] = {}
         if formula:
             base_kwargs["formula"] = formula
@@ -201,6 +204,19 @@ class MaterialsProjectService:
                 and self._formula_elements(doc.get("formula_pretty", "")).issubset(allowed_elements)
             ]
         return [self._to_entry(doc) for doc in docs[:limit]]
+
+    def reference_labels(self, material_ids):
+        from xrd_finder.services.reference_labels import mp_reference_labels
+        ids=list(dict.fromkeys(str(value) for value in material_ids))
+        result={}
+        for start in range(0,len(ids),100):
+            batch=ids[start:start+100]
+            docs=self._summary_search({'material_ids':','.join(batch)},
+                fields=['material_id','theoretical','database_IDs'],limit=len(batch))
+            for doc in docs:
+                key=str(doc.get('material_id') or '')
+                if key in batch:result[('MP',key)]=mp_reference_labels(doc)
+        return result
 
     def _chemical_systems(self, required: list[str], optional: list[str]) -> list[list[str]]:
         systems: list[list[str]] = []
@@ -256,7 +272,7 @@ class MaterialsProjectService:
             },
         )
         try:
-            with urlopen(request, timeout=16, context=self._ssl_context()) as response:
+            with self._http_session.open(request, timeout=16) as response:
                 raw = response.read()
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:300]
@@ -300,13 +316,30 @@ class MaterialsProjectService:
             and "_atom_site" in lowered
         )
 
-    def _ssl_context(self) -> ssl.SSLContext:
+    @cached_property
+    def _shared_ssl_context(self) -> ssl.SSLContext:
         try:
             import certifi
 
             return ssl.create_default_context(cafile=certifi.where())
         except Exception:
             return ssl.create_default_context()
+
+    def _ssl_context(self) -> ssl.SSLContext:
+        return self._shared_ssl_context
+
+    @cached_property
+    def _http_session(self):
+        from xrd_finder.services.database_http_session import DatabaseHttpSession
+        return DatabaseHttpSession(self._ssl_context())
+
+    def warm_up(self):
+        ensure_online_allowed('Materials Project')
+        if self.api_key:
+            request = Request(self.BASE_URL + '/heartbeat', headers={'X-API-KEY':self.api_key,
+                              'User-Agent':self.USER_AGENT, 'Accept':'application/json'})
+            with self._http_session.open(request, timeout=3.) as response:
+                response.read(4096)
 
     def _to_entry(self, doc) -> MaterialsProjectEntry:
         def value(name: str, default=""):
@@ -335,6 +368,8 @@ class MaterialsProjectService:
             name=formula,
             spacegroup=spacegroup,
             energy_above_hull=energy_text,
+            theoretical=value('theoretical') if isinstance(value('theoretical'),bool) else None,
+            database_ids=value('database_IDs',{}) or {},
         )
 
     def _structure_to_cif_text(

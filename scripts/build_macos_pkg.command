@@ -140,6 +140,9 @@ if [ -f "$APP_PAYLOAD_DIR/icon.png" ]; then
         iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/icon.icns" >/dev/null 2>&1 || true
         rm -rf "$ICONSET_DIR"
     fi
+    if [ ! -s "$RESOURCES_DIR/icon.icns" ]; then
+        python3 "$ROOT/xrd_finder/tools/macos_documents.py" --icon "$APP_PAYLOAD_DIR/icon.png" "$RESOURCES_DIR/icon.icns"
+    fi
 fi
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
@@ -174,6 +177,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+python3 "$ROOT/xrd_finder/tools/macos_documents.py" "$CONTENTS_DIR/Info.plist"
 
 cat > "$MACOS_DIR/xrd-phase-finder" <<'LAUNCHER'
 #!/bin/zsh
@@ -200,6 +204,10 @@ set -e
 APP_BUNDLE="/Applications/$APP_NAME.app"
 xattr -dr com.apple.quarantine "\$APP_BUNDLE" >/dev/null 2>&1 || true
 touch "\$APP_BUNDLE" >/dev/null 2>&1 || true
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [ -x "\$LSREGISTER" ]; then
+    "\$LSREGISTER" -f "\$APP_BUNDLE" >/dev/null 2>&1 || true
+fi
 
 exit 0
 POSTINSTALL

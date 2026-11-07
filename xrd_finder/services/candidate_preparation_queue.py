@@ -24,6 +24,8 @@ class CandidatePreparationJob:
     fetch: Callable[[], object] | None = None
     existing_payload: object | None = None
     priority: int = 100
+    batch_index: Callable | None = None
+    native_request: dict | None = None
 
     @property
     def key(self) -> tuple[str, str]:
@@ -57,7 +59,7 @@ class _PendingJob:
 
 
 class CandidatePreparationQueue:
-    """Serial download/index queue shared by overlapping search sessions."""
+    """Shared download queue with optional batches of native preparation work."""
 
     def __init__(
         self,
@@ -105,6 +107,11 @@ class CandidatePreparationQueue:
     def progress(self) -> CandidatePreparationProgress:
         with self._lock:
             return self._progress_locked()
+
+    def has_pending(self, keys) -> bool:
+        """Whether a bounded download batch still has consumers."""
+        with self._lock:
+            return not self._shutdown and any(key in self._jobs for key in keys)
 
     def cancel_session(self, session_token: int) -> int:
         """Detach a search session and discard jobs used only by that session."""
@@ -154,6 +161,9 @@ class CandidatePreparationQueue:
                     pending = self._jobs.get(key)
                 if pending is None:
                     continue
+                if pending.job.batch_index is not None:
+                    self._run_native_batch(key, pending)
+                    continue
                 payload = pending.job.existing_payload
                 if pending.job.fetch is not None:
                     self._set_stage(key, CandidatePreparationStage.DOWNLOADING)
@@ -181,6 +191,62 @@ class CandidatePreparationQueue:
                         expected=pending,
                     )
             finally:
+                self._queue.task_done()
+
+    def _run_native_batch(self, first_key, first_pending):
+        """Fetch up to 100 CIFs, then let persistent native processes prepare them."""
+        handler = first_pending.job.batch_index
+        prepared = []
+        taken = 0
+        key, pending = first_key, first_pending
+        try:
+            for position in range(100):
+                if self._is_current(key, pending):
+                    try:
+                        payload = pending.job.existing_payload
+                        if pending.job.fetch is not None:
+                            self._set_stage(key, CandidatePreparationStage.DOWNLOADING)
+                            payload = pending.job.fetch()
+                        if self._is_current(key, pending):
+                            self._set_stage(key, CandidatePreparationStage.INDEXING)
+                            prepared.append((key, pending, payload))
+                    except Exception as error:
+                        self._finish(key, CandidatePreparationStage.FAILED, error=str(error), expected=pending)
+                if position == 99:
+                    break
+                try:
+                    queued = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                priority, sequence, next_key = queued
+                with self._lock:
+                    next_pending = self._jobs.get(next_key)
+                if next_key is None or next_pending is not None and next_pending.job.batch_index != handler:
+                    # Preserve the original priority/order of unrelated jobs.
+                    self._queue.put(queued)
+                    self._queue.task_done()
+                    break
+                taken += 1
+                key, pending = next_key, next_pending
+                if pending is None:
+                    # A cancelled entry consumes no native work.
+                    pending = _PendingJob(first_pending.job)
+            prepared = [item for item in prepared if self._is_current(item[0], item[1])]
+            if not prepared:
+                return
+            def cancelled():
+                return self._shutdown or not any(self._is_current(key, pending) for key, pending, _ in prepared)
+            def ready(index, success, error):
+                key, pending, payload = prepared[int(index)]
+                self._finish(key, CandidatePreparationStage.READY if success else CandidatePreparationStage.FAILED,
+                             result=payload if success else None, error=error, expected=pending)
+            requests = [(pending.job.native_request, payload) for _, pending, payload in prepared]
+            handler(requests, ready, cancelled)
+        except Exception as error:
+            for key, pending, _ in prepared:
+                self._finish(key, CandidatePreparationStage.FAILED, error=str(error), expected=pending)
+        finally:
+            for _ in range(taken):
                 self._queue.task_done()
 
     def _is_current(self, key: tuple[str, str], pending: _PendingJob) -> bool:

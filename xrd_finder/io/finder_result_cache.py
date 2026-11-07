@@ -113,6 +113,20 @@ def restore_result(record, portable_key: tuple) -> FinderResult | None:
         if result.position_refinement.get('le_bail', {}).get('status') == 'applied':
             from xrd_finder.services.le_bail import refresh_le_bail_peak_evidence
             result = refresh_le_bail_peak_evidence(result)
+        elif len(candidates) > 1 and any(c.quantity_percent is not None for c in candidates):
+            # Keep saved curves/assignments without a full recalculation, but
+            # old XPFF Quant must meet the current identifiability safeguard.
+            from xrd_finder.finder.quantification import normalized_profile_error
+            matrix = np.column_stack([c.mass_profile or c.profile for c in candidates])
+            target = np.asarray(result.pattern_y) - np.asarray(result.background)
+            weighted = matrix / np.sqrt(np.maximum(np.abs(target), 1.))[:, None]
+            norms = np.linalg.norm(weighted, axis=0)
+            error = (normalized_profile_error(weighted / norms) if np.all(norms > 0.) else
+                     'A saved phase has no usable calculated intensity; individual mass fractions cannot be separated')
+            if error:
+                for candidate in candidates:
+                    candidate.quantity_percent = None
+                result.quantification_error = '; '.join(part for part in (result.quantification_error, error) if part)
         return result
-    except (KeyError, TypeError, ValueError, OverflowError):
+    except (KeyError, TypeError, ValueError, OverflowError, np.linalg.LinAlgError):
         return None

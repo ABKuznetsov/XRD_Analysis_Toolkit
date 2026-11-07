@@ -1,4 +1,5 @@
 from __future__ import annotations
+from xrd_finder.services.source_registry import is_structure_source
 from xrd_finder.ui.interface_scaling import InterfaceScalingMixin
 from xrd_finder.ui.menu_actions import PhaseFinderMenuActionsMixin
 from xrd_finder.ui.peak_information_actions import PeakInformationActionsMixin
@@ -1240,15 +1241,19 @@ class PhaseFinderWindow(
         *,
         snap_peak_positions: bool = True,
         portable: bool = False,
+        legacy_normalized: bool = False,
     ) -> tuple[object, ...]:
         if getattr(self, '_scoring_source', 'Auto') == 'Auto':
             # Validate the deterministic preprocessing by its original input.
             # Merely opening a saved fit must not refit 28 backgrounds on Qt's
             # main thread to obtain a cache key.
             processed_observed = self._crop_pattern_data(
-                pattern, self._normalized_observed_data(observed_pattern_data(pattern)))
+                pattern, observed_pattern_data(pattern))
         else:
             processed_observed = self._pattern_finder_observed_data(pattern)
+        if legacy_normalized and processed_observed is not None:
+            from xrd_finder.ui.observed_patterns import normalize_intensity
+            processed_observed = normalize_intensity(processed_observed)
         background_data = self._pattern_finder_background_data(pattern)
         background_signature = self._finder_background_signature(background_data)
         structure_overrides = self._finder_candidate_structure_overrides(pattern, candidates)
@@ -1261,7 +1266,7 @@ class PhaseFinderWindow(
                 array_fingerprint(x_values),
                 array_fingerprint(y_values),
                 bool(self._pattern_finder_background_removed(pattern)),
-                bool(self.normalize_observed_patterns),
+                bool(legacy_normalized),
                 getattr(self, "_scoring_source", "Auto"),
             )
         candidate_signature = []
@@ -1342,6 +1347,13 @@ class PhaseFinderWindow(
                     continue
                 result = restore_result(record, self._finder_cache_key(
                     pattern, candidates, snap_peak_positions=snap_peak_positions, portable=True))
+                if result is None:
+                    # Older XPFF files may contain a verified fit in units of
+                    # Imax=100. Reuse it only after validating the old full key;
+                    # rendering already maps those units back to the trace.
+                    result = restore_result(record, self._finder_cache_key(
+                        pattern, candidates, snap_peak_positions=snap_peak_positions,
+                        portable=True, legacy_normalized=True))
                 if result is not None:
                     self.match_profile_result_cache[cache_key] = result
                     self._trim_match_profile_result_cache()
@@ -1366,7 +1378,10 @@ class PhaseFinderWindow(
         background = bool(background or le_bail)
         instrument = self._instrument_profile_for_pattern(pattern)
         from xrd_finder.services.reference_preparation import reference_scan_range
-        reference_low,reference_high = reference_scan_range(self._pattern_finder_observed_data(pattern)) or (5.,120.)
+        # Only angular bounds are needed here. Asking for the Auto-processed
+        # curve would fit its background on Qt before the owned worker starts.
+        range_observed = self._crop_pattern_data(pattern, observed_pattern_data(pattern))
+        reference_low,reference_high = reference_scan_range(range_observed) or (5.,120.)
         candidate_build = build_finder_candidate_inputs(
             candidates,
             self._candidate_cif_path,
@@ -1388,7 +1403,7 @@ class PhaseFinderWindow(
         preprocess_auto = bool(background and getattr(self, '_scoring_source', 'Auto') == 'Auto')
         if preprocess_auto:
             processed_observed = self._crop_pattern_data(
-                pattern, self._normalized_observed_data(observed_pattern_data(pattern)))
+                pattern, observed_pattern_data(pattern))
             prepared = (None if processed_observed is None else
                         self._auto_scoring_cache.get(self._auto_scoring_cache_key(pattern, processed_observed)))
             if prepared is not None:
@@ -1537,6 +1552,7 @@ class PhaseFinderWindow(
         self.finder_plot_control_bar.patternOffsetPercentChanged.connect(self._set_pattern_stack_offset)
         self.finder_plot_control_bar.normalizePatternsChanged.connect(self._set_pattern_normalization)
         self.finder_plot_control_bar.zeroCorrectionChanged.connect(self._set_zero_correction_visible)
+        self.finder_plot_control_bar.allObservedBlackChanged.connect(self._set_all_observed_black)
 
     def _scoring_source_status_text(self) -> str:
         return f"Score: {getattr(self, '_scoring_source', 'Auto')}"
@@ -1573,13 +1589,12 @@ class PhaseFinderWindow(
         table = getattr(self, 'candidate_table', None)
         if table is None or not hasattr(table, 'set_score_context'):
             return
-        rank = getattr(self, 'rank_by_probability_checkbox', None)
         gain = getattr(self, 'gain_job_controller', None)
         match = getattr(self, '_loaded_match_queue', None)
         pattern = self._active_pattern()
         table.set_score_context(
             has_pattern=pattern is not None,
-            match_enabled=getattr(self, '_search_mode', 'search') == 'peaks' or (rank is not None and rank.isChecked()),
+            match_enabled=True,
             gain_enabled=bool(getattr(self, '_candidate_gain_auto_enabled', False)),
             match_busy=bool(getattr(self, '_auto_search_in_progress', False) or getattr(match, 'running', False)),
             gain_busy=bool(getattr(gain, 'running', False)),
@@ -1592,6 +1607,7 @@ class PhaseFinderWindow(
         self.finder_top_toolbar.saveProjectRequested.connect(self._save_project)
         self.finder_top_toolbar.importRequested.connect(self._import_scientific_files)
         self.finder_top_toolbar.autoSearchRequested.connect(self._auto_search_candidates)
+        self.finder_top_toolbar.autoSearchSettingsRequested.connect(self._open_auto_search_settings)
         self.finder_top_toolbar.peakSearchRequested.connect(self._toggle_peak_search)
         self.finder_top_toolbar.resetDataRequested.connect(self._reset_observed_preprocessing)
         self.finder_top_toolbar.resetViewRequested.connect(self._reset_match_plot_view)
@@ -1631,6 +1647,7 @@ class PhaseFinderWindow(
         candidate_rows = self._project_phase_candidate_rows()
 
         self.candidate_table = CandidateTableWidget(candidate_rows)
+        self._refresh_custom_source_names()
         self.candidate_table.rowActivated.connect(self._queue_candidate_row_activation)
         self.candidate_table.addRequested.connect(self._add_selected_candidate_to_match_list)
         self.candidate_table.contextRequested.connect(self._show_candidate_context_menu)
@@ -1663,6 +1680,9 @@ class PhaseFinderWindow(
         self._set_candidate_status_state("idle")
         candidate_layout.addWidget(self.candidate_status_bar)
         candidate_layout.addWidget(self.candidate_table, 1)
+        from xrd_finder.ui.reference_labels_controller import ReferenceLabelsController
+        self._reference_label_controller = ReferenceLabelsController(self)
+        self._reference_label_controller.request()
 
     def _create_center_splitter(self) -> None:
         self.center_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -1813,6 +1833,9 @@ class PhaseFinderWindow(
         return rows if rows else [["", "", "", "No phases yet", "", ""]]
 
     def reject(self) -> None:
+        if self.isFullScreen():
+            self._fullscreen_controller.set_fullscreen(False)
+            return
         # QDialog maps Escape to reject(); route it through the same guarded
         # close path instead of silently discarding the current analysis.
         self.close()
@@ -1850,7 +1873,7 @@ class PhaseFinderWindow(
         self._preparation_close_confirmed = True
         portal = getattr(self,'_ccdc_portal_controller',None)
         if portal is not None:portal.shutdown()
-        for name in ('_cod_inorganic_controller','_prepared_library_transfer','_library_storage_migration','_import_cleanup_controller'):
+        for name in ('_cod_inorganic_controller','_prepared_library_transfer','_library_storage_migration','_import_cleanup_controller', '_reference_label_controller'):
             controller = getattr(self,name,None)
             if controller is not None:
                 controller.cancel()
@@ -2007,7 +2030,7 @@ class PhaseFinderWindow(
         panel.elementsPainted.connect(self._paint_elements)
         panel.exclusionModeToggleRequested.connect(self._toggle_excluded_mode)
         panel.searchRequested.connect(self._search_candidates_in_current_mode)
-        panel.resetRequested.connect(self._reset_candidate_search_table)
+        panel.resetRequested.connect(self._finish_or_clear_candidate_search)
 
         self.composition_splitter = panel.splitter
         self.element_table = panel.element_table
@@ -2020,8 +2043,6 @@ class PhaseFinderWindow(
         self.organics_checkbox = panel.organics_checkbox
         self.structural_data_checkbox = panel.structural_data_checkbox
         self.reference_patterns_checkbox = panel.reference_patterns_checkbox
-        self.rank_by_probability_checkbox = panel.rank_by_probability_checkbox
-        self.rank_by_probability_checkbox.toggled.connect(lambda _checked: self._refresh_candidate_score_labels())
         scroll=QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
@@ -3004,6 +3025,7 @@ class PhaseFinderWindow(
                 else self._active_peak_labels_requested() if hasattr(self, "_active_peak_labels_requested") else False
             ),
             style=self.plot_style,
+            marker_clearance_pixels=4.0 if self.show_all_selected_patterns else 0.0,
         )
 
     def _add_peak_residual_links(
@@ -3453,7 +3475,7 @@ class PhaseFinderWindow(
             "Phase": row[3] if len(row) > 3 else "",
         }
         source = self._candidate_source(candidate)
-        if source not in {"COD", "USER", "MP", "CCDC", "AFLOW", "OQMD", "PDF2"}:
+        if not (is_structure_source(source) or source == 'PDF2'):
             return 0.0
         if source == "PDF2":
             peaks = self._pdf2_peaks_for_candidate(candidate)
@@ -3547,7 +3569,8 @@ class PhaseFinderWindow(
 
 
     def _rank_by_peak_probability_enabled(self) -> bool:
-        return self.rank_by_probability_checkbox is not None and self.rank_by_probability_checkbox.isChecked()
+        # Match is computed in the background; header clicks control row order.
+        return True
 
     def _structure_peak_probability(self, structure) -> float:
         probability_data = self._probability_observed_data()
@@ -3910,6 +3933,19 @@ class PhaseFinderWindow(
             self.ccdc_doi_input.clear()
         self._update_element_fields()
 
+    def _finish_or_clear_candidate_search(self) -> None:
+        if self._search_mode != 'auto':
+            self._reset_candidate_search_table()
+            return
+        popup = getattr(self,'_auto_search_setup_popup',None)
+        if popup is not None:
+            popup.hide()
+        preparation = getattr(self,'_observed_search_controller',None)
+        if preparation is not None:
+            preparation.invalidate()
+        self._cancel_candidate_search_jobs()
+        self._set_search_mode('search')
+
     def _reset_candidate_search_table(self) -> None:
         preparation = getattr(self, '_observed_search_controller', None)
         if preparation is not None:
@@ -3936,6 +3972,9 @@ class PhaseFinderWindow(
         self._set_candidate_rows([["", "", "", "Candidate list cleared", "", ""]])
 
     def _cancel_candidate_search_jobs(self) -> None:
+        search_setup = getattr(self,'_auto_search_setup_popup',None)
+        if search_setup is not None:
+            search_setup.hide()
         cancel_find = getattr(self, '_cancel_find_peaks', None)
         if callable(cancel_find):
             cancel_find()
@@ -4019,7 +4058,7 @@ class PhaseFinderWindow(
         self._last_formula_text = formula
         self._apply_candidate_element_filter()
 
-    def _apply_candidate_element_filter(self) -> None:
+    def _apply_candidate_element_filter(self, *, rerank=True) -> None:
         table = getattr(self, "candidate_table", None)
         if table is None:
             return
@@ -4029,7 +4068,7 @@ class PhaseFinderWindow(
             element for element, state in self.element_states.items() if state == "excluded"
         }
         strict = getattr(self, "exclude_all_other_elements", True)
-        if getattr(self, "_auto_search_ranked_rows", None) is not None:
+        if rerank and getattr(self, "_auto_search_ranked_rows", None) is not None:
             self._rerank_auto_search_element_subset(required, optional)
         first_visible = -1
         for row in range(table.rowCount()):

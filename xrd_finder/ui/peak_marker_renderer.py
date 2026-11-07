@@ -270,6 +270,17 @@ def _marker_position_available(
     return all(abs(float(existing) - float(position)) > tolerance for existing in used_positions)
 
 
+def _phase_marker_offset(plot, y_span: float, size: int, clearance_pixels: float) -> float:
+    offset = max(y_span * 0.020, 3.0)
+    if clearance_pixels > 0:
+        # Symbols have a fixed pixel diameter. In a dense multi-pattern stack,
+        # a percentage of just one trace can be smaller than the symbol itself.
+        pixel_y = abs(float(plot.getViewBox().viewPixelSize()[1]))
+        if np.isfinite(pixel_y):
+            offset = max(offset, pixel_y * (size / 2.0 + clearance_pixels))
+    return offset
+
+
 def add_peak_coverage_markers(
     *,
     plot,
@@ -283,6 +294,7 @@ def add_peak_coverage_markers(
     phase_assignment_styles: dict[str, tuple[str, str]] | None = None,
     show_peak_labels: bool = False,
     style: PlotStyle | None = None,
+    marker_clearance_pixels: float = 0.0,
 ) -> tuple[int, int]:
     style = style or PlotStyle()
     if observed_peak_assignments is not None:
@@ -297,6 +309,7 @@ def add_peak_coverage_markers(
             phase_assignment_styles=phase_assignment_styles or {},
             show_peak_labels=show_peak_labels,
             style=style,
+            marker_clearance_pixels=marker_clearance_pixels,
         )
     if not phase_peak_sets:
         return 0, 0
@@ -319,8 +332,8 @@ def add_peak_coverage_markers(
         float(np.nanmax(observed_y)) - float(np.nanmin(observed_y)),
         1.0,
     )
-    phase_marker_offset = max(y_span * 0.020, 3.0)
     phase_marker_size = max(int(round(style.marker.size * 1.4)), style.marker.size + 3)
+    phase_marker_offset = _phase_marker_offset(plot, y_span, phase_marker_size, marker_clearance_pixels)
     noise_sigma = _robust_noise_sigma(corrected_strength)
     considered_positions = []
     for obs_x in peak_positions:
@@ -381,14 +394,15 @@ def add_assignment_markers(
     phase_assignment_styles: dict[str, tuple[str, str]],
     show_peak_labels: bool,
     style: PlotStyle | None = None,
+    marker_clearance_pixels: float = 0.0,
 ) -> tuple[int, int]:
     style = style or PlotStyle()
     # Use the trace height, not its stacked absolute offset, so marker spacing
     # remains consistent for every pattern in multi mode.
     y_span = max(float(np.nanmax(observed_y)) - float(np.nanmin(observed_y)), 1.0)
     label_offset = max(y_span * 0.008, 1.0)
-    phase_marker_offset = max(y_span * 0.020, 3.0)
     phase_marker_size = max(int(round(style.marker.size * 1.4)), style.marker.size + 3)
+    phase_marker_offset = _phase_marker_offset(plot, y_span, phase_marker_size, marker_clearance_pixels)
     corrected_strength = np.asarray(corrected_y, dtype=float)
     noise_sigma = _robust_noise_sigma(corrected_strength)
     grid_step = _positive_grid_step(x)

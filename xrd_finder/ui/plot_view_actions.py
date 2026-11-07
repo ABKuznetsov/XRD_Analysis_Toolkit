@@ -195,6 +195,14 @@ class PhaseFinderPlotViewActionsMixin:
         finally:
             combo.blockSignals(signals_were_blocked)
 
+    def _set_all_observed_black(self, enabled: bool) -> None:
+        from dataclasses import replace
+        settings = replace(self.plot_view_settings, all_observed_black=bool(enabled))
+        panel = getattr(self, 'plot_settings_panel', None)
+        if panel is not None:
+            panel.set_settings(settings, emit=False)
+        self._apply_plot_view_settings(settings)
+
     def _apply_plot_view_settings(self, settings: PlotViewSettings, *, force: bool = False) -> None:
         previous_settings = getattr(self, "plot_view_settings", None)
         quick_fields = {
@@ -253,6 +261,12 @@ class PhaseFinderPlotViewActionsMixin:
                 ):
                     setattr(settings, field, getattr(previous_settings, field))
         self.plot_view_settings = settings
+        bar = getattr(self, 'finder_plot_control_bar', None)
+        if bar is not None:
+            button = bar.all_observed_black_button
+            blocked = button.blockSignals(True)
+            button.setChecked(settings.all_observed_black)
+            button.blockSignals(blocked)
         if hasattr(self,"_save_workspace_preferences"):
             self._save_workspace_preferences()
         self._sync_plot_aspect_control(settings)
