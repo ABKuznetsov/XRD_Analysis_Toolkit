@@ -14,8 +14,8 @@
       "type": "installer",
       "platform": "windows",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.1/XRD_Phase_Finder_Setup_v1_7_1.exe",
-      "sha256": "daf7a9debc09fb3da4011356c93e9ac8048e16ca8c3519f5f73de61d28417194",
-      "size_bytes": 5649451
+      "sha256": "3ed7d1cc43001af4ae8f9611bc6c52f1c377d83e96e61fe6b8cd207d723b6bf2",
+      "size_bytes": 5649941
     }
   ],
   "summary": [
@@ -26,9 +26,9 @@
     "Protect XPFF extraction and refuse unreliable Quant for indistinguishable phase profiles."
   ],
   "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.1/XRD_Phase_Finder_Setup_v1_7_1.exe",
-  "installer_sha256": "daf7a9debc09fb3da4011356c93e9ac8048e16ca8c3519f5f73de61d28417194",
+  "installer_sha256": "3ed7d1cc43001af4ae8f9611bc6c52f1c377d83e96e61fe6b8cd207d723b6bf2",
   "installer_filename": "XRD_Phase_Finder_Setup_v1_7_1.exe",
-  "installer_size_bytes": 5649451,
+  "installer_size_bytes": 5649941,
   "platform_versions": {
     "windows": "1.7.1"
   },

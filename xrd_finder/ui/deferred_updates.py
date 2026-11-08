@@ -58,14 +58,26 @@ def fetch_update() -> UpdateResult:
     if offline_mode_enabled():
         return UpdateResult(error='Offline mode is enabled.')
     key = 'macos' if sys.platform == 'darwin' else 'windows' if sys.platform == 'win32' else 'linux'
-    request = Request(f'{MANIFEST_ROOT}/xrd_finder_{key}.json?check={time_ns()}',
-                      headers={'User-Agent': f'XRD-Phase-Finder/{__version__}',
-                               'Cache-Control':'no-cache', 'Pragma':'no-cache'})
-    with urlopen(request, timeout=4, context=ssl.create_default_context(cafile=certifi.where())) as response:
-        data = response.read(2 * 1024 * 1024 + 1)
-    if len(data) > 2 * 1024 * 1024:
-        raise ValueError('Update manifest is too large.')
-    return parse_update(json.loads(data.decode('utf-8-sig')))
+    # The raw-file CDN can lag when an installer is replaced in the same tag.
+    # Use the public contents API first; retain raw access for API rate limits.
+    urls = (
+        f'https://api.github.com/repos/ABKuznetsov/XRD_Analysis_Toolkit/contents/'
+        f'launcher/updates/xrd_finder_{key}.json?ref=main&check={time_ns()}',
+        f'{MANIFEST_ROOT}/xrd_finder_{key}.json?check={time_ns()}',
+    )
+    context = ssl.create_default_context(cafile=certifi.where())
+    for url in urls:
+        request = Request(url, headers={'User-Agent': f'XRD-Phase-Finder/{__version__}',
+            'Accept':'application/vnd.github.raw+json', 'Cache-Control':'no-cache', 'Pragma':'no-cache'})
+        try:
+            with urlopen(request, timeout=4, context=context) as response:
+                data = response.read(2 * 1024 * 1024 + 1)
+            if len(data) > 2 * 1024 * 1024:
+                raise ValueError('Update manifest is too large.')
+            return parse_update(json.loads(data.decode('utf-8-sig')))
+        except (OSError, ValueError) as error:
+            last_error = error
+    raise last_error
 
 
 class UpdateController(QObject):
