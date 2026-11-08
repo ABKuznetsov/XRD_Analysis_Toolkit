@@ -18,13 +18,13 @@
       ],
       "update_manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/toolkit/updates/xrd_finder.json",
       "installer": {
-        "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.0/XRD_Phase_Finder_Setup_v1_7_0.exe",
-        "filename": "XRD_Phase_Finder_Setup_v1_7_0.exe",
-        "size_bytes": 5615189,
-        "sha256": "317bb6b23b64d1faec9b4fc2377f2c85b3a7580b74b678db6a371b297e7c25ce"
+        "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.1/XRD_Phase_Finder_Setup_v1_7_1.exe",
+        "filename": "XRD_Phase_Finder_Setup_v1_7_1.exe",
+        "size_bytes": 5646612,
+        "sha256": "2518770eaff844b5afd4d12946138c2a76b0a1178d4a7f8fd6451f3184652674"
       },
       "platform_versions": {
-        "windows": "1.7.0",
+        "windows": "1.7.1",
         "macos": "1.7.1",
         "linux": "1.6.9"
       }
