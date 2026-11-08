@@ -2,6 +2,8 @@
 
 ## 1.7.1 - 2026-11-07
 
+- Include verified download-and-install updates in the macOS package: fetch fresh manifests, validate size/SHA-256, preserve the save/cancel path and open Installer only after Finder exits.
+
 - Apply observed-pattern normalization and stack offsets to CIF/PDF-2 candidate sticks, calculated/background overlays and RRUFF previews. Retain raw scientific data, fitted profiles and Match/Gain results.
 - Declare the bundled XPFF icon in the exported macOS document type for Finder.
 

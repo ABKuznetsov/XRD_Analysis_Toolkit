@@ -14,8 +14,8 @@
       "type": "installer",
       "platform": "macos",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.1/XRD_Phase_Finder_macOS_1.7.1.pkg",
-      "sha256": "54f58d4aa93458ef12a303ef6c01b98a0098d21494a7ac2f1b7dc394c163d195",
-      "size_bytes": 6629036
+      "sha256": "7a74b90c58b894365621f5fa5a057cae9300ed731a3e1d296cfcd442b9753cd0",
+      "size_bytes": 6633263
     }
   ],
   "summary": [
@@ -26,11 +26,11 @@
     "Protect XPFF extraction and refuse unreliable Quant for indistinguishable phase profiles."
   ],
   "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.1/XRD_Phase_Finder_macOS_1.7.1.pkg",
-  "macos_installer_sha256": "54f58d4aa93458ef12a303ef6c01b98a0098d21494a7ac2f1b7dc394c163d195",
+  "macos_installer_sha256": "7a74b90c58b894365621f5fa5a057cae9300ed731a3e1d296cfcd442b9753cd0",
   "platform_versions": {
     "macos": "1.7.1"
   },
   "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.1",
   "macos_installer_filename": "XRD_Phase_Finder_macOS_1.7.1.pkg",
-  "macos_installer_size_bytes": 6629036
+  "macos_installer_size_bytes": 6633263
 }
