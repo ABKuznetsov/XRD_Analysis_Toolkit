@@ -22,8 +22,8 @@
       "installer": {
         "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.1/XRD_Phase_Finder_Setup_v1_7_1.exe",
         "filename": "XRD_Phase_Finder_Setup_v1_7_1.exe",
-        "size_bytes": 5646612,
-        "sha256": "2518770eaff844b5afd4d12946138c2a76b0a1178d4a7f8fd6451f3184652674"
+        "size_bytes": 5649574,
+        "sha256": "41ceba9658e4a5525c1c5bd97fe0f7a332984b0a7dacb08ca134e321956f1736"
       },
       "platform_versions": {
         "windows": "1.7.1",

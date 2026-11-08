@@ -1867,10 +1867,17 @@ class PhaseFinderWindow(
             return
         if not getattr(self, '_preparation_close_confirmed', False):
             if not self._confirm_project_replacement():
+                updater = getattr(self, '_update_controller', None)
+                if updater is not None:updater.cancel_installation()
                 if cleanup is not None:cleanup.request()
                 event.ignore()
                 return
         self._preparation_close_confirmed = True
+        updater = getattr(self, '_update_controller', None)
+        if updater is not None and not updater.prepare_installation_on_close():
+            self._preparation_close_confirmed = False
+            event.ignore()
+            return
         portal = getattr(self,'_ccdc_portal_controller',None)
         if portal is not None:portal.shutdown()
         for name in ('_cod_inorganic_controller','_prepared_library_transfer','_library_storage_migration','_import_cleanup_controller', '_reference_label_controller'):
