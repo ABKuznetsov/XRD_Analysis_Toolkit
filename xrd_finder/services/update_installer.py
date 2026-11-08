@@ -98,7 +98,11 @@ def download_installer(asset, directory, *, progress=lambda done,total:None, can
     target = folder/filename;partial = folder/(filename+'.part')
     try:
         if cancelled():raise DownloadCancelled()
-        request = Request(asset.url, headers={'User-Agent':'XRD-Phase-Finder-Updater','Accept-Encoding':'identity'})
+        parts = urlparse(asset.url)
+        query = parts.query+('&' if parts.query else '')+f'download=1&check={time.time_ns()}'
+        request = Request(parts._replace(query=query).geturl(), headers={
+            'User-Agent':'XRD-Phase-Finder-Updater', 'Accept-Encoding':'identity',
+            'Cache-Control':'no-cache', 'Pragma':'no-cache'})
         with opener(request) as response, partial.open('wb') as stream:
             if not trusted_download_url(response.geturl()):raise ValueError('Untrusted update redirect.')
             total = asset.size_bytes or int(response.headers.get('Content-Length') or 0)

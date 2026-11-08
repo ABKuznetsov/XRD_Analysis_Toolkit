@@ -16,9 +16,9 @@
       "windows_update_manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/launcher/updates/xrd_finder_windows.json",
       "macos_update_manifest_url": "https://raw.githubusercontent.com/ABKuznetsov/XRD_Analysis_Toolkit/main/launcher/updates/xrd_finder_macos.json",
       "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.1/XRD_Phase_Finder_Setup_v1_7_1.exe",
-      "installer_sha256": "41ceba9658e4a5525c1c5bd97fe0f7a332984b0a7dacb08ca134e321956f1736",
+      "installer_sha256": "daf7a9debc09fb3da4011356c93e9ac8048e16ca8c3519f5f73de61d28417194",
       "installer_filename": "XRD_Phase_Finder_Setup_v1_7_1.exe",
-      "installer_size_bytes": 5649574,
+      "installer_size_bytes": 5649451,
       "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.1/XRD_Phase_Finder_macOS_1.7.1.pkg",
       "macos_installer_sha256": "54f58d4aa93458ef12a303ef6c01b98a0098d21494a7ac2f1b7dc394c163d195",
       "platform_versions": {

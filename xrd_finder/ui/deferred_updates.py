@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import sys
 from threading import Event, Thread
+from time import time_ns
 from urllib.parse import urlparse
 
 from packaging.version import InvalidVersion, Version
@@ -57,8 +58,9 @@ def fetch_update() -> UpdateResult:
     if offline_mode_enabled():
         return UpdateResult(error='Offline mode is enabled.')
     key = 'macos' if sys.platform == 'darwin' else 'windows' if sys.platform == 'win32' else 'linux'
-    request = Request(f'{MANIFEST_ROOT}/xrd_finder_{key}.json',
-                      headers={'User-Agent': f'XRD-Phase-Finder/{__version__}'})
+    request = Request(f'{MANIFEST_ROOT}/xrd_finder_{key}.json?check={time_ns()}',
+                      headers={'User-Agent': f'XRD-Phase-Finder/{__version__}',
+                               'Cache-Control':'no-cache', 'Pragma':'no-cache'})
     with urlopen(request, timeout=4, context=ssl.create_default_context(cafile=certifi.where())) as response:
         data = response.read(2 * 1024 * 1024 + 1)
     if len(data) > 2 * 1024 * 1024:
