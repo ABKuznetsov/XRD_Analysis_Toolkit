@@ -15,6 +15,7 @@ def draw_rruff_reference(
     data: np.ndarray,
     observed,
     label: str,
+    active_plot_context: dict[str, float] | None = None,
     style: PlotStyle | None = None,
     pattern_id: str | None = None,
     candidate_id: str | None = None,
@@ -31,6 +32,8 @@ def draw_rruff_reference(
     if observed is not None and len(observed):
         observed_max = max(float(np.nanmax(observed[:, 1])), 1.0)
         y = scale_profile_to_reference(y, observed_max * 0.92)
+        context = active_plot_context or {}
+        y = y * float(context.get("intensity_scale", 1.0)) + float(context.get("offset", 0.0))
     item = plot_profile(
         plot,
         np.asarray(data[:, 0], dtype=float),
@@ -69,8 +72,9 @@ def draw_pdf2_reference(
         low, high = float(np.nanmin(x_grid)), float(np.nanmax(x_grid))
         peaks = [peak for peak in peaks if low <= float(peak.two_theta) <= high]
         active_plot_offset = float(active_plot_context.get("offset", 0.0))
-        baseline_value = float(np.nanmin(observed[:, 1])) + active_plot_offset
-        top_value = float(np.nanmax(observed[:, 1])) + active_plot_offset
+        intensity_scale = float(active_plot_context.get("intensity_scale", 1.0))
+        baseline_value = float(np.nanmin(observed[:, 1])) * intensity_scale + active_plot_offset
+        top_value = float(np.nanmax(observed[:, 1])) * intensity_scale + active_plot_offset
         height = max(top_value - baseline_value, float(active_plot_context.get("height", 0.0)), 1.0)
     else:
         x_grid = np.linspace(5.0, 120.0, 5000)

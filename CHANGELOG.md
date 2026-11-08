@@ -2,6 +2,9 @@
 
 ## 1.7.1 - 2026-11-07
 
+- Apply observed-pattern normalization and stack offsets to CIF/PDF-2 candidate sticks, calculated/background overlays and RRUFF previews. Retain raw scientific data, fitted profiles and Match/Gain results.
+- Declare the bundled XPFF icon in the exported macOS document type for Finder.
+
 - Keep legacy CIF public IDs on folder/ZIP reimport and carry persistent import origins through prepared-library transfer and storage optimization. Refuse ambiguous legacy matches instead of duplicating or replacing project-linked cards.
 - Start Identify phases with one click; open optional settings using the arrow within the same button. Refine search uses current filters; the red Finish auto search stops automatic work while retaining candidates and selected phases.
 - Identify arbitrary CIFs by their own relative path so adding/removing neighbouring files never reassigns an ID; bound extracted filenames and retain last-record handling for identical numeric COD IDs. Previously stored IDs are kept without automatic renaming.

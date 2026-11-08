@@ -181,15 +181,17 @@ def draw_structure_overlay(
     style = style or PlotStyle()
     color = "#1a73e8" if preview else "#d93025"
     active_plot_offset = float(active_plot_context.get("offset", 0.0))
+    # Cached observations remain in measurement units; scale only for display.
+    intensity_scale = float(active_plot_context.get("intensity_scale", 1.0))
     marker_top = (
-        overlay.observed_ymax + active_plot_offset
+        overlay.observed_ymax * intensity_scale + active_plot_offset
         if overlay.observed_ymax is not None
-        else float(np.nanmax(overlay.y) if np.nanmax(overlay.y) > 0 else 100.0)
+        else float(np.nanmax(overlay.y) if np.nanmax(overlay.y) > 0 else 100.0) * intensity_scale + active_plot_offset
     )
     marker_bottom = (
-        overlay.observed_ymin + active_plot_offset
+        overlay.observed_ymin * intensity_scale + active_plot_offset
         if overlay.observed_ymin is not None
-        else float(np.nanmin(overlay.background) + active_plot_offset)
+        else float(np.nanmin(overlay.background)) * intensity_scale + active_plot_offset
     )
     y_span = max(marker_top - marker_bottom, float(active_plot_context.get("height", 0.0)), 1.0)
 
@@ -197,7 +199,7 @@ def draw_structure_overlay(
         background_item = plot_profile(
             match_plot,
             overlay.x,
-            overlay.background + active_plot_offset,
+            overlay.background * intensity_scale + active_plot_offset,
             style.background.color or "#9aa0a6",
             "background",
             width=max(style.background.width - 0.4, 0.5),
@@ -263,7 +265,7 @@ def draw_structure_overlay(
     calc_item = plot_profile(
         match_plot,
         overlay.x,
-        overlay.y + overlay.background + active_plot_offset,
+        (overlay.y + overlay.background) * intensity_scale + active_plot_offset,
         color,
         f"calculated total {structure.name}",
         width=style.calculated.width,
@@ -301,7 +303,7 @@ def draw_structure_overlay(
         add_peak_residual_links(
             overlay.peaks,
             np.asarray(observed[:, 0], dtype=float),
-            np.asarray(observed[:, 1], dtype=float),
+            np.asarray(observed[:, 1], dtype=float) * intensity_scale + active_plot_offset,
             overlay.observed_peak_positions,
             max_delta=0.45,
             limit=36,

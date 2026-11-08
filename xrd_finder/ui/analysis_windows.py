@@ -3768,6 +3768,7 @@ class PhaseFinderWindow(
                 plot_layers=self.plot_layers,
                 data=np.asarray(data, dtype=float),
                 observed=observed,
+                active_plot_context=self._active_pattern_plot_context(),
                 label=label,
                 style=self.plot_style,
                 pattern_id=getattr(self._active_pattern(), "id", None),

@@ -22,6 +22,7 @@ def document_info(info):
     info['UTExportedTypeDeclarations'] = [{
         'UTTypeIdentifier': PROJECT_UTI,
         'UTTypeDescription': 'XRD Phase Finder Project',
+        'UTTypeIconFile': 'icon.icns',
         'UTTypeConformsTo': ['public.data'],
         'UTTypeTagSpecification': {'public.filename-extension': ['xpff']},
     }]
