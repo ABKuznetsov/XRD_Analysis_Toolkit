@@ -42,6 +42,8 @@ def _symbols():
 def space_group_display(text: str) -> str:
     raw = str(text or '')
     symbol = raw.strip().partition(':')[0]
+    if not symbol:
+        return ''
     exact, loose = _symbols()
     key = _key(symbol)
     canonical = exact.get(key) or loose.get(key.replace('_', ''))

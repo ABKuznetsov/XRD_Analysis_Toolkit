@@ -564,16 +564,9 @@ class AnalysisWindow(QDialog):
             toolbar.save_button.setEnabled(enabled)
 
     def _project_save_snapshot(self) -> str:
+        from xrd_finder.ui.project_edit_state import project_edit_state
         self._sync_finder_state_to_project()
-        state = asdict(self.project)
-        for key in ("root_path", "updated_at", "analysis_summary"):
-            state.pop(key, None)
-        # Browsing a saved project is not an edit, even though its view is portable.
-        for key in (
-            "current_object_type", "current_object_id", "tree_expansion_state",
-            "right_tab", "candidate_current_row", "match_current_row", "plot_view_range",
-        ):
-            state["finder_state"].pop(key, None)
+        state = project_edit_state(asdict(self.project))
         return json.dumps(state, sort_keys=True)
 
     def _remember_saved_project_state(self) -> None:
@@ -969,8 +962,6 @@ class PhaseFinderWindow(
         available=self.screen().availableGeometry()
         self.resize(min(self.width(),available.width()-24),min(self.height(),available.height()-48))
         self._plot_initial_settings_timer.start(0)
-        from xrd_finder.ui.import_cleanup_job import schedule_import_cleanup
-        schedule_import_cleanup(self)
 
     def _init_filter_state(self) -> None:
         self._search_mode = "search"
@@ -1017,7 +1008,6 @@ class PhaseFinderWindow(
         )
         self._background_tasks: set[BackgroundTaskHandle] = set()
         self._background_task_threads: set[BackgroundTaskHandle] = set()
-        self._start_match_pdf2_preload()
 
     def _init_runtime_state(self) -> None:
         self.finder_action_bar: FinderActionBar | None = None

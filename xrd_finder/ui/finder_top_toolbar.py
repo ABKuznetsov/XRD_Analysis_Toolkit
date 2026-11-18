@@ -159,7 +159,7 @@ class FinderTopToolBar(QWidget):
         return width + 16 + 10 * max(0, len(visible) - 1 + more)
 
     def _adapt_width(self) -> None:
-        if not hasattr(self, '_secondary'):
+        if not hasattr(self, '_secondary') or not self.isVisible():
             return
         for button in self._buttons:
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
@@ -209,6 +209,10 @@ class FinderTopToolBar(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._adapt_width()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
         self._adapt_width()
 
     def changeEvent(self, event) -> None:

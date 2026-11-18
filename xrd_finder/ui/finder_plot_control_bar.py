@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, QSize, Qt
 from PySide6.QtWidgets import (
     QBoxLayout,
     QComboBox,
@@ -47,6 +47,19 @@ class PatternDisplayButton(QToolButton):
         self.setText('All selected' if self.isChecked() else 'One pattern')
 
 
+class CursorReadoutLabel(QLabel):
+    """Reserve the same space when the pointer enters or leaves the plot."""
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        margins = self.contentsMargins()
+        width = self.fontMetrics().horizontalAdvance(
+            '2theta: 180.000 deg    I: -1.23e+06    d: 999.999 A'
+        )
+        hint.setWidth(width + margins.left() + margins.right() + 2 * self.margin())
+        return hint
+
+
 class FinderPlotControlBar(QWidget):
     patternDisplayModeChanged = Signal(str)
     plotAspectModeChanged = Signal(str)
@@ -60,6 +73,9 @@ class FinderPlotControlBar(QWidget):
         self.setObjectName("finderPlotControlBar")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._updating_control_layout = False
+        self._horizontal_controls = None
+        self._layout_input_key = None
 
         self._bar_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
         self._bar_layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
@@ -121,14 +137,14 @@ class FinderPlotControlBar(QWidget):
         self.pattern_offset_slider.valueChanged.connect(self._set_offset_value)
         self.pattern_offset_slider.valueChanged.connect(self.patternOffsetPercentChanged)
 
-        self.cursor_position_status_label = QLabel(self)
+        self.cursor_position_status_label = CursorReadoutLabel(self)
         self.cursor_position_status_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         self.cursor_position_status_label.setObjectName('cursorReadout')
         self.cursor_position_status_label.setMinimumHeight(24)
         self.cursor_position_status_label.setSizePolicy(
-            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
             QSizePolicy.Policy.Fixed,
         )
         self.set_cursor_readout()
@@ -159,30 +175,53 @@ class FinderPlotControlBar(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._update_control_layout()
+        # Our own fixed-height update must not start another adaptation pass.
+        if event.size().width() != event.oldSize().width():
+            self._update_control_layout()
 
     def _update_control_layout(self) -> None:
-        if not hasattr(self, '_flow_layout'):
+        if not hasattr(self, '_flow_layout') or self._updating_control_layout:
             return
-        density=getattr(self.window(),"_ui_density_factor",1.)
-        self._bar_layout.setContentsMargins(round(8*density),round(5*density),round(8*density),round(5*density))
-        self._bar_layout.setSpacing(max(1,round(6*density)))
-        available=max(1,self.width()-round(16*density)-2)
-        self._controls.show()
-        show_cursor=True
-        self.cursor_position_status_label.show()
-        cursor_width=self.cursor_position_status_label.sizeHint().width() if show_cursor else 0
-        horizontal=self._flow_layout.sizeHint().width()+cursor_width+round(6*density)<=available
-        direction=QBoxLayout.Direction.LeftToRight if horizontal else QBoxLayout.Direction.TopToBottom
-        self._bar_layout.setDirection(direction)
-        controls_width=available-cursor_width-round(6*density) if horizontal else available
-        height=self._flow_layout.heightForWidth(controls_width)
-        self._controls.setFixedHeight(height)
-        cursor_height=self.cursor_position_status_label.sizeHint().height()
-        total=(max(height,cursor_height) if horizontal else height+cursor_height+self._bar_layout.spacing())+round(10*density)+2
-        if self.minimumHeight()!=total or self.maximumHeight()!=total:
-            self.setFixedHeight(total)
-            self.updateGeometry()
+        self._updating_control_layout = True
+        try:
+            density = getattr(self.window(), '_ui_density_factor', 1.)
+            controls_hint = self._flow_layout.sizeHint()
+            cursor_hint = self.cursor_position_status_label.sizeHint()
+            input_key = (self.width(), density,
+                         controls_hint.width(), controls_hint.height(),
+                         cursor_hint.width(), cursor_hint.height())
+            if input_key == self._layout_input_key:
+                return
+            self._bar_layout.setContentsMargins(
+                round(8*density), round(5*density), round(8*density), round(5*density))
+            gap = max(1, round(6*density))
+            self._bar_layout.setSpacing(gap)
+            available = max(1, self.width() - round(16*density) - 2)
+            cursor_width = cursor_hint.width()
+            required = controls_hint.width() + cursor_width + gap
+            # Keep a small dead band when returning to one row. A one-pixel
+            # layout adjustment must not immediately reverse the last change.
+            if self._horizontal_controls is False:
+                required += max(2, round(12*density))
+            horizontal = required <= available
+            self._horizontal_controls = horizontal
+            direction = (QBoxLayout.Direction.LeftToRight if horizontal
+                         else QBoxLayout.Direction.TopToBottom)
+            if self._bar_layout.direction() != direction:
+                self._bar_layout.setDirection(direction)
+            controls_width = available - cursor_width - gap if horizontal else available
+            height = self._flow_layout.heightForWidth(max(1, controls_width))
+            if self._controls.minimumHeight() != height or self._controls.maximumHeight() != height:
+                self._controls.setFixedHeight(height)
+            cursor_height = cursor_hint.height()
+            total = (max(height, cursor_height) if horizontal else height + cursor_height + gap)
+            total += round(10*density) + 2
+            if self.minimumHeight() != total or self.maximumHeight() != total:
+                self.setFixedHeight(total)
+                self.updateGeometry()
+            self._layout_input_key = input_key
+        finally:
+            self._updating_control_layout = False
 
     def set_cursor_readout(
         self,
@@ -199,7 +238,7 @@ class FinderPlotControlBar(QWidget):
         self.cursor_position_status_label.setText(text)
         self.cursor_position_status_label.setToolTip(text)
         self.setToolTip(text)
-        self._update_control_layout()
 
     def _set_offset_value(self, value: int) -> None:
         self.pattern_offset_value.setText(f"{value}%")
+        self._update_control_layout()

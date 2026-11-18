@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 
@@ -72,6 +73,12 @@ def _outline(painter: QPainter, name: str) -> None:
 
 
 def toolbar_icon(name: str, color: str, disabled_color: str) -> QIcon:
+    # QIcon copies share rendered pixels and detach if a caller modifies one.
+    return QIcon(_cached_toolbar_icon(name, color, disabled_color))
+
+
+@lru_cache(maxsize=128)
+def _cached_toolbar_icon(name: str, color: str, disabled_color: str) -> QIcon:
     icon = QIcon()
     for scale in (1, 2, 3):
         for mode in (QIcon.Mode.Normal, QIcon.Mode.Disabled):

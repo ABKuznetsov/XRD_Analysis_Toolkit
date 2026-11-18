@@ -6,15 +6,7 @@ from pathlib import Path
 import sys
 import time
 
-from PySide6.QtGui import QIcon
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QApplication, QMessageBox
-
 from xrd_finder import __version__
-from xrd_finder.core.pattern import Pattern
-from xrd_finder.core.project import Project
-from xrd_finder.io.cif_loader import create_phase_from_cif
-from xrd_finder.io.project_io import load_project_manifest
 from xrd_finder.services.runtime_diagnostics import (
     configure_diagnostics,
     diagnostics_enabled,
@@ -22,17 +14,19 @@ from xrd_finder.services.runtime_diagnostics import (
     restore_exception_hooks,
     trace_operation,
 )
-from xrd_finder.ui.app_settings import configure_app_settings_storage
-from xrd_finder.ui.analysis_windows import PhaseFinderWindow
 
 
 def build_local_project(pattern_paths: list[str], cif_paths: list[str]) -> Project:
+    from xrd_finder.core.pattern import Pattern
+    from xrd_finder.core.project import Project
+
     project = Project(name="XRD Phase Finder Project")
     for path in pattern_paths:
         source = Path(path)
         project.patterns.append(Pattern.create(name=source.stem, source_path=str(source)))
     for path in cif_paths:
         try:
+            from xrd_finder.io.cif_loader import create_phase_from_cif
             phase, structure = create_phase_from_cif(path)
         except Exception:
             continue
@@ -48,6 +42,17 @@ def _run_gui() -> int:
     parser.add_argument("--project", help="XRD Phase Finder File (.xpff) to open")
     parser.add_argument("project_file", nargs="?", help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    # Start diagnostics before importing Qt and the scientific/UI modules.
+    # Otherwise a slow cold import is invisible in the startup log.
+    with trace_operation('startup.import_qt', slow_ms=0):
+        from PySide6.QtGui import QIcon
+        from PySide6.QtCore import Qt, QTimer, QEventLoop
+        from PySide6.QtWidgets import QApplication, QMessageBox
+    with trace_operation('startup.import_ui', slow_ms=0):
+        from xrd_finder.io.project_io import load_project_manifest
+        from xrd_finder.ui.app_settings import configure_app_settings_storage
+        from xrd_finder.ui.analysis_windows import PhaseFinderWindow
 
     configure_app_settings_storage()
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
@@ -79,11 +84,7 @@ def _run_gui() -> int:
     else:
         project = build_local_project(args.pattern, args.cif)
     with trace_operation('startup.window', patterns=len(project.patterns), slow_ms=0):
-        window = PhaseFinderWindow(project, defer_initial_plot=project_loaded)
-    if project_loaded:
-        with trace_operation('startup.restore_project', slow_ms=0):
-            window._after_project_loaded()
-    file_open_handler.set_window(window)
+        window = PhaseFinderWindow(project, defer_initial_plot=bool(project.patterns) or project_loaded)
     if icon_path.exists():
         window.setWindowIcon(QIcon(str(icon_path)))
     window.setWindowTitle(f"XRD Phase Finder - {project.name}")
@@ -109,24 +110,29 @@ def _run_gui() -> int:
     if load_error:
         QTimer.singleShot(0, lambda: QMessageBox.warning(window, "Open project failed", load_error))
     with trace_operation('startup.first_paint', slow_ms=0):
-        app.processEvents()
+        app.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
     ready_file = os.environ.get("XRD_FINDER_READY_FILE")
     if ready_file:
         try:
             Path(ready_file).write_text("ready", encoding="utf-8")
         except OSError:
             pass
-    from xrd_finder.ui.learning_startup import schedule_learning_offer
-    schedule_learning_offer(window)
-    from xrd_finder.ui.deferred_updates import schedule_update_check
-    schedule_update_check(window)
-    from xrd_finder.ui.database_warmup import schedule_database_warmup
-    schedule_database_warmup(window)
+    from xrd_finder.ui.startup_tasks import schedule_startup_tasks
+    restore = (window._after_project_loaded if project_loaded else
+               window._refresh_observed_pattern_plot if project.patterns else None)
+    schedule_startup_tasks(window, restore=restore,
+                           ready=lambda: file_open_handler.set_window(window))
     return int(app.exec())
 
 
 def main() -> int:
+    # The platform launcher captures stdout before Python imports the UI.
+    if sys.stdout is not None:
+        print(f'event=startup.entry wall_time={time.time():.3f}', flush=True)
+    diagnostic_started = time.perf_counter()
     session = configure_diagnostics(__version__) if diagnostics_enabled() else None
+    if sys.stdout is not None:
+        print(f'event=startup.diagnostics elapsed_ms={(time.perf_counter()-diagnostic_started)*1000:.1f}', flush=True)
     if session is not None:
         install_exception_hooks()
     try:

@@ -76,6 +76,8 @@ def launch(root: Path, data: Path, logs: Path, arguments: list[str], *, environ=
     env.pop('XRD_FINDER_SHOW_SIGNAL_FILE', None)
     env.pop('XRD_FINDER_PREPARED_FILE', None)
     with (logs / 'xrd_finder_console.log').open('w', encoding='utf-8') as output:
+        output.write(f'event=launcher.gui_spawn wall_time={time.time():.3f}\n')
+        output.flush()
         process = subprocess.Popen([str(python or sys.executable), '-m', entry, *arguments],
                                    cwd=str(root), env=env, stdout=output,
                                    stderr=subprocess.STDOUT,

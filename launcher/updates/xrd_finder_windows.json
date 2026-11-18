@@ -1,36 +1,35 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "channel": "stable",
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
-  "published_at": "2026-11-08",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.1/XRD_Phase_Finder_Setup_v1_7_1.exe",
-  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.1",
+  "published_at": "2026-11-18",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.2/XRD_Phase_Finder_Setup_v1_7_2.exe",
+  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.2",
   "assets": [
     {
-      "name": "XRD_Phase_Finder_Setup_v1_7_1.exe",
+      "name": "XRD_Phase_Finder_Setup_v1_7_2.exe",
       "type": "installer",
       "platform": "windows",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.1/XRD_Phase_Finder_Setup_v1_7_1.exe",
-      "sha256": "3ed7d1cc43001af4ae8f9611bc6c52f1c377d83e96e61fe6b8cd207d723b6bf2",
-      "size_bytes": 5649941
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.2/XRD_Phase_Finder_Setup_v1_7_2.exe",
+      "sha256": "f393ee73ffdd41705ea7b31522d2db0e37fe7c9e80e3b2140d5a5f2f6515122a",
+      "size_bytes": 5651837
     }
   ],
   "summary": [
-    "Preserve project-linked CIF IDs and prevent duplicate cards on legacy library reimport.",
-    "Start Identify phases with one click; use its integrated arrow for settings and Finish auto search to retain results.",
-    "Add database provenance labels, organic/MOF connections and clearer database descriptions.",
-    "Improve peak detection, batched card loading, native startup and macOS project opening.",
-    "Protect XPFF extraction and refuse unreliable Quant for indistinguishable phase profiles."
+    "Open one main Finder window directly from Windows shortcuts, retaining automatic runtime repair when needed.",
+    "Avoid save prompts for unchanged projects, browsing and automatic calculation-cache refreshes.",
+    "Stabilize plot controls near layout wrapping thresholds and reuse toolbar icons.",
+    "Show the workspace before restoring project graphs; defer optional startup tasks and PDF-2 preparation."
   ],
-  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.1/XRD_Phase_Finder_Setup_v1_7_1.exe",
-  "installer_sha256": "3ed7d1cc43001af4ae8f9611bc6c52f1c377d83e96e61fe6b8cd207d723b6bf2",
-  "installer_filename": "XRD_Phase_Finder_Setup_v1_7_1.exe",
-  "installer_size_bytes": 5649941,
+  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.2/XRD_Phase_Finder_Setup_v1_7_2.exe",
+  "installer_sha256": "f393ee73ffdd41705ea7b31522d2db0e37fe7c9e80e3b2140d5a5f2f6515122a",
+  "installer_filename": "XRD_Phase_Finder_Setup_v1_7_2.exe",
+  "installer_size_bytes": 5651837,
   "platform_versions": {
-    "windows": "1.7.1"
+    "windows": "1.7.2"
   },
-  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.1"
+  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.2"
 }

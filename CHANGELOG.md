@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.2 - 2026-11-18
+
+- Open one main Finder window directly from Windows shortcuts, retaining automatic runtime repair when needed.
+- Avoid save prompts for unchanged projects, browsing and automatic calculation-cache refreshes.
+- Stabilize plot controls near layout wrapping thresholds and reuse toolbar icons.
+- Show the workspace before restoring project graphs; defer optional startup tasks and PDF-2 preparation.
+
+
 ## 1.7.1 - 2026-11-07
 
 - Include verified download-and-install updates in the macOS package: fetch fresh manifests, validate size/SHA-256, preserve the save/cancel path and open Installer only after Finder exits.
