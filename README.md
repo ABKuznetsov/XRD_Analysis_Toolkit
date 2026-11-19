@@ -6,6 +6,8 @@
 
 **XRD Phase Finder** is a desktop program for interpreting powder X-ray diffraction patterns. It combines the experimental pattern, phase candidates, calculated profiles, selected phases and residual signal in one interface.
 
+Kuznetsov, A. (2027). *J. Appl. Cryst.* **60**, [https://doi.org/10.1107/S1600576726011489](https://doi.org/10.1107/S1600576726011489).
+
 [![Explore XRD Phase Finder: interactive presentation and hands-on guide](assets/interactive-presentation.png)](https://abkuznetsov.github.io/XRD_Analysis_Toolkit/)
 
 **[Explore the interactive presentation and live guide →](https://abkuznetsov.github.io/XRD_Analysis_Toolkit/)**
@@ -22,9 +24,26 @@ The [1.7.2 release](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases
 
 ## Main window
 
-![XRD Phase Finder main window with labeled workspace areas](assets/main_window_fig3.jpg)
+![Current XRD Phase Finder interface with colored panel labels A–H](assets/main_window_1_7_2_colored_panels_bold.png)
 
-The project tree (A) contains imported patterns and structures. The toolbar (B) provides the main file and analysis actions. The plot (C) shows experimental and calculated patterns. The element panel (D) controls the search composition. Selected phases appear in table (E), candidates in table (F), and the active card details in panel (G).
+| Label | Frame colour | Workspace area |
+| --- | --- | --- |
+| **A** | Purple | Project tree: patterns, structures and series, with visibility and order controls. |
+| **B** | Blue | Main toolbar: project files, import, phase identification, peak search and settings. |
+| **C** | Green | Diffraction plot: individual or stacked patterns, phase markers and legends. |
+| **D** | Orange | Element filters, source selection and composition-based database search. |
+| **E** | Red | Selected phases: colour, Fit / Peaks, estimated weight fractions and I/Ic. |
+| **F** | Turquoise | Candidate table: database cards, formulas, source labels, Match and Gain. |
+| **G** | Pink | Phase details tab: open the active reference card and its crystallographic information. |
+| **H** | Yellow | Contextual Help toggle: click a control to read its explanation. |
+
+## Helper
+
+Open **Help → Learn Finder** for the guided Helper. Choose the complete workflow or a shorter route for phase identification, pattern preparation or library management. You can work with your own XRD or open the separate training demo.
+
+**Show me** highlights the relevant control. **Explanation** describes its purpose, location and expected result. **Check step**, **Next**, **Skip** and **Pause** let you control the pace; learning progress is stored locally.
+
+For a quick explanation of a single control, use the toolbar **Help** toggle (**H** in the image), then click that control. Press **Esc** to leave contextual Help.
 
 ## Main features
 
@@ -82,7 +101,7 @@ Download and run the current `.pkg` from the release page. For a direct source r
 2. Set the radiation and instrument profile when needed.
 3. Use the Processing tab to adjust smoothing, background, crop and amorphous contribution.
 4. Select required or possible elements in the periodic table.
-5. Click **Identify phases**, review the search settings and start the search. Use **Search database** for manual composition-based lookup.
+5. Click **Identify phases** to start automatic matching. Its arrow opens search settings. Use **Search database** for manual composition-based lookup.
 6. Accept confirmed phases and review the residual signal and Gain suggestions.
 7. Save the interpretation as an `.xpff` project.
 

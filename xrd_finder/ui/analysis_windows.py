@@ -2302,7 +2302,10 @@ class PhaseFinderWindow(
                 "disabled with <code>XRD_FINDER_DIAGNOSTICS=0</code>.<br><br>"
                 'Project: <a href="https://github.com/ABKuznetsov/XRD_Analysis_Toolkit">'
                 "github.com/ABKuznetsov/XRD_Analysis_Toolkit</a><br>"
-                "License: MIT"
+                "License: MIT<br><br>"
+                "Kuznetsov, A. (2027). <i>J. Appl. Cryst.</i> <b>60</b>, "
+                '<a href="https://doi.org/10.1107/S1600576726011489">'
+                "https://doi.org/10.1107/S1600576726011489</a>."
             ),
         )
 
