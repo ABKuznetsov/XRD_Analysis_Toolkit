@@ -26,12 +26,12 @@
       "size_bytes": 6636380
     },
     {
-      "name": "XRD_Phase_Finder_1.6.9_amd64.deb",
+      "name": "XRD_Phase_Finder_1.7.2_amd64.deb",
       "type": "installer",
       "platform": "linux",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_1.6.9_amd64.deb",
-      "sha256": "2e602c7c099dcacdfa70335143c8ddcd33065fdb9f3eb29ace0abd8bdaada61a",
-      "size_bytes": 77714354
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.2/XRD_Phase_Finder_1.7.2_amd64.deb",
+      "sha256": "5006d3b7971ff487675888dd833fa06f14c78c19bcde961fe09bdcff9e06abb2",
+      "size_bytes": 77871000
     }
   ],
   "summary": [
@@ -49,11 +49,13 @@
   "platform_versions": {
     "windows": "1.7.2",
     "macos": "1.7.2",
-    "linux": "1.6.9"
+    "linux": "1.7.2"
   },
   "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.2",
-  "linux_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_1.6.9_amd64.deb",
-  "linux_installer_sha256": "2e602c7c099dcacdfa70335143c8ddcd33065fdb9f3eb29ace0abd8bdaada61a",
+  "linux_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.2/XRD_Phase_Finder_1.7.2_amd64.deb",
+  "linux_installer_sha256": "5006d3b7971ff487675888dd833fa06f14c78c19bcde961fe09bdcff9e06abb2",
   "macos_installer_filename": "XRD_Phase_Finder_macOS_1.7.2.pkg",
-  "macos_installer_size_bytes": 6636380
+  "macos_installer_size_bytes": 6636380,
+  "linux_installer_filename": "XRD_Phase_Finder_1.7.2_amd64.deb",
+  "linux_installer_size_bytes": 77871000
 }

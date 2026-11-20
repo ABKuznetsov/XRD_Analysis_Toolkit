@@ -17,10 +17,10 @@ The nine horizontal slides introduce capabilities, data sources, libraries, inst
 ## Download
 
 - [Windows installer (1.7.2): XRD_Phase_Finder_Setup_v1_7_2.exe](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.2/XRD_Phase_Finder_Setup_v1_7_2.exe)
-- [macOS package (1.7.1): XRD_Phase_Finder_macOS_1.7.1.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.1/XRD_Phase_Finder_macOS_1.7.1.pkg)
-- [Ubuntu / Debian package (1.6.9): XRD_Phase_Finder_1.6.9_amd64.deb](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.6.9/XRD_Phase_Finder_1.6.9_amd64.deb)
+- [macOS package (1.7.2): XRD_Phase_Finder_macOS_1.7.2.pkg](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.2/XRD_Phase_Finder_macOS_1.7.2.pkg)
+- [Ubuntu / Debian package (1.7.2): XRD_Phase_Finder_1.7.2_amd64.deb](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.2/XRD_Phase_Finder_1.7.2_amd64.deb)
 
-The [1.7.2 release](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.2) includes updated source code and the Windows installer. macOS remains at 1.7.1 and Linux at 1.6.9; direct download links are listed above.
+The [1.7.2 release](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.2) includes source code and installers for Windows, macOS and Linux; direct download links are listed above.
 
 ## Main window
 
@@ -69,7 +69,7 @@ On first launch, the launcher checks the per-user scientific Python runtime and 
 
 ### Ubuntu / Debian Linux
 
-Download `XRD_Phase_Finder_1.6.9_amd64.deb` from the [1.6.9 release](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.6.9) and install it with your package manager. The application can also be started from source:
+Download `XRD_Phase_Finder_1.7.2_amd64.deb` from the [1.7.2 release](https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.2) and install it with your package manager. The application can also be started from source:
 
 ```bash
 git clone https://github.com/ABKuznetsov/XRD_Analysis_Toolkit.git
