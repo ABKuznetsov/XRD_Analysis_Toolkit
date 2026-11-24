@@ -8,7 +8,6 @@ import math
 from pathlib import Path
 
 import numpy as np
-from scipy.optimize import nnls
 
 from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.io.native_cif_session import read_native_cif
@@ -142,6 +141,7 @@ def fit_accepted_phases(items, x, target, context, instrument, calculator, *,
     so plotted phase contributions cannot describe a different mixture.
     Cached reference cards require their local CIF for this physical model.
     """
+    from scipy.optimize import nnls
     def unavailable(reason):
         if diagnostics is not None:
             diagnostics.append(reason)

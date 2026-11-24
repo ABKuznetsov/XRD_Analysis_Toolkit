@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSlider,
     QSizePolicy,
     QSpinBox,
     QTableWidget,
@@ -119,6 +120,8 @@ class PlotViewSettings:
     calculated_color: str = "#0b8043"
     background_color: str = "#9aa0a6"
     reference_color: str = "#1a73e8"
+    difference_color: str = '#6f45a3'
+    highlight_active_profile: bool = True
     observed_draw_mode: str = "Line"
     observed_width: float = 1.35
     calculated_width: float = 1.6
@@ -132,6 +135,7 @@ class PlotViewSettings:
     difference_fraction: float = 0.24
     marker_size: int = 7
     marker_shape: str = "Circle"
+    weak_marker_sensitivity: int = 0
 
 
 _MARKER_SYMBOLS = {
@@ -161,11 +165,13 @@ def plot_style_from_view_settings(settings: PlotViewSettings) -> PlotStyle:
         background=PlotLineStyle(width=max(settings.background_width, 0.2), color=settings.background_color),
         reference=PlotLineStyle(width=max(settings.reference_width, 0.2), color=settings.reference_color),
         stick=PlotLineStyle(width=max(settings.stick_width, 0.2)),
-        marker=PlotMarkerStyle(size=settings.marker_size, symbol=marker_symbol),
+        marker=PlotMarkerStyle(size=settings.marker_size, symbol=marker_symbol,
+                              weak_peak_sensitivity=max(0,min(100,int(settings.weak_marker_sensitivity)))),
         phase_profile_scale=max(float(settings.phase_profile_scale), 0.0),
         preview_stick_fraction=max(float(settings.preview_stick_fraction), 0.0),
         phase_tick_fraction=max(float(settings.phase_tick_fraction), 0.0),
         difference_fraction=max(float(settings.difference_fraction), 0.0),
+        difference_color=settings.difference_color,
     )
 
 
@@ -677,6 +683,11 @@ class PlotViewSettingsWidget(QScrollArea):
         layout.setSpacing(2)
         self.observed_color_input = QLineEdit("#202124")
         self.observed_color_input.textChanged.connect(self._emit_settings)
+        self.highlight_active_profile_checkbox = QCheckBox('Emphasize active profile')
+        self.highlight_active_profile_checkbox.setChecked(True)
+        self.highlight_active_profile_checkbox.toggled.connect(self._emit_settings)
+        self.difference_color_input = QLineEdit('#6f45a3')
+        self.difference_color_input.textChanged.connect(self._emit_settings)
         self._all_observed_black = False
         self.observed_draw_mode_combo = QComboBox()
         self.observed_draw_mode_combo.addItems(["Line", "Scatter", "Line + scatter"])
@@ -707,6 +718,7 @@ class PlotViewSettingsWidget(QScrollArea):
                 ("Color", self._color_control(self.observed_color_input)),
                 ("Display", self.observed_draw_mode_combo),
                 ("Line width", self.observed_width_spin),
+                ('Highlight', self.highlight_active_profile_checkbox),
             ],
         )
         self._add_line_group(
@@ -747,6 +759,7 @@ class PlotViewSettingsWidget(QScrollArea):
             layout,
             "Difference curve",
             [
+                ('Color', self._color_control(self.difference_color_input)),
                 ("Lane height", self.difference_height_spin),
             ],
         )
@@ -775,6 +788,19 @@ class PlotViewSettingsWidget(QScrollArea):
         self.marker_shape_combo.currentTextChanged.connect(self._emit_settings)
         form.addRow("Size", self.marker_size_spin)
         form.addRow("Shape", self.marker_shape_combo)
+        self.weak_markers_slider = QSlider(Qt.Orientation.Horizontal)
+        self.weak_markers_slider.setRange(0,100)
+        self.weak_markers_slider.setTracking(False)
+        self.weak_markers_slider.setToolTip('Higher values show more weak phase markers. Peak assignments and search results are unchanged.')
+        self.weak_markers_slider.valueChanged.connect(self._emit_settings)
+        self.weak_markers_value = QLabel('0%')
+        self.weak_markers_slider.valueChanged.connect(lambda value:self.weak_markers_value.setText(f'{value}%'))
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0,0,0,0)
+        layout.addWidget(self.weak_markers_slider,1)
+        layout.addWidget(self.weak_markers_value)
+        form.addRow('Weak markers',row)
         return widget
 
     def _spin(self, minimum: int, maximum: int, value: int) -> QSpinBox:
@@ -947,6 +973,8 @@ class PlotViewSettingsWidget(QScrollArea):
             calculated_color=self.calculated_color_input.text().strip() or "#0b8043",
             background_color=self.background_color_input.text().strip() or "#9aa0a6",
             reference_color=self.reference_color_input.text().strip() or "#1a73e8",
+            difference_color=self.difference_color_input.text().strip() or '#6f45a3',
+            highlight_active_profile=bool(self.highlight_active_profile_checkbox.isChecked()),
             observed_draw_mode=self.observed_draw_mode_combo.currentText(),
             observed_width=float(self.observed_width_spin.value()),
             calculated_width=float(self.calculated_width_spin.value()),
@@ -960,6 +988,7 @@ class PlotViewSettingsWidget(QScrollArea):
             difference_fraction=float(self.difference_height_spin.value()),
             marker_size=int(self.marker_size_spin.value()),
             marker_shape=self.marker_shape_combo.currentText(),
+            weak_marker_sensitivity=int(self.weak_markers_slider.value()),
         )
 
     def reset(self) -> None:
@@ -1097,6 +1126,8 @@ class PlotViewSettingsWidget(QScrollArea):
         self.calculated_color_input.setText(settings.calculated_color)
         self.background_color_input.setText(settings.background_color)
         self.reference_color_input.setText(settings.reference_color)
+        self.difference_color_input.setText(settings.difference_color)
+        self.highlight_active_profile_checkbox.setChecked(settings.highlight_active_profile)
         self.observed_width_spin.setValue(settings.observed_width)
         self.calculated_width_spin.setValue(settings.calculated_width)
         self.background_width_spin.setValue(settings.background_width)
@@ -1109,6 +1140,7 @@ class PlotViewSettingsWidget(QScrollArea):
         self.difference_height_spin.setValue(settings.difference_fraction)
         self.marker_size_spin.setValue(settings.marker_size)
         self.marker_shape_combo.setCurrentText(settings.marker_shape)
+        self.weak_markers_slider.setValue(settings.weak_marker_sensitivity)
 
     def _emit_settings(self, *_args) -> None:
         self.settingsChanged.emit(self.settings())

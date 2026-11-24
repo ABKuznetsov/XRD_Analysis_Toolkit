@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtGui import QFont
-from scipy.signal import find_peaks
 
 from xrd_finder.services.calculated_pattern_service import CU_KA1_WAVELENGTH
 from xrd_finder.ui.hkl_labels import HklLabelItem, primary_hkl_peaks

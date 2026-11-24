@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from typing import Callable
 
 import numpy as np
-from scipy.ndimage import gaussian_filter1d
 
 from xrd_finder.finder import FinderCandidateInput
 from xrd_finder.core.structure import CellParameters
@@ -261,6 +260,7 @@ def draw_match_profile_result(
     show_peak_labels: bool = False,
     show_background_line: bool = True,
 ) -> dict[str, object]:
+    from scipy.ndimage import gaussian_filter1d
     style = style or PlotStyle()
     x = np.asarray(result.pattern_x, dtype=float)
     result_observed_y = np.asarray(result.pattern_y, dtype=float)
@@ -507,7 +507,7 @@ def draw_match_profile_result(
             match_plot,
             x,
             difference_y,
-            "#6f45a3",
+            style.difference_color,
             "difference",
             width=max(style.background.width + 0.4, 1.4),
         )

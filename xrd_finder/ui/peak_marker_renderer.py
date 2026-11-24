@@ -4,7 +4,6 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QRectF
 from PySide6.QtGui import QFont, QPainterPath
-from scipy.signal import peak_prominences
 
 from xrd_finder.ui.plot_style import PlotStyle
 
@@ -124,7 +123,9 @@ def _positive_grid_step(x: np.ndarray) -> float:
 def _is_significant_peak(
     x: np.ndarray, corrected_y: np.ndarray, y_index: int, sigma: float,
     *, grid_step: float | None = None,
+    sensitivity: int = 0,
 ) -> bool:
+    from scipy.signal import peak_prominences
     if sigma <= 0.0 or corrected_y.size == 0:
         return True
     y_index = max(0, min(int(y_index), corrected_y.size - 1))
@@ -159,14 +160,15 @@ def _is_significant_peak(
     prominence = float(peak_prominences(local, np.asarray([peak_index], dtype=int))[0][0])
     local_x = np.asarray(x[local_start:local_stop], dtype=float)
     local_sigma = _local_background_sigma(local_x, local, float(x[local_start + peak_index]))
-    # Five sigmas keeps publication markers away from ordinary noise. Cap the
+    # The default five-sigma threshold keeps markers away from ordinary noise.
+    # The display slider can reveal weaker already assigned maxima. Cap the
     # local estimate because neighbouring diffraction peaks are structure, not
     # noise, and otherwise they can hide a genuine phase-supported maximum.
     global_sigma = max(float(sigma), 0.0)
     effective_sigma = max(global_sigma, float(local_sigma))
     if global_sigma > 0.0:
         effective_sigma = min(effective_sigma, global_sigma * 1.15)
-    threshold = 5.0 * effective_sigma
+    threshold = (5.0-4.0*float(np.clip(sensitivity,0,100))/100.) * effective_sigma
     return bool(
         np.isfinite(signal)
         and np.isfinite(prominence)
@@ -353,7 +355,8 @@ def add_peak_coverage_markers(
                 matching_colors.append(color)
         if matching_colors:
             explained += 1
-            if not _is_significant_peak(x, corrected_strength, y_index, noise_sigma, grid_step=grid_step):
+            if not _is_significant_peak(x, corrected_strength, y_index, noise_sigma, grid_step=grid_step,
+                                        sensitivity=style.marker.weak_peak_sensitivity):
                 continue
             _add_colored_phase_marker(
                 plot=plot,
@@ -443,7 +446,8 @@ def add_assignment_markers(
         status = getattr(getattr(observed_peak, "status", ""), "value", getattr(observed_peak, "status", ""))
         if assignments:
             explained += 1
-            if not _is_significant_peak(x, corrected_strength, y_index, noise_sigma, grid_step=grid_step):
+            if not _is_significant_peak(x, corrected_strength, y_index, noise_sigma, grid_step=grid_step,
+                                        sensitivity=style.marker.weak_peak_sensitivity):
                 continue
             peak_fwhm = float(getattr(observed_peak, "fwhm", 0.0) or 0.0)
             if not _marker_position_available(

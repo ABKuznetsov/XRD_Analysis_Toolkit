@@ -7,7 +7,6 @@ import math
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox, QWidget
-from scipy.signal import find_peaks
 
 from xrd_finder.services.preprocessing_service import (
     adjust_background_components,
@@ -636,6 +635,7 @@ class PhaseFinderPreprocessingActionsMixin:
         )
 
     def _background_estimation_signal(self, pattern, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        from scipy.signal import find_peaks
         x = np.asarray(x, dtype=float)
         y = np.asarray(y, dtype=float)
         fit_y = np.array(y, dtype=float, copy=True)

@@ -5,8 +5,6 @@ from dataclasses import dataclass
 import math
 
 import numpy as np
-from scipy.ndimage import gaussian_filter1d
-from scipy.optimize import minimize_scalar, nnls
 
 from xrd_finder.services.calculated_pattern_service import PROFILE_WINDOW_FACTOR
 
@@ -34,6 +32,7 @@ def broaden_profile(x, profile, sample_fwhm_deg):
     This effective Gaussian width is not a crystallite size or microstrain.
     The normalized kernel preserves integrated intensity away from boundaries.
     """
+    from scipy.ndimage import gaussian_filter1d
     x = np.asarray(x, dtype=float)
     y = np.asarray(profile, dtype=float)
     width = float(sample_fwhm_deg)
@@ -57,6 +56,7 @@ def fit_sample_broadening(*, x, target, phase_positions, observed_peaks,
     texture/relative-intensity errors. Unmatched maxima are never new anchors.
     The instrument stays fixed; the scalar search has a strict evaluation budget.
     """
+    from scipy.optimize import minimize_scalar
     x = np.asarray(x, dtype=float)
     y = np.asarray(target, dtype=float)
     if (x.ndim != 1 or y.shape != x.shape or len(x) < 5
@@ -108,6 +108,7 @@ def fit_sample_broadening(*, x, target, phase_positions, observed_peaks,
     evaluations = 0
 
     def error(width):
+        from scipy.optimize import nnls
         nonlocal evaluations
         evaluations += 1
         profile = np.asarray(profile_factory(width), dtype=float)

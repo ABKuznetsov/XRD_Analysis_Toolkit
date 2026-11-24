@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.signal import find_peaks, peak_widths, savgol_filter
 
 from xrd_finder.finder.models import FinderInput, ObservedPeak
 from xrd_finder.io.xy_loader import load_xy
@@ -56,6 +55,7 @@ class ObservedPatternProcessor:
         return np.asarray(observed[:, 0], dtype=float), np.asarray(observed[:, 1], dtype=float)
 
     def smooth_y(self, y: np.ndarray, window: int) -> np.ndarray:
+        from scipy.signal import savgol_filter
         if window <= 2 or len(y) < 5:
             return y
         window = min(int(window), len(y) - 1 if len(y) % 2 == 0 else len(y))
@@ -102,6 +102,7 @@ class ObservedPatternProcessor:
         )
 
     def estimate_fwhm(self, x: np.ndarray, y: np.ndarray) -> float:
+        from scipy.signal import find_peaks, peak_widths
         if len(x) < 5 or float(np.nanmax(y)) <= 0:
             return 0.18
         prominence = max(_robust_noise(y) * 5.0, float(np.nanpercentile(y, 95)) * 0.04, 1.0)
@@ -121,6 +122,7 @@ class ObservedPatternProcessor:
         return np.asarray([peak.two_theta for peak in self.observed_peaks(x, y, 0.18)], dtype=float)
 
     def observed_peaks(self, x: np.ndarray, y: np.ndarray, fwhm: float) -> list[ObservedPeak]:
+        from scipy.signal import find_peaks, peak_widths
         if len(x) < 5 or float(np.nanmax(y)) <= 0:
             return []
         step = _median_step(x)

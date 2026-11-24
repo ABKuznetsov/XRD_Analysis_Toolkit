@@ -978,6 +978,7 @@ class CandidateTableWidget(_ColumnLayoutTableWidget):
 class SelectedCandidatesTableWidget(_ColumnLayoutTableWidget):
     DEFAULT_COLUMN_PROPORTIONS = DEFAULT_TABLE_PROPORTIONS['accepted']
     rowClicked = Signal(int)
+    colorChangeRequested = Signal(int)
     contextRequested = Signal(QPoint)
     phaseNameEdited = Signal(int, str)
 
@@ -992,6 +993,7 @@ class SelectedCandidatesTableWidget(_ColumnLayoutTableWidget):
         self.setToolTip(
             "Selected phases\n"
             "Single click: show the calculated profile and markers for this phase.\n"
+            "Click the Color cell to choose the phase color.\n"
             "Double click the Phase cell to rename the phase for tables and figures.\n"
             "Right click: rename, change color, export CIF, remove phase, or clear the list."
         )
@@ -1044,6 +1046,7 @@ class SelectedCandidatesTableWidget(_ColumnLayoutTableWidget):
                 for column, value in enumerate(row[:column_count]):
                     item = QTableWidgetItem('' if column == 0 else value)
                     if column == 0:
+                        item.setToolTip('Click to change the phase color')
                         color = QColor(value)
                         if color.isValid():
                             item.setBackground(color)
@@ -1057,10 +1060,13 @@ class SelectedCandidatesTableWidget(_ColumnLayoutTableWidget):
             self.setUpdatesEnabled(True)
         self.viewport().update()
 
-    def _emit_row_clicked(self, row: int, _column: int) -> None:
+    def _emit_row_clicked(self, row: int, column: int) -> None:
         if row >= 0:
             self.selectRow(row)
-        self.rowClicked.emit(row)
+            if column == 0:
+                self.colorChangeRequested.emit(row)
+            else:
+                self.rowClicked.emit(row)
 
     def _emit_context_request(self, point: QPoint) -> None:
         row = self.rowAt(point.y())

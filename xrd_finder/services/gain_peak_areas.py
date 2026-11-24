@@ -4,7 +4,6 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from scipy.optimize import nnls
 
 
 def remaining_peak_areas(records, patterns):
@@ -15,6 +14,7 @@ def remaining_peak_areas(records, patterns):
     experimental area. Duplicate accepted cards share the same fitted signal.
     Measured widths set positional support; native strengths stay unchanged.
     """
+    from scipy.optimize import nnls
     if not records:
         return np.empty(0), np.empty(0,dtype=bool)
     observed=np.asarray([r.area for r in records],dtype=float)

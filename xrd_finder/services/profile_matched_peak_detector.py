@@ -5,7 +5,6 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 
 import numpy as np
-from scipy.signal import find_peaks
 
 from xrd_finder.finder.residual_peak_refinement import (
     pseudo_voigt_radiation_profile,
@@ -48,6 +47,7 @@ def profile_matched_peak_hypotheses(
 ) -> tuple[ProfileMatchedPeakHypothesis, ...]:
     """Detect residual peaks with a bank of angle-dependent XRD profiles."""
 
+    from scipy.signal import find_peaks
     x_values = np.asarray(x, dtype=float)
     signal = np.asarray(residual, dtype=float)
     if len(x_values) < 9 or len(signal) != len(x_values):

@@ -12,7 +12,6 @@ from pathlib import Path
 
 import numpy as np
 
-from xrd_finder import __version__
 from xrd_finder.finder.models import (
     FinderCandidateFailure, FinderCandidateResult, FinderResult,
     ObservedPeak, PeakAssignment, PeakStatus,
@@ -20,8 +19,11 @@ from xrd_finder.finder.models import (
 
 
 RESULT_FORMAT_VERSION = 1
+# Preserve the existing signature namespace across application-only releases.
+# Scientific changes are guarded by CALCULATION_REVISION and dependency versions.
+CALCULATION_CACHE_EPOCH = '1.7.2'
 # Bump when changing the scientific calculation without an application release.
-CALCULATION_REVISION = '2026-11-05-common-scan-zero-operator-decision-3'
+CALCULATION_REVISION = '2026-11-20-independent-position-lines-4'
 
 
 @lru_cache(maxsize=256)
@@ -54,7 +56,7 @@ def _engine_identity() -> tuple:
         except PackageNotFoundError:
             # Frozen packages may omit dist-info while exposing __version__.
             return str(getattr(import_module(name), '__version__', 'unavailable'))
-    return (__version__, CALCULATION_REVISION,
+    return (CALCULATION_CACHE_EPOCH, CALCULATION_REVISION,
             tuple((name, dependency_version(name)) for name in ('cristma', 'numpy', 'scipy', 'pybaselines')))
 
 
@@ -63,6 +65,63 @@ def make_result_record(result: FinderResult, portable_key: tuple) -> dict:
     return {'format': RESULT_FORMAT_VERSION,
             'signature': _digest((_engine_identity(), portable_key)),
             'result_sha256': _digest(payload), 'result': payload}
+
+
+def crop_saved_result(result: FinderResult, pattern_x) -> FinderResult | None:
+    """Restrict a validated saved fit to an exact subset of its sampled grid.
+
+    No background, cell or profile is fitted again. The caller must validate
+    the complete former input signature before migrating a range-only change.
+    Never interpolate, extrapolate or alter the original saved result.
+    """
+    old_x = np.asarray(result.pattern_x, dtype=float)
+    x = np.asarray(pattern_x, dtype=float)
+    if len(x) < 2 or not np.all(np.isfinite(x)) or not np.all(np.diff(x) > 0.):
+        return None
+    indices = np.searchsorted(old_x, x)
+    if np.any(indices >= len(old_x)) or not np.array_equal(old_x[indices], x):
+        return None
+    for candidate in result.candidates:
+        if candidate.two_theta and not np.array_equal(candidate.two_theta, old_x):
+            return None
+    cropped = deepcopy(result)
+    for name in ('pattern_x', 'pattern_y', 'background', 'calculated_total'):
+        setattr(cropped, name, np.asarray(getattr(result, name))[indices].tolist())
+    low, high = x[0], x[-1]
+    cropped.observed_peaks = [peak for peak in cropped.observed_peaks if low <= peak.two_theta <= high]
+    for candidate in cropped.candidates:
+        for name in ('two_theta', 'profile', 'mass_profile'):
+            values = getattr(candidate, name)
+            if values:
+                setattr(candidate, name, np.asarray(values)[indices].tolist())
+        count = len(candidate.peak_two_theta)
+        keep = [i for i, angle in enumerate(candidate.peak_two_theta) if low <= angle <= high]
+        evidence_changed = (len(keep) != count
+                            or len(cropped.observed_peaks) != len(result.observed_peaks))
+        for name in ('peak_two_theta', 'peak_reference_two_theta', 'peak_intensity', 'peak_h', 'peak_k', 'peak_l'):
+            values = getattr(candidate, name)
+            if values:
+                if len(values) != count:
+                    return None
+                setattr(candidate, name, [values[i] for i in keep])
+        if evidence_changed:
+            # Update only descriptive line counts using existing peaks; no
+            # detection or scientific fit is launched for the retained trace.
+            from xrd_finder.finder.matching import search_match_result
+            from xrd_finder.services.calculated_pattern_service import HKLPeak
+            if any(len(getattr(candidate, name)) != len(keep)
+                   for name in ('peak_intensity', 'peak_h', 'peak_k', 'peak_l')):
+                return None
+            peaks = [HKLPeak(h,k,l,0.,angle,intensity) for angle,intensity,h,k,l in zip(
+                candidate.peak_two_theta, candidate.peak_intensity,
+                candidate.peak_h, candidate.peak_k, candidate.peak_l, strict=True)]
+            matched = search_match_result(peaks, [peak.two_theta for peak in cropped.observed_peaks])
+            for name in ('score', 'status', 'matched_peaks', 'total_peaks', 'mean_delta_two_theta'):
+                setattr(candidate, name, getattr(matched, name))
+            candidate.matched_reference_two_theta = [item.reference_two_theta for item in matched.matches]
+            candidate.matched_observed_two_theta = [item.observed_two_theta for item in matched.matches]
+            candidate.matched_delta_two_theta = [item.delta_two_theta for item in matched.matches]
+    return cropped
 
 
 def restore_result(record, portable_key: tuple) -> FinderResult | None:
@@ -75,11 +134,16 @@ def restore_result(record, portable_key: tuple) -> FinderResult | None:
             return None
         identity = _engine_identity()
         if record.get('signature') != _digest((identity, portable_key)):
-            # This revision only adds an operator decision for previously
-            # rejected zero proposals. Already confirmed geometry is unchanged.
-            previous = (identity[0], '2026-11-05-common-scan-zero-large-seed-2', identity[2])
+            # Independently confirmed geometry remains reusable. Unvalidated
+            # old fits must retry the independent-line/extended-cell rescue.
+            previous = [
+                (identity[0], revision, identity[2]) for revision in (
+                    '2026-11-05-common-scan-zero-large-seed-2',
+                    '2026-11-05-common-scan-zero-operator-decision-3',
+                )
+            ]
             if (payload.get('position_refinement', {}).get('zero_confirmed') is not True
-                    or record.get('signature') != _digest((previous, portable_key))):
+                    or not any(record.get('signature') == _digest((old, portable_key)) for old in previous)):
                 return None
         if record.get('result_sha256') != _digest(payload):
             return None

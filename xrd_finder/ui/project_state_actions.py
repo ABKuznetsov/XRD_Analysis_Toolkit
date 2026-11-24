@@ -112,6 +112,7 @@ class PhaseFinderProjectStateActionsMixin:
             ),
             phase_colors={str(key): str(value) for key, value in self.phase_colors.items()},
             observed_pattern_colors={str(key): str(value) for key, value in self.observed_pattern_colors.items()},
+            common_phase_legend_position=list(getattr(self.project.finder_state, 'common_phase_legend_position', []) or []),
             plot_view_range=view_range,
             selected_elements=sorted(self.selected_elements, key=element_sort_key),
             selected_element_order=list(self.selected_element_order),

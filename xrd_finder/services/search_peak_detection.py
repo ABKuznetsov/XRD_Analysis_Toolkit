@@ -2,7 +2,6 @@
 from concurrent.futures import CancelledError
 
 import numpy as np
-from scipy.signal import find_peaks
 
 from xrd_finder.services.observed_search_preparation import (
     ObservedSearchCancelled, ObservedSearchInput, prepare_observed_search,
@@ -10,6 +9,7 @@ from xrd_finder.services.observed_search_preparation import (
 
 
 def detect_search_peak_positions(inputs: ObservedSearchInput, *, cancelled=lambda: False) -> np.ndarray:
+    from scipy.signal import find_peaks
     def check():
         if cancelled():
             raise CancelledError('Peak detection cancelled')

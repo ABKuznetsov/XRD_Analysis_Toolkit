@@ -15,9 +15,6 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable
-from scipy.ndimage import gaussian_filter1d
-from scipy.optimize import nnls
-from scipy.signal import find_peaks
 import numpy as np
 
 from xrd_finder.finder.context import CalculationContext
@@ -204,6 +201,7 @@ class GainCalculationMixin:
         return estimate_profile_fwhm(x, corrected_y)
 
     def _fit_weights(self, corrected_y: np.ndarray) -> np.ndarray:
+        from scipy.signal import find_peaks
         y = np.asarray(corrected_y, dtype=float)
         if len(y) == 0:
             return np.ones_like(y)
@@ -528,6 +526,7 @@ class GainCalculationMixin:
             return 0.0
 
     def _gain_observed_records(self, context, limit: int = 80) -> list[ObservedLineRecord]:
+        from scipy.signal import find_peaks
         if "peak_search" in context:
             direct, _shared = gain_peak_retrieval_records(context["peak_search"])
             return list(direct[:limit])
@@ -1763,6 +1762,7 @@ class GainCalculationMixin:
         return float(np.clip(np.mean(values), 0.0, 1.0))
 
     def _gain_residual_target(self, difference_curve: np.ndarray, x: np.ndarray, fwhm: float) -> np.ndarray:
+        from scipy.ndimage import gaussian_filter1d
         values = np.asarray(difference_curve, dtype=float)
         if len(values) == 0:
             return values
@@ -2090,6 +2090,7 @@ class GainCalculationMixin:
         return float(np.clip(signal ** 0.85, 0.0, 1.0))
 
     def _fit_nonnegative_scales(self, target: np.ndarray, profiles: list[np.ndarray], weights: np.ndarray) -> list[float]:
+        from scipy.optimize import nnls
         target_values = np.clip(np.asarray(target, dtype=float), 0.0, None)
         result = [0.0] * len(profiles)
         usable: list[np.ndarray] = []

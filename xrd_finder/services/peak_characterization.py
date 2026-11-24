@@ -3,7 +3,6 @@ from dataclasses import dataclass
 import math
 
 import numpy as np
-from scipy.signal import find_peaks, peak_widths
 
 from xrd_finder.finder.residual_peak_refinement import RefinedResidualPeak, refine_residual_peak
 
@@ -32,6 +31,7 @@ def _noise_sigma(y):
 
 
 def characterize_peak(x, y, seed, *, wavelength, instrument_fwhm=0., satellite_offsets_weights=()):
+    from scipy.signal import find_peaks, peak_widths
     x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
     if x.ndim != 1 or x.shape != y.shape:
         raise ValueError('Peak data must be equal one-dimensional arrays.')

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
+    QCheckBox,
     QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
@@ -10,6 +12,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSlider,
     QStyle,
     QToolButton,
     QVBoxLayout,
@@ -28,6 +31,10 @@ class FinderActionBar(QWidget):
     instrumentProfileApplyRequested = Signal(str, str)
     instrumentProfileEditRequested = Signal()
     manualZeroShiftChanged = Signal(float)
+    plotColorRequested = Signal(str)
+    phaseColorRequested = Signal(int)
+    profileHighlightChanged = Signal(bool)
+    weakMarkersChanged = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -79,6 +86,7 @@ class FinderActionBar(QWidget):
         self._preprocessing_sections: dict[str, CollapsibleSection] = {}
         self._current_preprocessing_key: str | None = None
         self._current_preprocessing_panel: QWidget | None = None
+        self.plot_color_buttons = {}
         self._build_ui()
         self.set_instrument_targets(None, None, 0, 0)
 
@@ -167,12 +175,100 @@ class FinderActionBar(QWidget):
         peak_search_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         peak_search_layout.addRow("Tolerance [deg 2theta]", self.peak_search_tolerance)
         layout.addWidget(CollapsibleSection("Peak search", peak_search_body, expanded=False))
+        layout.addWidget(CollapsibleSection('Profile colors', self._colors_section(), expanded=False))
+        layout.addWidget(CollapsibleSection('Peak markers', self._markers_section(), expanded=False))
         layout.addWidget(self._section_from_layout("Instrument and radiation", instrument_row))
         layout.addStretch(1)
 
         self.search_input.setPlaceholderText("Formula / elements / phase name")
         self.search_input.returnPressed.connect(self.searchRequested)
         self.search_input.hide()
+
+    def _colors_section(self):
+        widget = QWidget()
+        layout = QFormLayout(widget)
+        layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        for field, label in (('observed_color','Experimental profile'),
+                             ('calculated_color','Calculated total'),
+                             ('background_color','Background'),
+                             ('difference_color','Difference curve')):
+            button = QToolButton()
+            button.setMinimumSize(42,24)
+            button.clicked.connect(lambda _checked=False, key=field: self.plotColorRequested.emit(key))
+            self.plot_color_buttons[field] = button
+            layout.addRow(label,button)
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0,0,0,0)
+        self.phase_color_combo = QComboBox()
+        self.phase_color_combo.setMinimumContentsLength(8)
+        self.phase_color_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.phase_color_button = QToolButton()
+        self.phase_color_button.setMinimumSize(42,24)
+        self.phase_color_combo.currentIndexChanged.connect(self._sync_phase_color)
+        self.phase_color_button.clicked.connect(lambda: self.phaseColorRequested.emit(self.phase_color_combo.currentIndex()))
+        row_layout.addWidget(self.phase_color_combo,1)
+        row_layout.addWidget(self.phase_color_button)
+        layout.addRow('Phase markers / sticks',row)
+        self.profile_highlight_checkbox = QCheckBox('Emphasize active profile')
+        self.profile_highlight_checkbox.setChecked(True)
+        self.profile_highlight_checkbox.toggled.connect(self.profileHighlightChanged)
+        layout.addRow(self.profile_highlight_checkbox)
+        self.set_phase_colors([])
+        return widget
+
+    @staticmethod
+    def _set_color_button(button, color):
+        value = QColor(color)
+        name = value.name() if value.isValid() else '#808080'
+        button.setStyleSheet(f'background-color: {name}; border: 1px solid #7b8794; border-radius: 3px;')
+        button.setToolTip(f'Choose color ({name})')
+
+    def _markers_section(self):
+        widget = QWidget()
+        form = QFormLayout(widget)
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0,0,0,0)
+        self.weak_markers_slider = QSlider(Qt.Orientation.Horizontal)
+        self.weak_markers_slider.setRange(0,100)
+        self.weak_markers_slider.setTracking(False)
+        self.weak_markers_slider.setToolTip('Higher values show more weak phase markers. Peak assignments and search results are unchanged.')
+        self.weak_markers_value = QLabel('0%')
+        self.weak_markers_value.setMinimumWidth(34)
+        self.weak_markers_slider.valueChanged.connect(lambda value:self.weak_markers_value.setText(f'{value}%'))
+        self.weak_markers_slider.valueChanged.connect(self.weakMarkersChanged)
+        layout.addWidget(self.weak_markers_slider,1)
+        layout.addWidget(self.weak_markers_value)
+        form.addRow('Weak markers',row)
+        return widget
+
+    def set_plot_colors(self, settings):
+        for field,button in self.plot_color_buttons.items():
+            self._set_color_button(button,getattr(settings,field))
+        previous = self.profile_highlight_checkbox.blockSignals(True)
+        self.profile_highlight_checkbox.setChecked(settings.highlight_active_profile)
+        self.profile_highlight_checkbox.blockSignals(previous)
+        blocked = self.weak_markers_slider.blockSignals(True)
+        self.weak_markers_slider.setValue(settings.weak_marker_sensitivity)
+        self.weak_markers_value.setText(f'{self.weak_markers_slider.value()}%')
+        self.weak_markers_slider.blockSignals(blocked)
+
+    def set_phase_colors(self, candidates, selected_row=None):
+        previous = self.phase_color_combo.currentIndex() if selected_row is None else selected_row
+        blocked = self.phase_color_combo.blockSignals(True)
+        self.phase_color_combo.clear()
+        for candidate in candidates:
+            self.phase_color_combo.addItem(candidate.get('_DisplayName') or candidate.get('Phase') or candidate.get('Entry',''),
+                                           candidate.get('_Color','#808080'))
+        self.phase_color_combo.setCurrentIndex(min(max(previous,0),len(candidates)-1))
+        self.phase_color_combo.blockSignals(blocked)
+        self._sync_phase_color()
+
+    def _sync_phase_color(self, *_args):
+        enabled = self.phase_color_combo.currentIndex() >= 0
+        self.phase_color_button.setEnabled(enabled)
+        self._set_color_button(self.phase_color_button,self.phase_color_combo.currentData() or '#808080')
 
     def preprocessing_panel_host(self, key: str) -> QWidget | None:
         return self._preprocessing_hosts.get(str(key))

@@ -1,9 +1,9 @@
 """Shared profile-width estimate; numerical implementation unchanged."""
 import numpy as np
-from scipy.signal import find_peaks
 
 
 def estimate_profile_fwhm(x, corrected_y) -> float:
+    from scipy.signal import find_peaks
     x = np.asarray(x, dtype=float)
     y = np.asarray(corrected_y, dtype=float)
     if len(x) < 5 or float(np.nanmax(y)) <= 0:

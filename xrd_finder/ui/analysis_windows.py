@@ -43,11 +43,8 @@ from PySide6.QtWidgets import (
     QWidget,
     QDialog,
 )
-from scipy.ndimage import gaussian_filter1d
-from scipy.optimize import nnls
 import numpy as np
 import pyqtgraph as pg
-from scipy.signal import find_peaks
 from pathlib import Path
 
 from xrd_finder.services.gain_lines import GainLineMixin, candidate_cif_fingerprint
@@ -73,7 +70,7 @@ from xrd_finder.io.cif_loader import create_phase_from_cif
 from xrd_finder.io.scientific_folder_import import collect_scientific_folder_groups, unique_series_name
 from xrd_finder.io.xy_loader import load_xy
 from xrd_finder.io.project_io import PORTABLE_PROJECT_SUFFIX, load_project_manifest, save_project_manifest
-from xrd_finder.io.finder_result_cache import cif_content_signature, make_result_record, restore_result
+from xrd_finder.io.finder_result_cache import cif_content_signature, crop_saved_result, make_result_record, restore_result
 from xrd_finder.services.calculated_pattern_service import (
     CU_KA1_WAVELENGTH,
     CalculatedPatternService,
@@ -1232,13 +1229,14 @@ class PhaseFinderWindow(
         snap_peak_positions: bool = True,
         portable: bool = False,
         legacy_normalized: bool = False,
+        legacy_full_range: bool = False,
     ) -> tuple[object, ...]:
         if getattr(self, '_scoring_source', 'Auto') == 'Auto':
             # Validate the deterministic preprocessing by its original input.
             # Merely opening a saved fit must not refit 28 backgrounds on Qt's
             # main thread to obtain a cache key.
             processed_observed = self._crop_pattern_data(
-                pattern, observed_pattern_data(pattern))
+                pattern, observed_pattern_data(pattern), trim_reference_range=not legacy_full_range)
         else:
             processed_observed = self._pattern_finder_observed_data(pattern)
         if legacy_normalized and processed_observed is not None:
@@ -1344,6 +1342,22 @@ class PhaseFinderWindow(
                     result = restore_result(record, self._finder_cache_key(
                         pattern, candidates, snap_peak_positions=snap_peak_positions,
                         portable=True, legacy_normalized=True))
+                if result is None and getattr(self, '_scoring_source', 'Auto') == 'Auto':
+                    # The prepared-library bounds changed, not the measured
+                    # signal or fitted model. Validate the complete former key
+                    # before slicing saved arrays and adopting the current key.
+                    for normalized in (False, True):
+                        previous = restore_result(record, self._finder_cache_key(
+                            pattern, candidates, snap_peak_positions=snap_peak_positions,
+                            portable=True, legacy_normalized=normalized, legacy_full_range=True))
+                        if previous is not None:
+                            observed = self._crop_pattern_data(pattern, observed_pattern_data(pattern))
+                            result = crop_saved_result(previous, [] if observed is None else observed[:, 0])
+                            if result is not None:
+                                key = self._finder_cache_key(pattern, candidates,
+                                    snap_peak_positions=snap_peak_positions, portable=True)
+                                saved[field] = make_result_record(result, key)
+                                break
                 if result is not None:
                     self.match_profile_result_cache[cache_key] = result
                     self._trim_match_profile_result_cache()
@@ -1371,6 +1385,8 @@ class PhaseFinderWindow(
         # Only angular bounds are needed here. Asking for the Auto-processed
         # curve would fit its background on Qt before the owned worker starts.
         range_observed = self._crop_pattern_data(pattern, observed_pattern_data(pattern))
+        if range_observed is None or len(range_observed) < 2:
+            return None, candidate_by_key
         reference_low,reference_high = reference_scan_range(range_observed) or (5.,120.)
         candidate_build = build_finder_candidate_inputs(
             candidates,
@@ -1543,6 +1559,8 @@ class PhaseFinderWindow(
         self.finder_plot_control_bar.normalizePatternsChanged.connect(self._set_pattern_normalization)
         self.finder_plot_control_bar.zeroCorrectionChanged.connect(self._set_zero_correction_visible)
         self.finder_plot_control_bar.allObservedBlackChanged.connect(self._set_all_observed_black)
+        self.finder_plot_control_bar.legendAlignmentChanged.connect(self._set_multi_legend_alignment)
+        self.finder_plot_control_bar.set_legend_alignment(self.plot_view_settings.multi_legend_alignment)
 
     def _scoring_source_status_text(self) -> str:
         return f"Score: {getattr(self, '_scoring_source', 'Auto')}"
@@ -1561,6 +1579,11 @@ class PhaseFinderWindow(
         self.finder_action_bar.instrumentProfileApplyRequested.connect(self._apply_processing_instrument_profile)
         self.finder_action_bar.instrumentProfileEditRequested.connect(self._open_instrument_profile_editor)
         self.finder_action_bar.manualZeroShiftChanged.connect(self._set_manual_zero_shift)
+        self.finder_action_bar.plotColorRequested.connect(self._choose_plot_color)
+        self.finder_action_bar.phaseColorRequested.connect(self._change_profile_candidate_color)
+        self.finder_action_bar.profileHighlightChanged.connect(self._set_active_profile_highlight)
+        self.finder_action_bar.weakMarkersChanged.connect(self._set_weak_marker_sensitivity)
+        self.finder_action_bar.set_plot_colors(self.plot_view_settings)
         self.search_input = self.finder_action_bar.search_input
         self._refresh_instrument_profile_selector()
         self._sync_zero_shift_controls()
@@ -1643,6 +1666,7 @@ class PhaseFinderWindow(
         self.candidate_table.contextRequested.connect(self._show_candidate_context_menu)
         self.match_table = SelectedCandidatesTableWidget()
         self.match_table.rowClicked.connect(self._on_match_row_clicked)
+        self.match_table.colorChangeRequested.connect(self._change_profile_candidate_color)
         self.match_table.contextRequested.connect(self._show_match_context_menu)
         self.match_table.phaseNameEdited.connect(self._rename_selected_match_phase)
         self.candidate_panel = QWidget()

@@ -7,8 +7,8 @@ import math
 
 import pyqtgraph as pg
 from PySide6.QtCore import QEvent, QTimer, Qt
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QDialog, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtGui import QColor, QFont
+from PySide6.QtWidgets import QColorDialog, QDialog, QSizePolicy, QVBoxLayout, QWidget
 
 from xrd_finder.ui.plot_view_settings import PLOT_ASPECTS, PlotViewSettings, PlotViewSettingsWidget, plot_style_from_view_settings
 from xrd_finder.ui.plot_layer_items import sync_plot_export_tags
@@ -43,7 +43,9 @@ def _apply_axis_appearance(
 ) -> None:
     axis_pen = pg.mkPen(color, width=width)
     axis.setPen(axis_pen)
-    axis.setTickPen(axis_pen)
+    # A zero-length line with a square-cap pen still paints a square at every
+    # tick. Suppress the tick stroke itself when ticks are disabled.
+    axis.setTickPen(axis_pen if visible and tick_length else pg.mkPen(None))
     axis.setTextPen(pg.mkPen(color))
     axis.setTickFont(font)
     axis.setStyle(
@@ -78,6 +80,8 @@ class PhaseFinderPlotViewActionsMixin:
                 self.plot_view_settings.multi_phase_legend_mode = value
             elif key == 'multi_legend_phase_names_visible' and isinstance(value, bool):
                 self.plot_view_settings.multi_legend_phase_names_visible = value
+            elif key == 'multi_legend_alignment' and value in ('Auto','Left','Center','Right'):
+                self.plot_view_settings.multi_legend_alignment = value
             elif key=='aspect_ratio' and value is None:
                 self.plot_view_settings.aspect_ratio=None
             elif isinstance(value,(int,float)) and not isinstance(value,bool) and math.isfinite(value) and 0<value<=100:
@@ -136,9 +140,25 @@ class PhaseFinderPlotViewActionsMixin:
         return f"Active profile: {pattern.name}{suffix}"
 
     def _update_profile_view_context(self) -> None:
+        pattern = self._active_pattern() if hasattr(self, '_active_pattern') else None
+        if pattern is not None:
+            if self.plot_view_settings.all_observed_black:
+                color = self.observed_pattern_colors.get(pattern.id, self.plot_view_settings.observed_color)
+            else:
+                color = self._observed_pattern_color(pattern.id)
+            self.plot_view_settings.observed_color = color
+            self.plot_style = plot_style_from_view_settings(self.plot_view_settings)
+            action_bar = getattr(self, 'finder_action_bar', None)
+            if action_bar is not None:
+                action_bar.set_plot_colors(self.plot_view_settings)
         panel = getattr(self, "plot_settings_panel", None)
         if panel is None:
             return
+        field = getattr(panel, 'observed_color_input', None)
+        if field is not None:
+            blocked = field.blockSignals(True)
+            field.setText(self.plot_view_settings.observed_color)
+            field.blockSignals(blocked)
         if hasattr(panel, "set_active_profile_label"):
             panel.set_active_profile_label(self._active_profile_label_text())
         if hasattr(panel, "set_profile_candidates"):
@@ -203,8 +223,53 @@ class PhaseFinderPlotViewActionsMixin:
             panel.set_settings(settings, emit=False)
         self._apply_plot_view_settings(settings)
 
+    def _choose_plot_color(self, field):
+        labels = {'observed_color':'Experimental profile','calculated_color':'Calculated total',
+                  'background_color':'Background','difference_color':'Difference curve'}
+        if field not in labels:
+            return
+        pattern = self._active_pattern() if field == 'observed_color' else None
+        initial = (self.observed_pattern_colors.get(pattern.id, self.plot_view_settings.observed_color)
+                   if pattern is not None else getattr(self.plot_view_settings, field))
+        color = QColorDialog.getColor(QColor(initial), self, labels[field])
+        if not color.isValid():
+            return
+        changes = {field:color.name()}
+        if field == 'observed_color':
+            changes['all_observed_black'] = False
+            if pattern is not None:
+                self.observed_pattern_colors[pattern.id] = color.name()
+        self._change_plot_appearance(**changes)
+
+    def _set_active_profile_highlight(self, enabled):
+        self._change_plot_appearance(highlight_active_profile=bool(enabled))
+
+    def _set_weak_marker_sensitivity(self, value):
+        self._change_plot_appearance(weak_marker_sensitivity=max(0,min(100,int(value))))
+
+    def _set_multi_legend_alignment(self, alignment):
+        if alignment not in ('Left','Center','Right'):
+            return
+        self._multi_legend_manual_positions = {}
+        if self.plot_view_settings.multi_legend_alignment == alignment:
+            self._refresh_multi_pattern_legends()
+        else:
+            self._change_plot_appearance(multi_legend_alignment=alignment)
+
+    def _change_plot_appearance(self, **changes):
+        from dataclasses import replace
+        settings = replace(self.plot_view_settings,**changes)
+        panel = getattr(self, 'plot_settings_panel', None)
+        if panel is not None:
+            panel.set_settings(settings,emit=False)
+        self._apply_plot_view_settings(settings)
+
     def _apply_plot_view_settings(self, settings: PlotViewSettings, *, force: bool = False) -> None:
         previous_settings = getattr(self, "plot_view_settings", None)
+        if previous_settings is not None and previous_settings.observed_color != settings.observed_color:
+            pattern = self._active_pattern()
+            if pattern is not None:
+                self.observed_pattern_colors[pattern.id] = settings.observed_color
         quick_fields = {
             "grid_visible",
             "grid_alpha",
@@ -261,8 +326,12 @@ class PhaseFinderPlotViewActionsMixin:
                 ):
                     setattr(settings, field, getattr(previous_settings, field))
         self.plot_view_settings = settings
+        action_bar = getattr(self, 'finder_action_bar', None)
+        if action_bar is not None:
+            action_bar.set_plot_colors(settings)
         bar = getattr(self, 'finder_plot_control_bar', None)
         if bar is not None:
+            bar.set_legend_alignment(settings.multi_legend_alignment)
             button = bar.all_observed_black_button
             blocked = button.blockSignals(True)
             button.setChecked(settings.all_observed_black)
@@ -504,11 +573,11 @@ class PhaseFinderPlotViewActionsMixin:
         axis.setVisible(visible)
         if not visible:
             axis.setStyle(showValues=False, tickLength=0)
-            self.match_plot.setLabel(axis_name, "")
+            axis.setLabel("")
 
     def _set_axis_label(self, axis_name: str, label: str, unit: str, settings: PlotViewSettings) -> None:
-        self.match_plot.setLabel(
-            axis_name,
+        # PlotItem.setLabel() also calls showAxis(), undoing a hidden axis.
+        self.match_plot.getAxis(axis_name).setLabel(
             _axis_label(label, unit) if label else "",
             color=settings.axis_color,
             **{"font-size": f"{settings.label_font_size*getattr(self,'_ui_density_factor',1.)}pt"},

@@ -3,17 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 import numpy as np
-from scipy.ndimage import gaussian_filter1d, percentile_filter
-from scipy.interpolate import PchipInterpolator
-from scipy.signal import find_peaks, peak_widths, savgol_filter
 
 from xrd_finder.services.auto_parameter_selector import select_decomposition_settings
 from xrd_finder.services.xrd_signal_decomposition import XrdDecompositionSettings, decompose_xrd_signal
-
-try:
-    from pybaselines import Baseline
-except Exception:
-    Baseline = None
 
 PYBASELINES_METHODS = {"auto", "arpls", "asls", "snip", "rolling_ball"}
 
@@ -148,6 +140,8 @@ def auto_background_plan(x: np.ndarray, y: np.ndarray) -> AutoBackgroundPlan:
 
 
 def describe_xrd_signal(x: np.ndarray, y: np.ndarray) -> XrdSignalFeatures:
+    from scipy.ndimage import gaussian_filter1d, percentile_filter
+    from scipy.signal import peak_widths
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     finite = np.isfinite(x) & np.isfinite(y)
@@ -203,6 +197,7 @@ def describe_xrd_signal(x: np.ndarray, y: np.ndarray) -> XrdSignalFeatures:
 
 
 def _feature_peak_indices(x: np.ndarray, y: np.ndarray, noise: float, span: float) -> tuple[np.ndarray, dict]:
+    from scipy.signal import find_peaks
     step = _median_step(x)
     positive = np.maximum(np.asarray(y, dtype=float), 0.0)
     prominence = max(noise * 4.0, span * 0.018, 1.0)
@@ -221,6 +216,7 @@ def smooth_observed_curve(
     polyorder: int = 2,
     gaussian_sigma: float = 0.2,
 ) -> np.ndarray:
+    from scipy.signal import savgol_filter
     if window <= 2 or len(y) < 5:
         return np.asarray(y, dtype=float)
     window = min(int(window), len(y) - 1 if len(y) % 2 == 0 else len(y))
@@ -339,6 +335,7 @@ def adjust_background_level(
     clipped at zero, so a valid negative baseline remains negative.
     """
 
+    from scipy.ndimage import percentile_filter
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     background = np.asarray(background, dtype=float)
@@ -424,6 +421,7 @@ def estimate_amorphous_snip_component(
 ) -> np.ndarray:
     """Estimate broad amorphous scattering above a physical baseline with SNIP."""
 
+    from scipy.ndimage import gaussian_filter1d
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     physical = np.asarray(physical_background, dtype=float)
@@ -446,6 +444,7 @@ def estimate_amorphous_chebyshev(
 ) -> np.ndarray:
     """Estimate a smooth amorphous contribution above a physical baseline."""
 
+    from scipy.ndimage import gaussian_filter1d, percentile_filter
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     background = np.asarray(physical_background, dtype=float)
@@ -475,6 +474,10 @@ def _xrd_hybrid_background(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     over the full range before applying a local cap under the measured signal.
     """
 
+    try:
+        from pybaselines import Baseline
+    except Exception:
+        Baseline = None
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     envelope = _adaptive_xrd_envelope(x, y)
@@ -504,6 +507,7 @@ def _xrd_hybrid_background(x: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 
 def _smooth_background_curve(x: np.ndarray, background: np.ndarray, width_deg: float) -> np.ndarray:
+    from scipy.ndimage import gaussian_filter1d
     order = np.argsort(x)
     xs = np.asarray(x[order], dtype=float)
     bg = np.asarray(background[order], dtype=float)
@@ -516,6 +520,7 @@ def _smooth_background_curve(x: np.ndarray, background: np.ndarray, width_deg: f
 
 
 def _adaptive_xrd_envelope(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    from scipy.ndimage import gaussian_filter1d, percentile_filter
     order = np.argsort(x)
     xs = np.asarray(x[order], dtype=float)
     ys = np.asarray(y[order], dtype=float)
@@ -537,6 +542,7 @@ def _adaptive_xrd_envelope(x: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 
 def _cap_background_to_local_signal(x: np.ndarray, y: np.ndarray, background: np.ndarray, noise: float) -> np.ndarray:
+    from scipy.ndimage import percentile_filter
     order = np.argsort(x)
     ys = np.asarray(y[order], dtype=float)
     bg_sorted = np.asarray(background[order], dtype=float)
@@ -550,6 +556,7 @@ def _cap_background_to_local_signal(x: np.ndarray, y: np.ndarray, background: np
 
 
 def _stabilize_background_edges(x: np.ndarray, y: np.ndarray, background: np.ndarray) -> np.ndarray:
+    from scipy.ndimage import gaussian_filter1d, percentile_filter
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     background = np.asarray(background, dtype=float)
@@ -620,6 +627,10 @@ def _robust_noise(y: np.ndarray) -> float:
 
 
 def _pybaselines_background(x: np.ndarray, y: np.ndarray, method: str = "auto", half_window: int | None = None) -> np.ndarray:
+    try:
+        from pybaselines import Baseline
+    except Exception:
+        Baseline = None
     if Baseline is None:
         return _local_envelope_background(x, y)
     x = np.asarray(x, dtype=float)
@@ -660,6 +671,7 @@ def _pybaselines_background(x: np.ndarray, y: np.ndarray, method: str = "auto", 
 
 
 def _local_envelope_background(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    from scipy.interpolate import PchipInterpolator
     order = np.argsort(x)
     xs = np.asarray(x[order], dtype=float)
     ys = np.asarray(y[order], dtype=float)

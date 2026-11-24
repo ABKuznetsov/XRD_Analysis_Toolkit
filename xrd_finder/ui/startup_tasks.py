@@ -12,6 +12,7 @@ class StartupTasks(QObject):
         self.restore = restore
         self.ready = ready
         self.background_delay_ms = background_delay_ms
+        self._science_warmup_thread = None
         self._was_enabled = window.isEnabled()
         if restore is not None:
             window.setEnabled(False)
@@ -43,7 +44,23 @@ class StartupTasks(QObject):
             return
         if self.ready is not None:
             self.ready()
+        self._start_science_warmup()
         self.background_timer.start(self.background_delay_ms)
+
+    def _start_science_warmup(self):
+        if self._science_warmup_thread is not None or not self._available():
+            return
+        from threading import Event, Thread
+        from xrd_finder.services.science_warmup import warm_calculation_modules
+        cancelled = Event()
+        self.window.destroyed.connect(lambda *_: cancelled.set())
+        self._science_warmup_thread = Thread(
+            target=warm_calculation_modules,
+            kwargs={'cancelled': cancelled.is_set},
+            name='xrd-calculation-warmup',
+            daemon=True,
+        )
+        self._science_warmup_thread.start()
 
     def _start_background(self):
         if not self._available():

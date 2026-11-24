@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.ndimage import gaussian_filter1d, median_filter, percentile_filter
-from scipy.optimize import least_squares
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +43,7 @@ def decompose_xrd_signal(
     It remains part of the corrected signal and is not subtracted by Auto.
     """
 
+    from scipy.ndimage import gaussian_filter1d, percentile_filter
     settings = settings or XrdDecompositionSettings()
     x, y, inverse = _sorted_finite_arrays(x, y)
     if len(y) < 5:
@@ -157,6 +156,7 @@ def _restore(result: XrdSignalDecomposition, inverse: np.ndarray) -> XrdSignalDe
 
 
 def _artifact_mask(y: np.ndarray, noise: float) -> np.ndarray:
+    from scipy.ndimage import median_filter
     if len(y) < 7:
         return np.zeros_like(y, dtype=bool)
     local = median_filter(y, size=5, mode="nearest")
@@ -232,6 +232,7 @@ def _fit_exponential_terms(
     tail: float,
     term_count: int,
 ) -> tuple[np.ndarray, float, float, int] | None:
+    from scipy.optimize import least_squares
     initial_decays = np.asarray([2.0, 9.0, 36.0], dtype=float)[:term_count]
     initial_amplitudes = amplitude * np.asarray([0.45, 0.35, 0.20], dtype=float)[:term_count]
     initial_amplitudes *= amplitude / max(float(np.sum(initial_amplitudes)), 1.0e-12)

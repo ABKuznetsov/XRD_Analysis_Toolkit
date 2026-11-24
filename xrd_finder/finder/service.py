@@ -6,8 +6,6 @@ from pathlib import Path
 
 import numpy as np
 import math
-from scipy.optimize import nnls
-from scipy.signal import find_peaks
 
 from xrd_finder.finder.assignment_builder import AssignmentBuilder, nearest_index as nearest_peak_index, nearest_phase_peak
 from xrd_finder.finder.cell_parameter_estimator import CellParameterEstimate, FastCellParameterEstimator
@@ -988,6 +986,7 @@ class FinderService:
         return snapped
 
     def _fit_scales(self, target_y: np.ndarray, profiles: list[np.ndarray]) -> np.ndarray:
+        from scipy.optimize import nnls
         if not profiles:
             return np.array([], dtype=float)
         matrix = np.column_stack(profiles)
@@ -1233,6 +1232,7 @@ class FinderService:
         return float(np.clip(best_fwhm, 0.04, 0.50)), float(np.clip(best_eta, 0.0, 0.85))
 
     def _fit_weights(self, target_y: np.ndarray) -> np.ndarray:
+        from scipy.signal import find_peaks
         y = np.asarray(target_y, dtype=float)
         if len(y) == 0:
             return np.ones_like(y)

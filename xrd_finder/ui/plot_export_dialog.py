@@ -4,6 +4,7 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -107,6 +108,10 @@ class PlotExportDialog(QDialog):
         text_index = self.svg_text_mode_combo.findData(default_options.svg_text_mode)
         self.svg_text_mode_combo.setCurrentIndex(max(0, text_index))
         self.svg_text_controls = self._control_row("SVG text", self.svg_text_mode_combo)
+        self.highlight_active_profile_checkbox = QCheckBox('Emphasize active profile')
+        self.highlight_active_profile_checkbox.setChecked(default_options.highlight_active_profile)
+        self.highlight_active_profile_checkbox.setToolTip('Use the active pattern emphasis in the exported figure')
+        self.highlight_active_profile_checkbox.toggled.connect(self._refresh_preview)
 
         form = QFormLayout()
         form.addRow("Format", self.format_combo)
@@ -114,6 +119,7 @@ class PlotExportDialog(QDialog):
         form.addRow("Height (locked)", self.height_spin)
         form.addRow("", self.one_to_one_button)
         form.addRow("Output", self.pixel_size_label)
+        form.addRow('Profile highlight',self.highlight_active_profile_checkbox)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save
@@ -215,7 +221,8 @@ class PlotExportDialog(QDialog):
             max(1, self.preview.width() - 12),
             max(1, self.preview.height() - 12),
         )
-        image = render_preview(self.snapshot, available)
+        image = render_preview(self.snapshot, available,
+            highlight_active_profile=self.highlight_active_profile_checkbox.isChecked())
         self.preview.setPixmap(QPixmap.fromImage(image))
 
     def resizeEvent(self, event) -> None:
@@ -231,6 +238,7 @@ class PlotExportDialog(QDialog):
             dpi=self.dpi_spin.value(),
             jpeg_quality=self.jpeg_quality_spin.value(),
             svg_text_mode=SvgTextMode(self.svg_text_mode_combo.currentData()),
+            highlight_active_profile=self.highlight_active_profile_checkbox.isChecked(),
         )
 
     def accept(self) -> None:
@@ -266,6 +274,7 @@ class PlotExportDialog(QDialog):
             dpi=int(settings.value(f"{prefix}dpi", 600)),
             jpeg_quality=int(settings.value(f"{prefix}jpeg_quality", 95)),
             svg_text_mode=text_mode,
+            highlight_active_profile=bool(settings.value(f'{prefix}highlight_active_profile',False,type=bool)),
         )
 
     def _save_options(self, options: PlotExportOptions) -> None:
@@ -276,3 +285,4 @@ class PlotExportDialog(QDialog):
         settings.setValue(f"{prefix}dpi", options.dpi)
         settings.setValue(f"{prefix}jpeg_quality", options.jpeg_quality)
         settings.setValue(f"{prefix}svg_text_mode", options.svg_text_mode.value)
+        settings.setValue(f'{prefix}highlight_active_profile',options.highlight_active_profile)

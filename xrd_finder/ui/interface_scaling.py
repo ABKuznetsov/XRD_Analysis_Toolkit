@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QComboBox, QLayout, QWidgetAction
 from xrd_finder.ui.ui_density import UiDensity
 from xrd_finder.ui.system_theme import SystemThemeObserver
 from xrd_finder.ui.workspace_preferences import load_workspace_preferences
-PERSISTED_PLOT_FIELDS = ('aspect_ratio', 'custom_aspect_width', 'custom_aspect_height', 'label_font_size', 'tick_font_size', 'title_font_size', 'legend_font_size', 'multi_phase_legend_mode', 'multi_legend_phase_names_visible')
+PERSISTED_PLOT_FIELDS = ('aspect_ratio', 'custom_aspect_width', 'custom_aspect_height', 'label_font_size', 'tick_font_size', 'title_font_size', 'legend_font_size', 'multi_phase_legend_mode', 'multi_legend_phase_names_visible', 'multi_legend_alignment')
 
 class InterfaceScalingMixin:
 

@@ -5,8 +5,6 @@ from copy import deepcopy
 import math
 
 import numpy as np
-from scipy.optimize import least_squares
-from scipy.signal import find_peaks
 
 from xrd_finder.core.structure import CellParameters
 from xrd_finder.services.calculated_pattern_service import CalculatedPatternService
@@ -59,6 +57,7 @@ class RefinementService:
         wavelength: float,
         indexed_matches: list[tuple[int, int, int, float, float]],
     ) -> CellFitResult:
+        from scipy.optimize import least_squares
         initial_cell = deepcopy(getattr(structure, "cell", CellParameters()))
         variable_names = self._cell_variable_names(initial_cell, structure=structure)
         if not variable_names:
@@ -619,6 +618,7 @@ class RefinementService:
         return math.degrees(2.0 * math.asin(argument))
 
     def _observed_peak_positions(self, x: np.ndarray, y: np.ndarray, *, fwhm: float) -> np.ndarray:
+        from scipy.signal import find_peaks
         if len(x) < 5 or len(y) < 5:
             return np.array([], dtype=float)
         positive = np.clip(np.asarray(y, dtype=float), 0.0, None)

@@ -8,7 +8,6 @@ import sqlite3
 from typing import Callable, Iterable
 
 import numpy as np
-from scipy.optimize import linear_sum_assignment
 from xrd_finder.services.normalized_reflections import range_join
 from xrd_finder.services.source_registry import organic_material_sql
 
@@ -133,6 +132,7 @@ def match_selected_peaks(query: SelectedPeakQuery, reference_d_spacings: Iterabl
     No reference-intensity term, missing-reference-line penalty, automatic zero
     fit, cell deformation or minimum three-line gate is applied here.
     """
+    from scipy.optimize import linear_sum_assignment
     selected = np.asarray(query.selected_two_theta, dtype=float)
     corrected = selected - query.zero_shift_deg
     references = np.asarray(sorted({float(value) for value in reference_d_spacings

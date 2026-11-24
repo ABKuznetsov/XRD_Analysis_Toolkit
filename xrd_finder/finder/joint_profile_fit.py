@@ -2,7 +2,6 @@
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.optimize import nnls
 
 from xrd_finder.finder.gain_evidence import GainEvidence, evaluate_gain_evidence
 
@@ -59,6 +58,7 @@ def evaluate_mass_profiles(*, x, target, accepted_profiles, candidate_profile, w
     rhs = (y/target_scale)*root_weights
 
     def fit(count):
+        from scipy.optimize import nnls
         indices = np.flatnonzero(active[:count])
         scales, rank = np.zeros(count), 0
         if len(indices):

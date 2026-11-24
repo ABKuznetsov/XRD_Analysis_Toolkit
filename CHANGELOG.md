@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.7.3 - 2026-11-24
+
+- Defer scientific-library warmup until the main window has painted, prioritizing opening projects and importing measurements.
+- Reuse the prepared library's physical range without expanding its reflection cache for wider experimental scans.
+- Restore compatible saved profiles after a range-only crop or application version update, retaining fitted curves, cells and zero shifts.
+- Improve accepted-phase marker alignment using independent reflection positions and consistent cell metrics.
+- Keep each experimental profile's color when it becomes active; add clickable phase-color cells and Processing color controls.
+- Add L/M/R pattern-label alignment, a slider for weak assigned markers and optional active-profile emphasis during export.
+- Replace the common multi-pattern phase strip with a draggable compact box; save its relative position in XPFF and retain it in exports.
+- Keep disabled axes hidden after redraw and export; suppress residual tick marks when tick length is zero.
+- Publish the Windows installer. macOS and Linux installers remain at 1.7.2 until their platform builds are provided.
+
 ## 1.7.2 - 2026-11-18
 
 - Open one main Finder window directly from Windows shortcuts, retaining automatic runtime repair when needed.

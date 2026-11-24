@@ -5,6 +5,7 @@ import math
 from PySide6.QtCore import Signal, QSize, Qt
 from PySide6.QtWidgets import (
     QBoxLayout,
+    QButtonGroup,
     QComboBox,
     QHBoxLayout,
     QLabel,
@@ -67,6 +68,7 @@ class FinderPlotControlBar(QWidget):
     normalizePatternsChanged = Signal(bool)
     zeroCorrectionChanged = Signal(bool)
     allObservedBlackChanged = Signal(bool)
+    legendAlignmentChanged = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -119,6 +121,29 @@ class FinderPlotControlBar(QWidget):
             'Show all experimental curves in black. Turn off to restore their assigned colors. '
             'Phase markers and calculated curves keep their colors.')
         self.all_observed_black_button.toggled.connect(self.allObservedBlackChanged)
+        self.legend_alignment_control = QWidget()
+        self.legend_alignment_control.setObjectName('legendAlignmentSegments')
+        segments = QHBoxLayout(self.legend_alignment_control)
+        segments.setContentsMargins(0,0,0,0)
+        segments.setSpacing(0)
+        self.legend_alignment_group = QButtonGroup(self)
+        self.legend_alignment_group.setExclusive(True)
+        self.legend_alignment_buttons = {}
+        for name,text in (('Left','L'),('Center','M'),('Right','R')):
+            button = self._toggle_button(text)
+            button.setMinimumWidth(26)
+            button.setAccessibleName(f'Pattern labels: {name.lower()}')
+            button.setToolTip(f'Align pattern labels: {name.lower()}')
+            button.setProperty('segment',text)
+            button.clicked.connect(lambda _checked=False, value=name: self.legendAlignmentChanged.emit(value))
+            self.legend_alignment_group.addButton(button)
+            self.legend_alignment_buttons[name] = button
+            segments.addWidget(button)
+        self.legend_alignment_control.setStyleSheet(
+            'QToolButton { border-radius: 0px; margin: 0px; } '
+            'QToolButton[segment="L"] { border-top-left-radius: 4px; border-bottom-left-radius: 4px; } '
+            'QToolButton[segment="R"] { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }')
+        self.set_legend_alignment('Right')
 
         self.pattern_offset_slider = QSlider(Qt.Orientation.Horizontal)
         self.pattern_offset_slider.setRange(0, 150)
@@ -154,7 +179,8 @@ class FinderPlotControlBar(QWidget):
                          (self.normalize_patterns_checkbox,),
                          (QLabel('Offset'), self.pattern_offset_slider, self.pattern_offset_value),
                          (self.correct_zero_checkbox,),
-                         (self.all_observed_black_button,)):
+                         (self.all_observed_black_button,),
+                         (self.legend_alignment_control,)):
             group=QWidget()
             row=QHBoxLayout(group);row.setContentsMargins(0,0,0,0);row.setSpacing(6)
             for control in controls:row.addWidget(control)
@@ -172,6 +198,10 @@ class FinderPlotControlBar(QWidget):
         button.setCheckable(True)
         button.setProperty('plotToggle', True)
         return button
+
+    def set_legend_alignment(self, alignment):
+        selected = alignment if alignment in self.legend_alignment_buttons else 'Right'
+        self.legend_alignment_buttons[selected].setChecked(True)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

@@ -7,6 +7,7 @@ import pyqtgraph as pg
 
 from .metadata import CANVAS_LAYER_ORDER, CanvasLayer, stable_svg_id
 from .options import PlotExportFormat, PlotExportOptions
+from .paint_state import observed_export_style
 from .snapshot import CanvasItemSnapshot, FrozenCanvas
 from .svg_items import (
     namespace_svg_fragment,
@@ -50,6 +51,10 @@ class LayeredSvgExporter:
     """Serialize the frozen XRD canvas into named editable vector layers."""
 
     def render(self, snapshot: FrozenCanvas, options: PlotExportOptions) -> bytes:
+        with observed_export_style(snapshot, options.highlight_active_profile):
+            return self._render(snapshot,options)
+
+    def _render(self, snapshot: FrozenCanvas, options: PlotExportOptions) -> bytes:
         if options.format is not PlotExportFormat.SVG:
             raise ValueError("LayeredSvgExporter requires SVG options")
         width = int(snapshot.canvas_size_px.width())

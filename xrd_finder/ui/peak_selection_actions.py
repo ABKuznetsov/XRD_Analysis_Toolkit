@@ -5,7 +5,6 @@ import pyqtgraph as pg
 from threading import Event
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtWidgets import QMessageBox
-from scipy.signal import find_peaks
 
 from xrd_finder.plot_export.metadata import CanvasLayer
 from xrd_finder.services.candidate_rows import CandidateRowFormatter, normalize_candidate_row
@@ -291,6 +290,7 @@ class PhaseFinderPeakSelectionActionsMixin:
             indices = [int(np.argmin(np.where(finite, np.abs(x - position), np.inf)))
                        for position in positions if np.any((x == position) & finite)]
         else:
+            from scipy.signal import find_peaks
             indices = (np.arange(len(x)).tolist() if getattr(pattern, 'input_kind', '') == 'peak_list'
                        else find_peaks(y)[0].tolist())
         distances = []

@@ -6,7 +6,6 @@ from functools import lru_cache
 import math
 
 import numpy as np
-from scipy.optimize import minimize_scalar
 
 from xrd_finder.core.structure import CellParameters
 from xrd_finder.finder.cell_parameter_estimator import CellParameterEstimate, FastCellParameterEstimator
@@ -75,7 +74,8 @@ def _metric(cell):
 
 def estimate_peak_cell_alignment(peaks, records, *, wavelength: float, zero_shift: float,
                                  initial_cell: CellParameters | None = None,
-                                 refine_scan_zero: bool = False, budget=None) -> PeakCellAlignment:
+                                 refine_scan_zero: bool = False, budget=None,
+                                 cell_limits=(.98, 1.02, 1.)) -> PeakCellAlignment:
     """Estimate a small accepted-phase cell change, optionally the common zero.
 
     Reassociate indexed lines at bounded zero trials when requested by the
@@ -87,7 +87,7 @@ def estimate_peak_cell_alignment(peaks, records, *, wavelength: float, zero_shif
     if budget is not None and budget.expired:
         return PeakCellAlignment(original)
     baseline = _fixed_peak_cell_alignment(original, measurements, wavelength=wavelength,
-        zero_shift=zero_shift, initial_cell=initial_cell, budget=budget)
+        zero_shift=zero_shift, initial_cell=initial_cell, budget=budget, cell_limits=cell_limits)
     if not math.isfinite(wavelength) or wavelength <= 0 or not math.isfinite(zero_shift):
         return baseline
     if initial_cell is None:
@@ -139,7 +139,7 @@ def estimate_peak_cell_alignment(peaks, records, *, wavelength: float, zero_shif
         if shifted is None:
             return
         fitted = _fixed_peak_cell_alignment(shifted, observed, wavelength=wavelength,
-            zero_shift=zero, initial_cell=initial_cell, budget=budget)
+            zero_shift=zero, initial_cell=initial_cell, budget=budget, cell_limits=cell_limits)
         score, count, rms = _alignment_support(fitted.peaks, observed)
         if count >= minimum and rms <= .12:
             # A grid seed may already be too close for the estimator's minimum
@@ -159,7 +159,8 @@ def estimate_peak_cell_alignment(peaks, records, *, wavelength: float, zero_shif
     # The coarse pass changes associations; the fine pass estimates only a
     # useful starting geometry, not a calibrated instrument or refined cell.
     for zero, scale in _position_alignment_seeds(original, observed, wavelength, zero_shift,
-                                                refine_scan_zero=refine_scan_zero, budget=budget):
+                                                refine_scan_zero=refine_scan_zero, budget=budget,
+                                                cell_limits=cell_limits):
         if budget is not None and budget.expired:
             break
         trial(zero, scale)
@@ -172,7 +173,8 @@ def estimate_peak_cell_alignment(peaks, records, *, wavelength: float, zero_shif
             continue
         polished_zeros.append(start_zero)
         polished = _polish_peak_alignment(original,observed,start,initial_cell,
-            wavelength=wavelength,zero_shift=start_zero,refine_scan_zero=refine_scan_zero,budget=budget)
+            wavelength=wavelength,zero_shift=start_zero,refine_scan_zero=refine_scan_zero,
+            budget=budget,cell_limits=cell_limits)
         if polished is not None:
             score,count,rms = _alignment_support(polished.peaks,observed)
             if count >= minimum and score > best[0]:
@@ -197,7 +199,8 @@ def estimate_peak_cell_alignment(peaks, records, *, wavelength: float, zero_shif
     return selected
 
 
-def _position_alignment_seeds(peaks, observed, wavelength, zero_shift, *, refine_scan_zero=True, budget=None):
+def _position_alignment_seeds(peaks, observed, wavelength, zero_shift, *, refine_scan_zero=True,
+                              budget=None, cell_limits=(.98, 1.02, 1.)):
     """Screen bounded d/zero starts using positions, never a calculated profile.
 
     A cell contraction moves high-angle lines further than low-angle lines.
@@ -215,7 +218,8 @@ def _position_alignment_seeds(peaks, observed, wavelength, zero_shift, *, refine
         return ((zero_shift, 1.),)
     zeros = (np.unique(np.append(np.linspace(-.5, .5, 21), zero_shift))
              if refine_scan_zero else np.asarray([zero_shift]))
-    scales = np.linspace(.98, 1.02, 17)
+    lower, upper, _angle_limit = cell_limits
+    scales = np.linspace(lower, upper, 33 if upper-lower>.04000001 else 17)
     scale_grid, zero_grid = np.meshgrid(scales, zeros)
     strengths = np.sqrt([p.intensity for p in indexed])
     d = np.asarray([p.d for p in indexed])
@@ -238,17 +242,18 @@ def _position_alignment_seeds(peaks, observed, wavelength, zero_shift, *, refine
 
 
 def _polish_peak_alignment(original, observed, selected, initial_cell, *, wavelength, zero_shift,
-                          refine_scan_zero=True, budget=None):
+                          refine_scan_zero=True, budget=None, cell_limits=(.98, 1.02, 1.)):
     """Refine only a small fixed set of hkl/maximum pairs, not a profile.
 
     Once the correct shells are associated, repeated coarse zero trials only
     redo that work. Each scalar trial here solves a tiny linear metric system.
     Cell bounds always refer to the original reference, never a moving seed.
     """
+    from scipy.optimize import minimize_scalar
     if budget is not None and budget.expired:
         return None
-    estimator = _PeakPositionEstimator(minimum_relative_length=.98,
-        maximum_relative_length=1.02, maximum_angle_change_deg=1.)
+    estimator = _PeakPositionEstimator(minimum_relative_length=cell_limits[0],
+        maximum_relative_length=cell_limits[1], maximum_angle_change_deg=cell_limits[2])
     pairs = estimator._matched_pairs(selected.peaks, observed,
         zero_shift_deg=0., tolerance_deg=.25)
     # The coarse tolerance can associate an unresolved/absent weak reflection
@@ -375,7 +380,8 @@ def improve_peak_cell_estimate(peaks, records, *, baseline_estimate,
 
 
 def _fixed_peak_cell_alignment(peaks, records, *, wavelength: float, zero_shift: float,
-                               initial_cell: CellParameters | None = None, budget=None) -> PeakCellAlignment:
+                               initial_cell: CellParameters | None = None, budget=None,
+                               cell_limits=(.98, 1.02, 1.)) -> PeakCellAlignment:
     """Estimate only small cell changes, with the scan zero held fixed.
 
     Input positions already include the common zero. Use the already loaded CIF
@@ -409,7 +415,8 @@ def _fixed_peak_cell_alignment(peaks, records, *, wavelength: float, zero_shift:
     observed = _alignment_observed_peaks(records)
     if len(observed)<3:
         return fallback
-    estimator=_PeakPositionEstimator(minimum_relative_length=.98,maximum_relative_length=1.02,maximum_angle_change_deg=1.)
+    estimator=_PeakPositionEstimator(minimum_relative_length=cell_limits[0],
+        maximum_relative_length=cell_limits[1],maximum_angle_change_deg=cell_limits[2])
     best = fallback
     best_score = -math.inf
     initial_rms = None

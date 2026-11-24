@@ -14,6 +14,9 @@ class PhaseFinderSelectedPhasesActionsMixin:
         if row < 0 or row >= len(self.match_candidates):
             return
         candidate = self.match_candidates[row]
+        bar = getattr(self, 'finder_action_bar', None)
+        if bar is not None:
+            bar.set_phase_colors(self.match_candidates, row)
         self._enrich_candidate_with_structure_info(candidate)
         self._update_compound_card(candidate)
         self._recalculate_match_profile(active_only=True)
@@ -364,6 +367,9 @@ class PhaseFinderSelectedPhasesActionsMixin:
                 iic_text,
             ])
         self.match_table.set_rows(rows)
+        bar = getattr(self, 'finder_action_bar', None)
+        if bar is not None:
+            bar.set_phase_colors(self.match_candidates)
         for row, candidate in enumerate(self.match_candidates):
             le_bail = candidate.get('_LeBailMessage', '')
             if le_bail:

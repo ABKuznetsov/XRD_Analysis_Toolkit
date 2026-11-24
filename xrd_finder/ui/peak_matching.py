@@ -4,8 +4,6 @@ from dataclasses import dataclass, replace
 import math
 
 import numpy as np
-from scipy.optimize import least_squares
-from scipy.signal import find_peaks, peak_prominences, peak_widths, savgol_filter
 
 from xrd_finder.instrument.models import InstrumentProfile
 from xrd_finder.instrument.resolution import cristma_tch_profile
@@ -102,6 +100,7 @@ def observed_peak_records(
     global_zero_shift: float = 0.0,
 ) -> list[ObservedLineRecord]:
     """Measure input peaks compatibly; opt into additive measurement for residuals."""
+    from scipy.signal import find_peaks, peak_prominences, peak_widths
     y = np.asarray(corrected_y, dtype=float)
     x_values = np.asarray(x, dtype=float)
     if len(y) < 5 or float(np.nanmax(y)) <= 0:
@@ -388,6 +387,7 @@ def _radiation_pair_explained(
     satellite: ObservedLineRecord, instrument: InstrumentProfile, *, sigma_threshold: float,
     global_zero_shift: float = 0.0,
 ) -> bool:
+    from scipy.optimize import least_squares
     step = _median_step(x)
     floor = max(instrument_fwhm_at(instrument, parent.two_theta-global_zero_shift), 2.5*step)
     width = max(parent.fwhm, floor)
@@ -600,6 +600,7 @@ def _peak_local_noise_statistics(
 
 
 def _lightly_smoothed_signal(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    from scipy.signal import savgol_filter
     step = _median_step(x)
     window = int(round(0.05 / max(step, 1.0e-6)))
     window = min(11, max(5, window))
@@ -718,6 +719,7 @@ def _observed_peak_indices(
     relative_prominence: float,
     distance_scale: float = 1.0,
 ) -> tuple[np.ndarray, dict]:
+    from scipy.signal import find_peaks, peak_prominences, peak_widths
     step = _median_step(x)
     noise = _robust_noise(y)
     finite = y[np.isfinite(y)]

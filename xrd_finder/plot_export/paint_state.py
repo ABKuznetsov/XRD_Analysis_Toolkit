@@ -7,6 +7,38 @@ from PySide6.QtGui import QPen, QTransform
 from PySide6.QtWidgets import QGraphicsItem
 
 
+@contextmanager
+def observed_export_style(snapshot, highlight_active_profile=False):
+    """Change only the active trace's presentation and restore it on exit."""
+    changed = []
+    def swap(options,key,value):
+        changed.append((options,key,options[key]))
+        options[key] = QPen(value) if isinstance(value,QPen) else value
+    try:
+        for entry in snapshot.items:
+            item = entry.item
+            if not hasattr(item, '_xrd_observed_base_pen'):
+                continue
+            prefix = '_xrd_observed_active_' if highlight_active_profile else '_xrd_observed_base_'
+            pen = getattr(item,prefix+'pen')
+            size = getattr(item,prefix+'symbol_size')
+            # PlotDataItem setters rebuild curve/scatter data and emit signals.
+            # A frozen export must only change paint options, just like the
+            # cosmetic-pen scaling below, without disturbing the live scene.
+            swap(item.opts,'pen',pen)
+            swap(item.opts,'symbolSize',size)
+            curve = getattr(item,'curve',None)
+            if curve is not None:
+                swap(curve.opts,'pen',pen)
+            scatter = getattr(item,'scatter',None)
+            if scatter is not None:
+                swap(scatter.opts,'size',size)
+        yield
+    finally:
+        for options,key,value in reversed(changed):
+            options[key] = value
+
+
 def _scaled_pen(value, factor):
     if not isinstance(value, QPen) or not value.isCosmetic():
         return value

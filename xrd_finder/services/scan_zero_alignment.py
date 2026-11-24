@@ -30,6 +30,66 @@ class CommonZeroAlignment:
     diagnostics: dict
 
 
+def _independent_position_lines(peaks):
+    """One anchor per coincident powder line; retain all lines for the profile."""
+    ordered = sorted(peaks, key=lambda peak: float(peak.two_theta))
+    groups = []
+    for peak in ordered:
+        if (groups and math.isfinite(float(peak.two_theta))
+                and abs(float(peak.two_theta)-float(groups[-1][0].two_theta))<=1.e-6):
+            groups[-1].append(peak)
+        else:
+            groups.append([peak])
+    return tuple(max(group,key=lambda peak:float(peak.intensity)) for group in groups)
+
+
+def _phase_position_proposal(phase, cell, observed, wavelength, seed, budget, *, neutral_retry=True):
+    """Compare all-peak and strong-anchor starts for an accepted phase.
+
+    Every proposal is validated against the complete measured peak set. The
+    extended cell range is the existing estimator's range, and shares the
+    original two-second deadline. Weak phases retain the all-peak attempt.
+    """
+    ranked = sorted(observed,key=lambda peak:-peak.intensity)
+    anchors = [observed]
+    for count in (16,32,64):
+        if count<len(ranked):
+            anchors.append(ranked[:count])
+    defaults = FastCellParameterEstimator()
+    extended = (defaults.minimum_relative_length,defaults.maximum_relative_length,
+                defaults.maximum_angle_change_deg)
+    best = None
+    best_key = None
+    for limits in ((.98,1.02,1.),extended):
+        for records in anchors:
+            if budget.expired:
+                return best
+            shifted = apply_peak_cell(phase.peaks,cell,wavelength=wavelength,zero_shift=seed)
+            if shifted is None:
+                return best
+            fitted = estimate_peak_cell_alignment(shifted,records,wavelength=wavelength,
+                zero_shift=seed,initial_cell=cell,refine_scan_zero=True,budget=budget,
+                cell_limits=limits)
+            proposal = _validated_proposal(phase,cell,fitted,observed,wavelength,seed)
+            if proposal is None:
+                continue
+            score = _alignment_support(fitted.peaks,observed)[0]
+            key = (proposal['confirmed'],score,-proposal['rms'])
+            if best_key is None or key>best_key:
+                proposal['cell_limits'] = limits
+                proposal['anchor_count'] = len(records)
+                best,best_key = proposal,key
+        # A tight cell bound can mimic contraction with a wrong scan zero.
+        # Compare the extended proposal on the same full-pattern support,
+        # rather than treating the first apparently precise zero as final.
+    if best is None and neutral_retry and abs(seed)>.15 and not budget.expired:
+        # A Match displacement is only a start, not a calibrated zero. A cell
+        # change can otherwise trap the indexed refinement near a false large
+        # start. Keep supported large shifts; retry zero only if none validated.
+        return _phase_position_proposal(phase,cell,observed,wavelength,0.,budget,neutral_retry=False)
+    return best
+
+
 def align_common_zero(phases, records, *, wavelength, zero_shift=0., refine_zero=True,
                       allow_uncertain_zero=False, budget=None):
     """Use independently validated indexed phases to estimate one common zero.
@@ -45,6 +105,7 @@ def align_common_zero(phases, records, *, wavelength, zero_shift=0., refine_zero
     seed = float(zero_shift) if math.isfinite(float(zero_shift)) else 0.
     zero = 0. if refine_zero else seed
     references = {}
+    position_phases = {}
     proposals = []
     seen = set()
     for phase in phases:
@@ -55,6 +116,8 @@ def align_common_zero(phases, records, *, wavelength, zero_shift=0., refine_zero
         signature = _reference_cell_signature(tuple((p.h,p.k,p.l,p.d) for p in indexed))
         cell = CellParameters(*signature) if signature is not None else phase.cell
         references[phase.key] = cell
+        position_phase = PhasePositionInput(phase.key,_independent_position_lines(phase.peaks),cell)
+        position_phases[phase.key] = position_phase
         if not refine_zero or budget.expired or cell is None or len(indexed)<5:
             continue
         maximum = max((p.intensity for p in indexed),default=1.) or 1.
@@ -65,12 +128,7 @@ def align_common_zero(phases, records, *, wavelength, zero_shift=0., refine_zero
         # Match can independently identify a larger common displacement.
         # Keep that start; the indexed-line validator below must still confirm it.
         start = seed
-        shifted = apply_peak_cell(phase.peaks,cell,wavelength=wavelength,zero_shift=start)
-        if shifted is None:
-            continue
-        fitted = estimate_peak_cell_alignment(shifted,observed,wavelength=wavelength,
-            zero_shift=start,initial_cell=cell,refine_scan_zero=True,budget=budget)
-        proposal = _validated_proposal(phase,cell,fitted,observed,wavelength,start)
+        proposal = _phase_position_proposal(position_phase,cell,observed,wavelength,start,budget)
         if proposal is not None:
             proposals.append(proposal)
     trusted = []
@@ -94,17 +152,18 @@ def align_common_zero(phases, records, *, wavelength, zero_shift=0., refine_zero
     alignments = {}
     for phase in phases:
         cell = references[phase.key]
-        shifted = (None if cell is None else apply_peak_cell(phase.peaks,cell,
+        position_phase = position_phases.get(phase.key,phase)
+        shifted = (None if cell is None else apply_peak_cell(position_phase.peaks,cell,
             wavelength=wavelength,zero_shift=zero))
         if shifted is None:
             from dataclasses import replace
-            shifted = tuple(replace(p,two_theta=p.two_theta+zero) for p in phase.peaks)
+            shifted = tuple(replace(p,two_theta=p.two_theta+zero) for p in position_phase.peaks)
         fitted = PeakCellAlignment(shifted)
         prior = next((p for p in proposals if p['key']==phase.key),None)
         # Preserve an already validated result when the shared budget runs out.
         # Do not publish that cell at a different, unevaluated scan zero.
         if prior is not None and not rejected and abs(prior['zero']-zero)<=.000500001:
-            validated = apply_peak_cell(phase.peaks,prior['cell'],wavelength=wavelength,zero_shift=zero)
+            validated = apply_peak_cell(position_phase.peaks,prior['cell'],wavelength=wavelength,zero_shift=zero)
             if validated is not None:
                 estimate = CellParameterEstimate(prior['cell'],prior['system'],prior['matches'],
                     zero,prior['rms'],prior['rms']+abs(prior['zero']-zero))
@@ -115,12 +174,21 @@ def align_common_zero(phases, records, *, wavelength, zero_shift=0., refine_zero
             # window. Screen from the reference metric, not an already warped
             # d-spacing seed, and retain a better validated proposal on expiry.
             refined = estimate_peak_cell_alignment(shifted,observed,wavelength=wavelength,
-                zero_shift=zero,initial_cell=cell,refine_scan_zero=False,budget=budget)
+                zero_shift=zero,initial_cell=cell,refine_scan_zero=False,budget=budget,
+                cell_limits=prior.get('cell_limits',(.98,1.02,1.)) if prior is not None else (.98,1.02,1.))
             if refined.estimate is not None and (fitted.estimate is None or
                     _alignment_support(refined.peaks,observed)[0]>
                     _alignment_support(fitted.peaks,observed)[0]):
                 fitted = refined
-        alignments[phase.key] = fitted
+        # Coincident HKLs are one positional observation, but their separate
+        # physical strengths must all survive in the returned phase profile.
+        output_cell = fitted.estimate.cell if fitted.estimate is not None else cell
+        restored = (None if output_cell is None else apply_peak_cell(phase.peaks,output_cell,
+                    wavelength=wavelength,zero_shift=zero))
+        if restored is None:
+            from dataclasses import replace
+            restored = tuple(replace(p,two_theta=p.two_theta+zero) for p in phase.peaks)
+        alignments[phase.key] = PeakCellAlignment(restored,fitted.estimate)
     diagnostics = dict(zero_confirmed=bool(trusted and confirmed),
         requires_confirmation=bool(trusted and not confirmed),
         position_rejected=rejected,

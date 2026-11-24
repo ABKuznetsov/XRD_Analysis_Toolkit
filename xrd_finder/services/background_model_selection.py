@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.ndimage import gaussian_filter1d, percentile_filter
-from scipy.signal import find_peaks
 
 from xrd_finder.services.preprocessing_service import estimate_amorphous_chebyshev, estimate_background
 
@@ -72,6 +70,8 @@ def select_background_model(x: np.ndarray, y: np.ndarray) -> BackgroundModelSele
 
 
 def _metric_context(x: np.ndarray, y: np.ndarray) -> dict[str, np.ndarray | float]:
+    from scipy.ndimage import gaussian_filter1d, percentile_filter
+    from scipy.signal import find_peaks
     step = _median_step(x)
     span = max(float(np.nanpercentile(y, 99) - np.nanpercentile(y, 1)), 1.0)
     noise = _robust_noise(y)

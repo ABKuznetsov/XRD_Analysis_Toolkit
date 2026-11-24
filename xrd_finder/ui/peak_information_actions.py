@@ -1,6 +1,5 @@
 """Pick and inspect a peak without modifying any scientific or project state."""
 import numpy as np
-from scipy.signal import find_peaks
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QMessageBox
@@ -59,6 +58,7 @@ class PeakInformationActionsMixin:
         view = self.match_plot.getViewBox()
         if not view.sceneBoundingRect().contains(scene_position):
             return
+        from scipy.signal import find_peaks
         clicked = view.mapSceneToView(scene_position)
         radius = abs(view.viewRange()[0][1]-view.viewRange()[0][0])*24./max(view.sceneBoundingRect().width(), 1.)
         visible = {getattr(c, '_xrd_pattern_id', None) for c in self.plot_layers.get('observed', []) if c.isVisible()}

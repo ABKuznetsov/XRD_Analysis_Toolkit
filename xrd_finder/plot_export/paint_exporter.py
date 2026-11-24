@@ -9,7 +9,7 @@ from PySide6.QtGui import QImage, QImageWriter, QPageLayout, QPageSize, QPainter
 
 from .options import PlotExportFormat, PlotExportOptions
 from .snapshot import FrozenCanvas
-from .paint_state import export_paint_state
+from .paint_state import export_paint_state, observed_export_style
 
 
 _FORMAT_SUFFIXES = {
@@ -44,7 +44,7 @@ def _paint_scene(snapshot: FrozenCanvas, painter: QPainter, target: QRectF) -> N
         )
 
 
-def _render_image(snapshot: FrozenCanvas, width: int, height: int) -> QImage:
+def _render_image(snapshot: FrozenCanvas, width: int, height: int, *, highlight_active_profile=False) -> QImage:
     image = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
     if image.isNull():
         raise MemoryError(f"Could not allocate {width}x{height} export image")
@@ -60,7 +60,8 @@ def _render_image(snapshot: FrozenCanvas, width: int, height: int) -> QImage:
     if not painter.isActive():
         raise RuntimeError("Could not start raster painter")
     try:
-        _paint_scene(snapshot, painter, QRectF(0.0, 0.0, float(width)/density, float(height)/density))
+        with observed_export_style(snapshot, highlight_active_profile):
+            _paint_scene(snapshot, painter, QRectF(0.0, 0.0, float(width)/density, float(height)/density))
     finally:
         painter.end()
         # File dimensions/DPI are explicit; do not return a high-DPR UI image.
@@ -83,14 +84,14 @@ def render_raster(
     width, height = target_pixels or options.pixel_size()
     if width <= 0 or height <= 0:
         raise ValueError("target_pixels must contain positive dimensions")
-    image = _render_image(snapshot, int(width), int(height))
+    image = _render_image(snapshot, int(width), int(height), highlight_active_profile=options.highlight_active_profile)
     dots_per_metre = round(options.dpi / 0.0254)
     image.setDotsPerMeterX(dots_per_metre)
     image.setDotsPerMeterY(dots_per_metre)
     return image
 
 
-def render_preview(snapshot: FrozenCanvas, max_size: QSize) -> QImage:
+def render_preview(snapshot: FrozenCanvas, max_size: QSize, *, highlight_active_profile=False) -> QImage:
     max_width = int(max_size.width())
     max_height = int(max_size.height())
     if max_width <= 0 or max_height <= 0:
@@ -100,7 +101,7 @@ def render_preview(snapshot: FrozenCanvas, max_size: QSize) -> QImage:
     scale = min(max_width / source_width, max_height / source_height)
     width = max(1, round(source_width * scale))
     height = max(1, round(source_height * scale))
-    return _render_image(snapshot, width, height)
+    return _render_image(snapshot, width, height, highlight_active_profile=highlight_active_profile)
 
 
 def _write_raster_image(image: QImage, options: PlotExportOptions, destination: Path) -> None:
@@ -145,7 +146,8 @@ def write_vector_pdf(snapshot: FrozenCanvas, options: PlotExportOptions, device:
     try:
         target = QRectF(0.0, 0.0, float(writer.width()), float(writer.height()))
         painter.fillRect(target, snapshot.background)
-        _paint_scene(snapshot, painter, target)
+        with observed_export_style(snapshot, options.highlight_active_profile):
+            _paint_scene(snapshot, painter, target)
     finally:
         painter.end()
     del writer

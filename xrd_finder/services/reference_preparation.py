@@ -1,9 +1,46 @@
 """Explicit cancellable reference preparation, separate from numeric ranking."""
 from concurrent.futures import CancelledError
 from contextlib import closing
+import math
 from pathlib import Path
 from xrd_finder.services.source_registry import is_structure_source
 from xrd_finder.services.local_phase_cache import LocalPhaseCache, DERIVED_CACHE_VERSION, REINDEXABLE_CACHE_VERSIONS
+from xrd_finder.services.calculated_pattern_service import CU_KA1_WAVELENGTH
+
+
+def crop_to_prepared_reference_range(observed, *, wavelength):
+    """Use only the sampled scan inside the standard prepared library d range.
+
+    Use the active wavelength, since even a rounded Cu wavelength moves the
+    nominal 120-degree boundary. Wider measurements do not expand the library:
+    observations and references use the same intersection. No overlap, or fewer
+    than two retained samples, means no usable profile. Never modify the input.
+    """
+    import numpy as np
+    values = np.asarray(observed, dtype=float)
+    if values.ndim != 2 or values.shape[1] < 2:
+        return values
+    if len(values) < 2:
+        return values[:0]
+    wavelength = float(wavelength)
+    if not math.isfinite(wavelength) or wavelength <= 0.:
+        return values
+    d_min, d_max = LocalPhaseCache._requested_d_range(CU_KA1_WAVELENGTH)
+    if wavelength >= 2.*d_max:
+        return values[:0]
+    low = math.degrees(2.*math.asin(wavelength/(2.*d_max)))
+    high = (math.degrees(2.*math.asin(wavelength/(2.*d_min)))
+            if wavelength < 2.*d_min else 180.)
+    x = values[:,0]
+    finite = np.isfinite(x)
+    if np.count_nonzero(finite) < 2:
+        return values[:0]
+    keep = ~finite | ((x >= low) & (x <= high))
+    if np.count_nonzero(keep & finite) < 2:
+        return values[:0]
+    if keep.all():
+        return values
+    return values[keep]
 
 
 def prepare_reference_rows(cache, rows, *, wavelength, two_theta_range=None, progress=None, cancelled=lambda: False):
@@ -100,6 +137,9 @@ def _prepare_parallel(cache, keys, wavelength, progress, cancelled, two_theta_ra
 
 
 def prepare_gain_references(inputs, *, progress=None, cancelled=lambda: False):
+    scan_range = reference_scan_range(inputs.observed)
+    if scan_range is None:
+        return []
     cache = LocalPhaseCache(inputs.cache_root)
     # Existing geometry determines the SQL population. Metadata-only cards are
     # not silently promoted, and accepted/visible explicit cards are included.
@@ -114,7 +154,7 @@ def prepare_gain_references(inputs, *, progress=None, cancelled=lambda: False):
                 sources))
     return prepare_reference_rows(cache, rows,
         wavelength=inputs.instrument_profile.radiation.components[0].wavelength_angstrom,
-        two_theta_range=reference_scan_range(inputs.observed),progress=progress, cancelled=cancelled)
+        two_theta_range=scan_range,progress=progress, cancelled=cancelled)
 
 
 def reference_scan_range(observed):

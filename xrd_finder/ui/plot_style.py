@@ -14,6 +14,7 @@ class PlotMarkerStyle:
     size: int = 8
     symbol: str = "o"
     unknown_symbol: str = "t"
+    weak_peak_sensitivity: int = 0
 
 
 @dataclass(slots=True)
@@ -29,3 +30,4 @@ class PlotStyle:
     preview_stick_fraction: float = 0.16
     phase_tick_fraction: float = 0.045
     difference_fraction: float = 0.24
+    difference_color: str = '#6f45a3'

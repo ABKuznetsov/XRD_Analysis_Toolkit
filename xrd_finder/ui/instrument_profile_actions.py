@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import numpy as np
 from PySide6.QtWidgets import QMessageBox
-from scipy.signal import peak_widths
 
 from xrd_finder.instrument.library import (
     BUILTIN_PROFILE_ID,
@@ -55,6 +54,7 @@ def instrument_width_warning_rows(
     criterion. Neither the candidate instrument nor fitted phase widths are
     used to detect or measure the observed peaks.
     """
+    from scipy.signal import peak_widths
     if observed is None:
         return []
     data = np.asarray(observed, dtype=float)

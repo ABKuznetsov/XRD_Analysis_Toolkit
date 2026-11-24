@@ -26,6 +26,7 @@ class PlotExportOptions:
     dpi: int = 600
     jpeg_quality: int = 95
     svg_text_mode: SvgTextMode = SvgTextMode.EDITABLE
+    highlight_active_profile: bool = False
 
     def __post_init__(self) -> None:
         for field_name in ("width_mm", "height_mm"):
@@ -48,6 +49,7 @@ class PlotExportOptions:
         dpi: int = 600,
         jpeg_quality: int = 95,
         svg_text_mode: SvgTextMode = SvgTextMode.EDITABLE,
+        highlight_active_profile: bool = False,
     ) -> PlotExportOptions:
         if canvas_width_px <= 0:
             raise ValueError("canvas_width_px must be positive")
@@ -66,6 +68,7 @@ class PlotExportOptions:
             dpi=dpi,
             jpeg_quality=jpeg_quality,
             svg_text_mode=svg_text_mode,
+            highlight_active_profile=bool(highlight_active_profile),
         )
 
     def pixel_size(self) -> tuple[int, int]:
