@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -74,7 +75,48 @@ def verify_installer(path, sha256):
         raise ValueError('Downloaded installer checksum does not match. Please retry the update.')
 
 
-def download_installer(asset, directory, *, progress=lambda done,total:None, cancelled=lambda:False, opener=None):
+def _wait_for_download_retry(attempt, cancelled):
+    deadline = time.monotonic()+min(2**attempt, 4)
+    while time.monotonic() < deadline:
+        if cancelled():raise DownloadCancelled()
+        time.sleep(min(.1, max(0., deadline-time.monotonic())))
+
+
+def _retryable_download_error(error):
+    from http.client import IncompleteRead
+    from urllib.error import HTTPError, URLError
+    import ssl
+    if isinstance(error, HTTPError):return error.code in (408, 429, 500, 502, 503, 504)
+    if isinstance(error, URLError):return not isinstance(error.reason, ssl.SSLCertVerificationError)
+    return isinstance(error, (TimeoutError, ConnectionError, IncompleteRead, ssl.SSLEOFError))
+
+
+def _download_folder(directory, asset, filename):
+    record = dict(url=asset.url, sha256=asset.sha256.lower(), size_bytes=asset.size_bytes, filename=filename)
+    prefix = 'finder-update-'+record['sha256'][:16]+'-'
+    for folder in directory.glob(prefix+'*'):
+        if folder.is_symlink() or not folder.is_dir():continue
+        partial, metadata = folder/(filename+'.part'), folder/'download.json'
+        try:
+            if partial.is_symlink() or not partial.is_file() or metadata.is_symlink() or metadata.stat().st_size>4096:continue
+            if json.loads(metadata.read_text(encoding='utf-8')) != record:continue
+            with (folder/'download.lock').open('xb') as claim:claim.write(str(os.getpid()).encode())
+            # The previous owner may have finished between discovery and our
+            # claim. Never adopt or clean up its completed installer directory.
+            try:
+                if partial.is_file() and not partial.is_symlink() and json.loads(metadata.read_text(encoding='utf-8')) == record:
+                    return folder
+            except (OSError, ValueError):pass
+            (folder/'download.lock').unlink(missing_ok=True)
+        except (OSError, ValueError):continue  # Another instance may own this download.
+    folder = Path(tempfile.mkdtemp(prefix=prefix, dir=directory))
+    with (folder/'download.lock').open('xb') as claim:claim.write(str(os.getpid()).encode())
+    (folder/'download.json').write_text(json.dumps(record), encoding='utf-8')
+    return folder
+
+
+def download_installer(asset, directory, *, progress=lambda done,total:None, cancelled=lambda:False,
+                       status=lambda message:None, opener=None):
     if not trusted_download_url(asset.url, initial=True):
         raise ValueError('Invalid update download address.')
     filename = unquote(urlparse(asset.url).path.rsplit('/', 1)[-1])
@@ -82,6 +124,8 @@ def download_installer(asset, directory, *, progress=lambda done,total:None, can
         raise ValueError('Invalid installer filename.')
     if not 0 <= asset.size_bytes <= MAX_INSTALLER_BYTES:
         raise ValueError('The update installer is too large.')
+    if not re.fullmatch(r'[0-9a-fA-F]{64}', asset.sha256):
+        raise ValueError('The update checksum is missing or invalid.')
     from urllib.request import Request, build_opener, HTTPSHandler, HTTPRedirectHandler
     if opener is None:
         import ssl
@@ -92,32 +136,68 @@ def download_installer(asset, directory, *, progress=lambda done,total:None, can
                     raise ValueError('Untrusted update redirect.')
                 return super().redirect_request(request, fp, code, msg, headers, newurl)
         client = build_opener(HTTPSHandler(context=ssl.create_default_context(cafile=certifi.where())), Redirects())
-        opener = lambda request: client.open(request, timeout=10)
+        opener = lambda request: client.open(request, timeout=30)
     directory = Path(directory);directory.mkdir(parents=True, exist_ok=True)
-    folder = Path(tempfile.mkdtemp(prefix='finder-update-', dir=directory))
+    folder = _download_folder(directory, asset, filename)
     target = folder/filename;partial = folder/(filename+'.part')
+    complete = retain_partial = False
     try:
+        for attempt in range(4):
+            if cancelled():raise DownloadCancelled()
+            received = partial.stat().st_size if partial.exists() else 0
+            if received > (asset.size_bytes or MAX_INSTALLER_BYTES):raise ValueError('Unexpected update installer size.')
+            if received and received == asset.size_bytes:break
+            parts = urlparse(asset.url)
+            query = parts.query+('&' if parts.query else '')+f'download=1&check={time.time_ns()}'
+            headers = {'User-Agent':'XRD-Phase-Finder-Updater', 'Accept-Encoding':'identity',
+                       'Cache-Control':'no-cache', 'Pragma':'no-cache'}
+            if received:headers['Range'] = f'bytes={received}-'
+            request = Request(parts._replace(query=query).geturl(), headers=headers)
+            try:
+                with opener(request) as response:
+                    if not trusted_download_url(response.geturl()):raise ValueError('Untrusted update redirect.')
+                    code = getattr(response, 'status', 200) or 200
+                    length = int(response.headers.get('Content-Length') or 0)
+                    if not 0 <= length <= MAX_INSTALLER_BYTES:raise ValueError('The update installer is too large.')
+                    if code == 206:
+                        bounds = re.fullmatch(r'bytes (\d+)-(\d+)/(\d+)', response.headers.get('Content-Range',''))
+                        if bounds is None:raise ValueError('Invalid update download range.')
+                        start,end,total = map(int,bounds.groups())
+                        if (start != received or not start<=end<total<=MAX_INSTALLER_BYTES
+                                or asset.size_bytes and total != asset.size_bytes or length and length != end-start+1):
+                            raise ValueError('Unexpected update download range.')
+                    elif code == 200:
+                        received = 0  # Server ignored Range: replace, never append the full file.
+                        total = asset.size_bytes or length
+                        if asset.size_bytes and length and length != total:raise ValueError('Unexpected update installer size.')
+                    else:raise ValueError('Unexpected update download response.')
+                    with partial.open('ab' if code==206 else 'wb') as stream:
+                        progress(received,total)
+                        while True:
+                            if cancelled():raise DownloadCancelled()
+                            chunk = response.read(64*1024)
+                            if not chunk:break
+                            received += len(chunk)
+                            if received > MAX_INSTALLER_BYTES or (total and received > total):
+                                raise ValueError('Unexpected update installer size.')
+                            stream.write(chunk);progress(received, total)
+                if total and received != total:raise ConnectionError('The update download was interrupted before completion.')
+                break
+            except Exception as error:
+                if cancelled():raise DownloadCancelled() from error
+                from urllib.error import HTTPError
+                if isinstance(error, HTTPError) and error.code==416 and received:
+                    partial.unlink(missing_ok=True)
+                    retryable = True
+                else:retryable = _retryable_download_error(error)
+                if isinstance(error, HTTPError):error.close()
+                if not retryable:raise
+                if attempt==3:
+                    retain_partial = partial.exists() and partial.stat().st_size>0
+                    raise
+                status(f'Connection interrupted. Reconnecting ({attempt+2}/4); downloaded part retained…')
+                _wait_for_download_retry(attempt, cancelled)
         if cancelled():raise DownloadCancelled()
-        parts = urlparse(asset.url)
-        query = parts.query+('&' if parts.query else '')+f'download=1&check={time.time_ns()}'
-        request = Request(parts._replace(query=query).geturl(), headers={
-            'User-Agent':'XRD-Phase-Finder-Updater', 'Accept-Encoding':'identity',
-            'Cache-Control':'no-cache', 'Pragma':'no-cache'})
-        with opener(request) as response, partial.open('wb') as stream:
-            if not trusted_download_url(response.geturl()):raise ValueError('Untrusted update redirect.')
-            total = asset.size_bytes or int(response.headers.get('Content-Length') or 0)
-            if not 0 <= total <= MAX_INSTALLER_BYTES:raise ValueError('The update installer is too large.')
-            received = 0
-            while True:
-                if cancelled():raise DownloadCancelled()
-                chunk = response.read(64*1024)
-                if not chunk:break
-                received += len(chunk)
-                if received > MAX_INSTALLER_BYTES or (total and received > total):
-                    raise ValueError('Unexpected update installer size.')
-                stream.write(chunk);progress(received, total)
-        if cancelled():raise DownloadCancelled()
-        if total and received != total:raise ValueError('The update download is incomplete. Please retry.')
         verify_installer(partial, asset.sha256)
         for attempt in range(6):
             try:
@@ -126,11 +206,15 @@ def download_installer(asset, directory, *, progress=lambda done,total:None, can
                 if attempt == 5:raise
                 if cancelled():raise DownloadCancelled()
                 time.sleep(.05*(attempt+1))
+        complete = True
         return target
-    except BaseException:
-        partial.unlink(missing_ok=True);target.unlink(missing_ok=True)
-        folder.rmdir()
-        raise
+    finally:
+        (folder/'download.lock').unlink(missing_ok=True)
+        if not retain_partial:
+            (folder/'download.json').unlink(missing_ok=True)
+            if not complete:
+                partial.unlink(missing_ok=True);target.unlink(missing_ok=True)
+                folder.rmdir()
 
 
 def wait_for_parent_exit(pid):

@@ -2,6 +2,7 @@
 
 ## 1.7.4 - 2026-11-25
 
+- Refresh the Windows updater with a longer read timeout, bounded retries, validated partial-download resumption and retry/browser recovery controls.
 - Add per-phase marker colors and intensity controls, using distinct measured maxima rather than extra markers beside strong peaks.
 - Show accepted phases, space groups and refined cells in Sample; clarify Processing section names and highlight clickable phase-color cells.
 - Add explicit Le Bail cell/profile refinement with a user-selected iteration budget, continuation from fitted parameters, cancellation and convergence/Rwp reporting.

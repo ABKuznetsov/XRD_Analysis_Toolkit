@@ -14,20 +14,21 @@
       "type": "installer",
       "platform": "windows",
       "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.4/XRD_Phase_Finder_Setup_v1_7_4.exe",
-      "sha256": "b10d195e6b3e88f68b9e9d42d090134a58ecb28856772a925fb57bd5a1bef151",
-      "size_bytes": 5665646
+      "sha256": "767605a3d58f27f020d7b9c0a2f1e2f30ec343c822ab2130d3bee2e814113674",
+      "size_bytes": 5666785
     }
   ],
   "summary": [
     "Per-phase marker colors and controls based on distinct measured maxima.",
     "Sample phase details, refined cells and independent structural phase fractions.",
     "Le Bail with user-selected iterations, continuation, reference reset and convergence reporting.",
-    "Reuse compatible saved calculations and offer the 1.7.4 download to existing Windows installations."
+    "Reuse compatible saved calculations and offer the 1.7.4 download to existing Windows installations.",
+    "Retry interrupted update downloads and resume verified partial transfers; offer a browser fallback."
   ],
   "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.4/XRD_Phase_Finder_Setup_v1_7_4.exe",
-  "installer_sha256": "b10d195e6b3e88f68b9e9d42d090134a58ecb28856772a925fb57bd5a1bef151",
+  "installer_sha256": "767605a3d58f27f020d7b9c0a2f1e2f30ec343c822ab2130d3bee2e814113674",
   "installer_filename": "XRD_Phase_Finder_Setup_v1_7_4.exe",
-  "installer_size_bytes": 5665646,
+  "installer_size_bytes": 5666785,
   "platform_versions": {
     "windows": "1.7.4"
   },

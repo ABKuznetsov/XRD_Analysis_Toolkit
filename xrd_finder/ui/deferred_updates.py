@@ -84,6 +84,7 @@ class UpdateController(QObject):
     completed = Signal(object)
     download_progress = Signal(object)
     download_completed = Signal(object)
+    download_status_changed = Signal(str)
 
     def __init__(self, window, *, settings=None):
         super().__init__(window)
@@ -107,6 +108,7 @@ class UpdateController(QObject):
         self.completed.connect(self._finished)
         self.download_progress.connect(self._progress)
         self.download_completed.connect(self._download_finished)
+        self.download_status_changed.connect(self._download_status)
         label = getattr(window, 'background_status_label', None)
         if label is not None:
             label.linkActivated.connect(self._update_link)
@@ -244,14 +246,22 @@ class UpdateController(QObject):
             def progress(done, total):
                 try:self.download_progress.emit((done,total))
                 except RuntimeError:cancel.set()
+            def status(message):
+                try:self.download_status_changed.emit(message)
+                except RuntimeError:cancel.set()
             try:
-                path = download_installer(asset, directory, progress=progress, cancelled=cancel.is_set)
+                path = download_installer(asset, directory, progress=progress, cancelled=cancel.is_set, status=status)
                 result = (path, '', cancel.is_set())
             except DownloadCancelled:result = (None, '', True)
             except Exception as error:result = (None, str(error) or type(error).__name__, False)
             try:self.download_completed.emit(result)
             except RuntimeError:pass
         Thread(target=work, name='finder-update-download', daemon=True).start()
+
+    @Slot(str)
+    def _download_status(self, message):
+        if not self.closed and self.progress_dialog is not None:
+            self.progress_dialog.setLabelText(message)
 
     @Slot(object)
     def _progress(self, progress):
@@ -273,9 +283,34 @@ class UpdateController(QObject):
             self.progress_dialog.close();self.progress_dialog.deleteLater();self.progress_dialog = None
         if cancelled:return
         if error:
-            QMessageBox.warning(self.window, 'Update download failed', error);return
+            self._offer_download_retry(error);return
         self.downloaded_path = Path(path)
         self.install_downloaded()
+
+    def _offer_download_retry(self, error):
+        if self.closed:return
+        if self.offer is not None:
+            self.offer.raise_();self.offer.activateWindow();return
+        asset = self.downloaded_asset
+        message = self.offer = QMessageBox(self.window)
+        message.setWindowTitle('Update download interrupted')
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setText('The update download could not be completed.')
+        message.setInformativeText(str(error)+'\nRetry to reconnect, or download the installer in your browser. '
+                                   'A saved partial download is reused when available.')
+        retry = message.addButton('Retry download', QMessageBox.ButtonRole.AcceptRole)
+        browser = message.addButton('Download in browser', QMessageBox.ButtonRole.ActionRole) if asset is not None else None
+        message.addButton('Later', QMessageBox.ButtonRole.RejectRole)
+        message.setDefaultButton(retry)
+        message.setWindowModality(Qt.WindowModality.WindowModal)
+        message.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        def chosen(_):
+            self.offer = None
+            if self.closed:return
+            if message.clickedButton() is retry and asset is not None:self._download(asset)
+            elif browser is not None and message.clickedButton() is browser:QDesktopServices.openUrl(QUrl(asset.url))
+        message.finished.connect(chosen)
+        message.open()
 
     def install_downloaded(self):
         if self.closed or self.downloaded_path is None:return
