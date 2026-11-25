@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import math
 
 from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtGui import QBrush, QColor, QPen
 from xrd_finder.ui.theme import is_dark_theme, theme_colors
 from xrd_finder.ui.formula_display import FormulaDisplayDelegate, canonical_display_formula
 from xrd_finder.ui.space_group_display import SpaceGroupDisplayDelegate
@@ -57,6 +57,12 @@ class _PhaseColorDelegate(QStyledItemDelegate):
         painter.setPen(color)
         painter.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                          opt.fontMetrics.elidedText(text, opt.textElideMode, max(0, rect.width())))
+        if getattr(self.parent(), '_hovered_phase_color_row', -1) == index.row():
+            # Paint after the swatch fill so stylesheet/selection colors cannot
+            # obscure the clickable-cell feedback. Contrast follows the swatch.
+            painter.setPen(QPen(color, max(2., 2. * density)))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(opt.rect.adjusted(2, 2, -3, -3))
         painter.restore()
 
 
@@ -743,6 +749,8 @@ class CandidateTableWidget(_ColumnLayoutTableWidget):
             if header in {self.MATCH_HEADER, self.GAIN_HEADER}:
                 value = value.removeprefix("←").removeprefix("→").strip()
             values[header] = value
+            if header == 'Sp. gr.':
+                values['Space group'] = value
             if header == "I/Ic":
                 values["I/Ic*"] = value
         return values
@@ -987,6 +995,9 @@ class SelectedCandidatesTableWidget(_ColumnLayoutTableWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(0, len(self.HEADERS), parent)
+        self._hovered_phase_color_row = -1
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
         self._column_resize_timer = QTimer(self)
         self._column_resize_timer.setSingleShot(True)
         self._column_resize_timer.timeout.connect(self._resize_columns)
@@ -1035,6 +1046,7 @@ class SelectedCandidatesTableWidget(_ColumnLayoutTableWidget):
         )
 
     def set_rows(self, rows: list[list[str]]) -> None:
+        self._set_phase_color_hover(-1)
         previous_block_state = self.blockSignals(True)
         self.setUpdatesEnabled(False)
         self.setSortingEnabled(False)
@@ -1059,6 +1071,28 @@ class SelectedCandidatesTableWidget(_ColumnLayoutTableWidget):
             self.blockSignals(previous_block_state)
             self.setUpdatesEnabled(True)
         self.viewport().update()
+
+    def _set_phase_color_hover(self, row: int) -> None:
+        previous = getattr(self, '_hovered_phase_color_row', -1)
+        self._hovered_phase_color_row = row
+        if row >= 0:
+            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.viewport().unsetCursor()
+        if row != previous:
+            for index in (previous, row):
+                item = self.item(index, 0) if index >= 0 else None
+                if item is not None:
+                    self.viewport().update(self.visualItemRect(item))
+
+    def eventFilter(self, watched, event):
+        if watched is self.viewport():
+            if event.type() == QEvent.Type.MouseMove:
+                index = self.indexAt(event.position().toPoint())
+                self._set_phase_color_hover(index.row() if index.isValid() and index.column() == 0 else -1)
+            elif event.type() in (QEvent.Type.Leave, QEvent.Type.Hide):
+                self._set_phase_color_hover(-1)
+        return super().eventFilter(watched, event)
 
     def _emit_row_clicked(self, row: int, column: int) -> None:
         if row >= 0:

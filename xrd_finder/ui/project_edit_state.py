@@ -21,11 +21,13 @@ _CALCULATED_FIELDS = (
 _PROFILE_CACHE_FIELDS = (
     'calculated_result', 'pending_position_alignment', 'result_snapshot',
     'zero_shift_auto_deg', 'zero_shift_observed_width_deg',
+    'structure_snapshots',
 )
 _CANDIDATE_METRICS = (
     'Match (%)', 'Gain (%)', 'I/Ic*', '_EstimatedCell', '_CellFitPeaks',
     '_CellFitInitialRmsDeg', '_CellFitRmsDeg', '_LeBailMessage',
     '_QuantificationError',
+    'Space group', 'Sp. gr.',  # Reference display metadata, not physical inputs.
 )
 
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.7.4 - 2026-11-25
+
+- Add per-phase marker colors and intensity controls, using distinct measured maxima rather than extra markers beside strong peaks.
+- Show accepted phases, space groups and refined cells in Sample; clarify Processing section names and highlight clickable phase-color cells.
+- Add explicit Le Bail cell/profile refinement with a user-selected iteration budget, continuation from fitted parameters, cancellation and convergence/Rwp reporting.
+- Restore the active sample's reference CIF cells with Reset to reference, retaining accepted phases and the scan zero correction.
+- Calculate structural mass fractions separately with refined cells and zero held fixed; retain the Le Bail result for further refinement and portable project storage.
+- Retain background counting noise in physical scale weights and accept validated CIF composition despite noncritical mapping warnings.
+- Preserve compatible saved calculations across the application update; keep published Match/Gain formulas unchanged.
+- Publish a new Windows version and update manifests so installations of 1.7.3 can detect the update. macOS remains at 1.7.3 and Linux at 1.7.2 pending platform builds.
+
 ## 1.7.3 - 2026-11-24
 
 - Defer scientific-library warmup until the main window has painted, prioritizing opening projects and importing measurements.

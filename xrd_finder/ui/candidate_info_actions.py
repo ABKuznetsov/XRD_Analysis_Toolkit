@@ -6,8 +6,11 @@ import hashlib
 import json
 import re
 import shutil
+from copy import deepcopy
+from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
+from PySide6.QtCore import Qt
 
 from PySide6.QtWidgets import QFileDialog, QMenu, QMessageBox, QTableWidgetItem
 
@@ -106,6 +109,8 @@ class PhaseFinderCandidateInfoActionsMixin:
 
     def _update_compound_card(self, candidate: dict[str, str] | None) -> None:
         if self.compound_card is not None:
+            if candidate is not None:
+                self._backfill_candidate_space_group(candidate)
             self._update_compound_card_sample()
             self.compound_card.set_candidate(candidate)
 
@@ -115,11 +120,58 @@ class PhaseFinderCandidateInfoActionsMixin:
                 self._active_pattern(),
                 self._compound_card_phase_rows(),
             )
+            from PySide6.QtCore import QSignalBlocker
+            pattern = self._active_pattern()
+            state = self.profile_states.get(pattern.id, {}) if pattern is not None else {}
+            with QSignalBlocker(self.compound_card.le_bail_iterations):
+                self.compound_card.le_bail_iterations.setValue(int(state.get('le_bail_iterations', 20)))
+            running = pattern is not None and getattr(self, '_sample_le_bail_running_pattern', None) == pattern.id
+            self.compound_card.cell_fit_button.setText('Cancel Le Bail refinement' if running else 'Refine cell and profile (Le Bail)')
+            self.compound_card.le_bail_iterations.setEnabled(not running)
+            self.compound_card.reference_reset_button.setEnabled(not running and self.compound_card.fractions_button.isEnabled())
+            status = getattr(self.compound_card, 'sample_status', None)
+            if status is not None:
+                status.setText(getattr(self, '_sample_card_status', ''))
 
     def _compound_card_phase_rows(self) -> list[list[str]]:
+        self._sample_card_status = ''
         pattern = self._active_pattern()
         if pattern is None:
             return []
+        candidates = self._profile_candidates_for_pattern(pattern)
+        if candidates:
+            result, _ = self._finder_result_for_pattern(pattern, candidates, cache_only=True)
+            fitted = {item.entry_id: item for item in result.candidates} if result is not None else {}
+            overrides = self._sample_cell_structure_overrides(pattern, candidates)
+            if result is None:
+                self._sample_card_status = 'No current calculated profile. Recalculate phase fractions to update the result.'
+            elif result.quantification_error:
+                self._sample_card_status = 'Phase fractions unavailable: ' + result.quantification_error
+            attempt = self.profile_states.get(pattern.id, {}).get('le_bail_attempt', {})
+            if attempt:
+                self._sample_card_status = attempt.get('message', '') + '\n' + self._sample_card_status
+            rows = []
+            for candidate in candidates:
+                key = self._candidate_key(candidate)
+                self._backfill_candidate_space_group(candidate)
+                structure = self.match_structures.get(key) if pattern.id == self.active_profile_pattern_id else None
+                if structure is None:
+                    structure = self._saved_candidate_structure(candidate, pattern.id)
+                item = fitted.get(key)
+                cell = getattr(item, 'estimated_cell', None)
+                if cell:
+                    cell = CellParameters(**{name: cell.get(name) for name in CellParameters.__dataclass_fields__})
+                else:
+                    cell = getattr(overrides.get(key) or structure, 'cell', None)
+                quantity = getattr(item, 'quantity_percent', None)
+                rows.append([self._phase_legend_label(candidate), candidate.get('Formula') or getattr(structure, 'formula', ''),
+                    candidate.get('Space group', ''), *self._compound_card_cell_values(cell),
+                    f'{quantity:.1f}' if quantity is not None and math.isfinite(quantity) else '—',
+                    candidate.get('I/Ic*', ''),
+                    self._compound_card_number(getattr(item, 'cell_scale', None), precision=5),
+                    self._compound_card_number(getattr(item, 'fwhm', None), precision=4),
+                    self._compound_card_number(getattr(item, 'profile_eta', None), precision=3)])
+            return rows
         linked_phase_ids = getattr(pattern, "linked_phase_ids", [])
         if not isinstance(linked_phase_ids, list) or not linked_phase_ids:
             return []
@@ -150,15 +202,138 @@ class PhaseFinderCandidateInfoActionsMixin:
             )
         return rows
 
+    def _backfill_candidate_space_group(self, candidate):
+        if candidate.get('Space group') not in (None, '', '?', '.'):
+            return
+        value = candidate.get('Sp. gr.')
+        if value in (None, '', '?', '.'):
+            key = self._candidate_key(candidate)
+            structure = self.match_structures.get(key)
+            if structure is None:
+                structure = self._saved_candidate_structure(candidate)
+            value = getattr(structure, 'space_group', '') or getattr(structure, 'space_group_number', '')
+        if value:
+            candidate['Space group'] = str(value)
+
+    def _sample_cell_structure_overrides(self, pattern, candidates):
+        from xrd_finder.finder.cell_parameter_estimator import FastCellParameterEstimator
+        from xrd_finder.io.finder_result_cache import cif_content_signature
+        saved = self.profile_states.get(pattern.id, {}).get('sample_cell_overrides', {})
+        overrides = {}
+        for candidate in candidates:
+            key = self._candidate_key(candidate)
+            record = saved.get(key)
+            if not isinstance(record, dict):
+                continue
+            path = self._candidate_local_cif_path(candidate)
+            if not record.get('cif_sha256') or record['cif_sha256'] != cif_content_signature(path):
+                continue
+            try:
+                cell = CellParameters(**record['cell'])
+            except (KeyError, TypeError):
+                continue
+            if not FastCellParameterEstimator._valid_cell(cell):
+                continue
+            source = self.match_structures.get(key) if pattern.id == self.active_profile_pattern_id else None
+            if source is None:
+                source = self._saved_candidate_structure(candidate, pattern.id)
+            if source is None and path is not None:
+                try:
+                    _phase, source = create_phase_from_cif(path)
+                except Exception:
+                    continue
+            if source is not None:
+                overrides[key] = deepcopy(source)
+                overrides[key].cell = cell
+        return overrides
+
+    def _fit_accepted_sample_cells(self, pattern, candidates, *, show_messages, recalculate, latest_only):
+        from xrd_finder.io.finder_result_cache import cif_content_signature
+        result, _ = self._finder_result_for_pattern(pattern, candidates, cache_only=True)
+        if result is None or result.position_refinement.get('requires_confirmation') or result.position_refinement.get('position_rejected'):
+            if show_messages:
+                QMessageBox.information(self, 'Cell fit', 'Calculate and accept the current phase alignment before fitting the unit cell.')
+            return False
+        chosen = candidates[-1:] if latest_only else candidates
+        overrides = self._sample_cell_structure_overrides(pattern, chosen)
+        phase_structures = []
+        for candidate in chosen:
+            key = self._candidate_key(candidate)
+            structure = overrides.get(key) or self.match_structures.get(key) or self._saved_candidate_structure(candidate, pattern.id)
+            if structure is None:
+                path = self._candidate_local_cif_path(candidate)
+                if path is not None:
+                    try:
+                        _phase, structure = create_phase_from_cif(path)
+                        self.match_structures[key] = structure
+                    except Exception:
+                        pass
+            if structure is not None:
+                phase_structures.append((key, self._phase_legend_label(candidate), deepcopy(structure)))
+        if not phase_structures:
+            if show_messages:
+                QMessageBox.information(self, 'Cell fit', 'The accepted phases have no local CIF structures for indexed-cell refinement.')
+            return False
+        wavelength = self._active_wavelength()
+        self.setCursor(Qt.CursorShape.WaitCursor)
+        try:
+            matches = self._active_indexed_peak_matches(pattern, phase_structures, wavelength=wavelength, finder_result=result)
+            results = self.refinement_service.fit_indexed_cells(phase_structures, wavelength=wavelength, indexed_peak_matches=matches)
+        except Exception as exc:
+            if show_messages:
+                QMessageBox.warning(self, 'Cell fit', str(exc))
+            return False
+        finally:
+            self.unsetCursor()
+        successful = [item for item in results if item.success]
+        if successful:
+            saved = self.profile_states.setdefault(pattern.id, {}).setdefault('sample_cell_overrides', {})
+            candidate_by_key = {self._candidate_key(candidate): candidate for candidate in candidates}
+            for item in successful:
+                path = self._candidate_local_cif_path(candidate_by_key[item.phase_id])
+                saved[item.phase_id] = dict(cell=asdict(item.refined_cell), matched_peaks=item.matched_peaks,
+                    rms_delta_two_theta=item.rms_delta_two_theta, cif_sha256=cif_content_signature(path))
+                self.project.refinements.append(dict(method='indexed_cell', pattern_id=pattern.id,
+                    candidate_key=item.phase_id, phase_name=item.phase_name, matched_peaks=item.matched_peaks,
+                    rms_delta_two_theta=item.rms_delta_two_theta, cell=asdict(item.refined_cell)))
+            self._save_active_profile_state()
+            self._invalidate_match_profile_cache(pattern.id)
+            self.project.touch()
+            self.project_changed.emit()
+            if recalculate:
+                self._recalculate_match_profile(auto_zoom=False, active_only=True)
+            self._update_compound_card_sample()
+        if show_messages:
+            summary = [f'{item.phase_name}: {item.matched_peaks} indexed peaks, RMS {item.rms_delta_two_theta:.4g} deg\n'
+                       f'{self._cell_change_text(item.initial_cell, item.refined_cell)}' if item.success
+                       else f'{item.phase_name}: {item.message or "not enough independent indexed peaks"}' for item in results]
+            QMessageBox.information(self, 'Cell fit', '\n'.join(summary[:8]))
+        return bool(successful)
+
+    def _recalculate_sample_fractions(self):
+        pattern = self._active_pattern()
+        candidates = self._profile_candidates_for_pattern(pattern) if pattern is not None else []
+        if not candidates:
+            return
+        if self._le_bail_enabled_for_pattern(pattern):
+            result, _ = self._finder_result_for_pattern(pattern, candidates, cache_only=True)
+            if result is None or not self._adopt_sample_le_bail_cells(pattern, candidates, result):
+                QMessageBox.information(self, 'Phase fractions', 'Complete a valid cell refinement before calculating separate structural phase fractions.')
+                return
+            self._set_pattern_le_bail(pattern, False)
+        self._save_active_profile_state()
+        self._invalidate_match_profile_cache(pattern.id)
+        self._recalculate_match_profile(auto_zoom=False, active_only=True)
+
     def _compound_card_cell_values(self, cell) -> list[str]:
         return [
-            self._compound_card_number(getattr(cell, "a", None), precision=5),
-            self._compound_card_number(getattr(cell, "b", None), precision=5),
-            self._compound_card_number(getattr(cell, "c", None), precision=5),
-            self._compound_card_number(getattr(cell, "alpha", None), precision=4),
-            self._compound_card_number(getattr(cell, "beta", None), precision=4),
-            self._compound_card_number(getattr(cell, "gamma", None), precision=4),
-            self._compound_card_number(getattr(cell, "volume", None), precision=5),
+            self._compound_card_number(getattr(cell, "a", None), precision=8),
+            self._compound_card_number(getattr(cell, "b", None), precision=8),
+            self._compound_card_number(getattr(cell, "c", None), precision=8),
+            self._compound_card_number(getattr(cell, "alpha", None), precision=6),
+            self._compound_card_number(getattr(cell, "beta", None), precision=6),
+            self._compound_card_number(getattr(cell, "gamma", None), precision=6),
+            self._compound_card_number(getattr(cell, "volume", None), precision=8),
         ]
 
     def _compound_card_number(self, value, *, precision: int) -> str:
@@ -221,6 +396,7 @@ class PhaseFinderCandidateInfoActionsMixin:
             return str(path).lower()
 
     def _enrich_candidate_with_structure_info(self, candidate: dict[str, str]) -> None:
+        self._backfill_candidate_space_group(candidate)
         if self._candidate_source(candidate) != "PDF2":
             candidate.pop("I/Ic*", None)
             candidate.pop("I/Ic", None)

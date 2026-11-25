@@ -53,7 +53,9 @@ def enrich_candidate_from_structure(
         candidate["Formula"] = display_formula(structure.formula)
         if str(candidate.get('Source', '')).strip().upper() == 'MP':
             candidate['Phase'] = display_formula(structure.formula)
-    candidate["Space group"] = structure.space_group or structure.space_group_number or ""
+    group = structure.space_group or structure.space_group_number
+    if group:
+        candidate["Space group"] = group
     cell = structure.cell
     if has_complete_cell(cell):
         candidate["Cell"] = format_cell(cell)

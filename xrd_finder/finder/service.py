@@ -36,7 +36,8 @@ from xrd_finder.services.calculated_pattern_service import (
 from xrd_finder.services.element_masses import atomic_weight
 from xrd_finder.services.peak_cell_alignment import apply_peak_cell
 from xrd_finder.services.refinement_budget import RefinementBudget
-from xrd_finder.services.scan_zero_alignment import PhasePositionInput, align_common_zero
+from xrd_finder.services.scan_zero_alignment import PhasePositionInput, CommonZeroAlignment, align_common_zero
+from xrd_finder.services.peak_cell_alignment import PeakCellAlignment
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +156,7 @@ class FinderService:
                         context=context,
                         use_lp=True,
                         instrument_profile=finder_input.instrument_profile,
+                        cell_override=candidate.initial_cell,
                     )
                     peaks = list(line_data.peaks)
             except Exception as exc:
@@ -182,13 +184,25 @@ class FinderService:
                 primary_alignment_data, observed.peaks)
             if trusted_zero is not None:
                 global_zero = float(trusted_zero)
-        positions = align_common_zero([
-            PhasePositionInput(self._candidate_key(candidate),tuple(peaks),
-                structure.cell if structure is not None else candidate.initial_cell)
-            for candidate,structure,peaks,_line_data in candidate_data
-        ], observed.peaks,wavelength=context.primary_wavelength,zero_shift=global_zero,
-            refine_zero=finder_input.refine_scan_zero,
-            allow_uncertain_zero=finder_input.allow_uncertain_zero,budget=position_budget)
+        if finder_input.fixed_zero_shift is not None:
+            fixed_zero = float(finder_input.fixed_zero_shift)
+            if not math.isfinite(fixed_zero) or any(candidate.initial_cell is None or
+                    not FastCellParameterEstimator._valid_cell(candidate.initial_cell) for candidate in finder_input.candidates):
+                raise ValueError('Fixed-geometry phase fractions require a finite zero and a valid cell for every phase.')
+            positions = CommonZeroAlignment(fixed_zero, {
+                self._candidate_key(candidate): PeakCellAlignment(tuple(peaks),
+                    CellParameterEstimate(candidate.initial_cell, '', 0, fixed_zero, 0., 0.))
+                for candidate, _structure, peaks, _line_data in candidate_data
+            }, {'zero_confirmed': True, 'fixed_sample_geometry': True,
+                'source': 'explicit_refined_cells', 'requires_confirmation': False})
+        else:
+            positions = align_common_zero([
+                PhasePositionInput(self._candidate_key(candidate),tuple(peaks),
+                    structure.cell if structure is not None else candidate.initial_cell)
+                for candidate,structure,peaks,_line_data in candidate_data
+            ], observed.peaks,wavelength=context.primary_wavelength,zero_shift=global_zero,
+                refine_zero=finder_input.refine_scan_zero,
+                allow_uncertain_zero=finder_input.allow_uncertain_zero,budget=position_budget)
         global_zero = positions.zero_shift_deg
         prepared_profiles = []
         for candidate_index, (candidate, structure, peaks, line_data) in enumerate(candidate_data):
@@ -343,8 +357,10 @@ class FinderService:
             refine_sample_broadening=finder_input.refine_sample_broadening,
             observed_peaks=observed.peaks,
             diagnostics=quantification_errors,
+            observed_y=observed.observed_y,
         ) if (finder_input.quantification_complete and len(profiles) == len(finder_input.candidates)) else None
         if physical_fit is not None:
+            positions.diagnostics['scale_weighting'] = 'observed-intensity-v1'
             quantity_fractions = physical_fit.fractions
             # Preserve the public peak-normalized scale convention, while using
             # exactly the physical columns and coefficients that produced Quant.

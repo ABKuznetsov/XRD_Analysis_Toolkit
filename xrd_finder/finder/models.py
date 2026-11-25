@@ -81,6 +81,8 @@ class FinderInput:
     refine_scan_zero: bool = True
     # Only a caller that can obtain operator confirmation may offer this fit.
     allow_uncertain_zero: bool = False
+    # Explicit post-refinement Quant: retain the supplied initial cells and zero.
+    fixed_zero_shift: float | None = None
 
 
 @dataclass(slots=True)

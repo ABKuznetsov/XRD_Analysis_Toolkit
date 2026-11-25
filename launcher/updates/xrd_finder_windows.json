@@ -1,37 +1,35 @@
 {
   "app_id": "xrd_finder",
   "name": "XRD Phase Finder",
-  "version": "1.7.3",
+  "version": "1.7.4",
   "channel": "stable",
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
-  "published_at": "2026-11-24",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.3/XRD_Phase_Finder_Setup_v1_7_3.exe",
-  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.3",
+  "published_at": "2026-11-25",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.4/XRD_Phase_Finder_Setup_v1_7_4.exe",
+  "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.4",
   "assets": [
     {
-      "name": "XRD_Phase_Finder_Setup_v1_7_3.exe",
+      "name": "XRD_Phase_Finder_Setup_v1_7_4.exe",
       "type": "installer",
       "platform": "windows",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.3/XRD_Phase_Finder_Setup_v1_7_3.exe",
-      "sha256": "e08cbeb7155e1621e06b4e2b612c1ca955cdd4a217eee6e6516d6b27c879da68",
-      "size_bytes": 5657627
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.4/XRD_Phase_Finder_Setup_v1_7_4.exe",
+      "sha256": "b10d195e6b3e88f68b9e9d42d090134a58ecb28856772a925fb57bd5a1bef151",
+      "size_bytes": 5665646
     }
   ],
   "summary": [
-    "Prioritize the main window and defer scientific-library warmup.",
-    "Reuse prepared-library ranges and compatible saved profile calculations.",
-    "Improve accepted-phase marker alignment and preserve each profile color.",
-    "Add L/M/R labels, weak-marker controls and export appearance settings.",
-    "Move the compact common phase legend and retain its position in XPFF and exports.",
-    "Keep disabled axes hidden and remove zero-length tick artifacts."
+    "Per-phase marker colors and controls based on distinct measured maxima.",
+    "Sample phase details, refined cells and independent structural phase fractions.",
+    "Le Bail with user-selected iterations, continuation, reference reset and convergence reporting.",
+    "Reuse compatible saved calculations and offer the 1.7.4 download to existing Windows installations."
   ],
-  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.3/XRD_Phase_Finder_Setup_v1_7_3.exe",
-  "installer_sha256": "e08cbeb7155e1621e06b4e2b612c1ca955cdd4a217eee6e6516d6b27c879da68",
-  "installer_filename": "XRD_Phase_Finder_Setup_v1_7_3.exe",
-  "installer_size_bytes": 5657627,
+  "installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.4/XRD_Phase_Finder_Setup_v1_7_4.exe",
+  "installer_sha256": "b10d195e6b3e88f68b9e9d42d090134a58ecb28856772a925fb57bd5a1bef151",
+  "installer_filename": "XRD_Phase_Finder_Setup_v1_7_4.exe",
+  "installer_size_bytes": 5665646,
   "platform_versions": {
-    "windows": "1.7.3"
+    "windows": "1.7.4"
   },
-  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.3"
+  "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.4"
 }

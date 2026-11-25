@@ -788,19 +788,9 @@ class PlotViewSettingsWidget(QScrollArea):
         self.marker_shape_combo.currentTextChanged.connect(self._emit_settings)
         form.addRow("Size", self.marker_size_spin)
         form.addRow("Shape", self.marker_shape_combo)
-        self.weak_markers_slider = QSlider(Qt.Orientation.Horizontal)
-        self.weak_markers_slider.setRange(0,100)
-        self.weak_markers_slider.setTracking(False)
-        self.weak_markers_slider.setToolTip('Higher values show more weak phase markers. Peak assignments and search results are unchanged.')
-        self.weak_markers_slider.valueChanged.connect(self._emit_settings)
-        self.weak_markers_value = QLabel('0%')
-        self.weak_markers_slider.valueChanged.connect(lambda value:self.weak_markers_value.setText(f'{value}%'))
-        row = QWidget()
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0,0,0,0)
-        layout.addWidget(self.weak_markers_slider,1)
-        layout.addWidget(self.weak_markers_value)
-        form.addRow('Weak markers',row)
+        # Retain legacy project preferences as the standard display filter.
+        # Per-phase controls live in Processing / Peak markers.
+        self._legacy_weak_marker_sensitivity = 0
         return widget
 
     def _spin(self, minimum: int, maximum: int, value: int) -> QSpinBox:
@@ -988,7 +978,7 @@ class PlotViewSettingsWidget(QScrollArea):
             difference_fraction=float(self.difference_height_spin.value()),
             marker_size=int(self.marker_size_spin.value()),
             marker_shape=self.marker_shape_combo.currentText(),
-            weak_marker_sensitivity=int(self.weak_markers_slider.value()),
+            weak_marker_sensitivity=self._legacy_weak_marker_sensitivity,
         )
 
     def reset(self) -> None:
@@ -1140,7 +1130,7 @@ class PlotViewSettingsWidget(QScrollArea):
         self.difference_height_spin.setValue(settings.difference_fraction)
         self.marker_size_spin.setValue(settings.marker_size)
         self.marker_shape_combo.setCurrentText(settings.marker_shape)
-        self.weak_markers_slider.setValue(settings.weak_marker_sensitivity)
+        self._legacy_weak_marker_sensitivity = settings.weak_marker_sensitivity
 
     def _emit_settings(self, *_args) -> None:
         self.settingsChanged.emit(self.settings())

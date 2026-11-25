@@ -1419,10 +1419,20 @@ class PhaseFinderWindow(
             processed_observed = self._pattern_finder_observed_data(pattern)
         background_data = self._pattern_finder_background_data(pattern)
         structure_overrides = self._finder_candidate_structure_overrides(pattern, candidates)
+        sample_cells = self._sample_cell_structure_overrides(pattern, candidates)
         for finder_candidate in finder_candidates:
+            structure = candidate_structure_override(finder_candidate, structure_overrides)
+            if finder_candidate.entry_id in sample_cells and structure is not None:
+                # A manually refined metric uses native CIF lines with a cell
+                # override, rather than the legacy Python structure calculator.
+                finder_candidate.cif_path = finder_candidate.cif_path or finder_candidate.quantification_cif_path or structure.source_path
+                finder_candidate.quantification_cif_path = finder_candidate.cif_path
+                finder_candidate.reference_lines = None
+                finder_candidate.initial_cell = structure.cell
+                finder_candidate.structure = None
+                continue
             if finder_candidate.cif_path:
                 continue
-            structure = candidate_structure_override(finder_candidate, structure_overrides)
             if structure is not None:
                 finder_candidate.structure = structure
         wavelength, include_kalpha2 = self._legacy_radiation_for_pattern(pattern)
@@ -1432,6 +1442,7 @@ class PhaseFinderWindow(
                 quantification_complete=len(finder_candidates) == len(candidates),
                 allow_uncertain_zero=self._allow_uncertain_position_alignment(pattern),
                 refine_sample_broadening=True,
+                fixed_zero_shift=self._sample_fixed_geometry_zero(pattern, candidates, sample_cells),
                 wavelength=wavelength,
                 include_kalpha2=include_kalpha2,
                 instrument_profile=self._instrument_profile_for_pattern(pattern),
@@ -1475,9 +1486,10 @@ class PhaseFinderWindow(
     def _finder_candidate_structure_overrides(self, pattern, candidates: list[dict[str, str]]) -> dict[str, object]:
         if pattern is None:
             return {}
+        overrides = self._sample_cell_structure_overrides(pattern, candidates)
         linked_phase_ids = set(getattr(pattern, "linked_phase_ids", []) or [])
         if not linked_phase_ids:
-            return {}
+            return overrides
         phase_by_id = {phase.id: phase for phase in self.project.phases if phase.id in linked_phase_ids}
         structure_by_id = {structure.id: structure for structure in self.project.structures}
         phase_by_source_path = {
@@ -1489,7 +1501,6 @@ class PhaseFinderWindow(
             (str(phase.name or "").casefold(), str(phase.formula or "").casefold()): phase
             for phase in phase_by_id.values()
         }
-        overrides: dict[str, object] = {}
         for candidate in candidates:
             phase = None
             if self._candidate_source(candidate) == "USER" and candidate.get("Entry") in phase_by_id:
@@ -1514,7 +1525,7 @@ class PhaseFinderWindow(
                 (item for item in self.project.structures if item.phase_id == phase.id),
                 None,
             )
-            if structure is not None:
+            if structure is not None and self._candidate_key(candidate) not in overrides:
                 overrides[self._candidate_key(candidate)] = structure
         return overrides
 
@@ -1582,7 +1593,7 @@ class PhaseFinderWindow(
         self.finder_action_bar.plotColorRequested.connect(self._choose_plot_color)
         self.finder_action_bar.phaseColorRequested.connect(self._change_profile_candidate_color)
         self.finder_action_bar.profileHighlightChanged.connect(self._set_active_profile_highlight)
-        self.finder_action_bar.weakMarkersChanged.connect(self._set_weak_marker_sensitivity)
+        self.finder_action_bar.phaseMarkerLevelChanged.connect(self._set_phase_marker_level)
         self.finder_action_bar.set_plot_colors(self.plot_view_settings)
         self.search_input = self.finder_action_bar.search_input
         self._refresh_instrument_profile_selector()
@@ -1727,7 +1738,10 @@ class PhaseFinderWindow(
         self.right_tabs.addTab(self._composition_tab(), "Elements")
         self.right_tabs.addTab(self.finder_action_bar, "Processing")
         self.compound_card = CompoundCardWidget()
-        self.compound_card.cellFitRequested.connect(self._fit_active_sample_indexed_cells)
+        self.compound_card.cellFitRequested.connect(self._refine_active_sample_profile)
+        self.compound_card.fractionsRequested.connect(self._recalculate_sample_fractions)
+        self.compound_card.refinementIterationsChanged.connect(self._set_sample_refinement_iterations)
+        self.compound_card.referenceResetRequested.connect(self._reset_sample_to_reference)
         if hasattr(self, "_update_compound_card_sample"):
             self._update_compound_card_sample()
         self.right_tabs.addTab(self.compound_card, "Phase details")
@@ -2431,6 +2445,10 @@ class PhaseFinderWindow(
             if show_messages:
                 QMessageBox.information(self, "Cell fit", "Select an XRD sample first.")
             return False
+        candidates = self._profile_candidates_for_pattern(pattern)
+        if candidates:
+            return self._fit_accepted_sample_cells(pattern, candidates, show_messages=show_messages,
+                recalculate=recalculate, latest_only=latest_only)
         linked_phase_ids = list(getattr(pattern, "linked_phase_ids", []) or [])
         if not linked_phase_ids:
             if show_messages:
@@ -2542,7 +2560,7 @@ class PhaseFinderWindow(
             after = getattr(refined_cell, name, None)
             if before is None or after is None:
                 continue
-            parts.append(f"{name} {float(before):.5g}->{float(after):.5g}")
+            parts.append(f"{name} {float(before):.7g}->{float(after):.7g}")
         return "; ".join(parts)
 
     def _active_indexed_peak_matches(
@@ -2551,14 +2569,17 @@ class PhaseFinderWindow(
         phase_structures,
         *,
         wavelength: float,
+        finder_result=None,
     ) -> dict[str, list[tuple[int, int, int, float, float]]]:
         candidates = self._profile_candidates_for_pattern(pattern)
         if not candidates:
             return {}
-        try:
-            result, _candidate_by_key = self._finder_result_for_pattern(pattern, candidates, snap_peak_positions=False)
-        except Exception:
-            return {}
+        result = finder_result
+        if result is None:
+            try:
+                result, _candidate_by_key = self._finder_result_for_pattern(pattern, candidates, snap_peak_positions=False)
+            except Exception:
+                return {}
         if result is None:
             return {}
         global_zero_shift = float(getattr(result, "global_zero_shift", 0.0) or 0.0)
@@ -2575,7 +2596,8 @@ class PhaseFinderWindow(
         }
         phase_id_by_candidate_key: dict[str, str] = {}
         for candidate in candidates:
-            phase_id = ""
+            candidate_key = self._candidate_key(candidate)
+            phase_id = candidate_key if candidate_key in phase_ids else ""
             if self._candidate_source(candidate) == "USER" and candidate.get("Entry") in phase_ids:
                 phase_id = candidate.get("Entry", "")
             if not phase_id:
@@ -3032,6 +3054,9 @@ class PhaseFinderWindow(
         observed_peak_assignments=None,
         phase_assignment_styles: dict[str, tuple[str, str]] | None = None,
         show_peak_labels: bool | None = None,
+        positional_marker_candidate=None,
+        weak_marker_candidates=None,
+        phase_marker_levels=None,
     ) -> tuple[int, int]:
         return add_peak_coverage_markers(
             plot=self.match_plot,
@@ -3043,6 +3068,9 @@ class PhaseFinderWindow(
             phase_peak_sets=phase_peak_sets,
             observed_peak_assignments=observed_peak_assignments,
             phase_assignment_styles=phase_assignment_styles,
+            positional_marker_candidate=positional_marker_candidate,
+            weak_marker_candidates=weak_marker_candidates,
+            phase_marker_levels=phase_marker_levels,
             show_peak_labels=(
                 bool(show_peak_labels)
                 if show_peak_labels is not None

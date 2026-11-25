@@ -183,7 +183,9 @@ def restore_result(record, portable_key: tuple) -> FinderResult | None:
             from xrd_finder.finder.quantification import normalized_profile_error
             matrix = np.column_stack([c.mass_profile or c.profile for c in candidates])
             target = np.asarray(result.pattern_y) - np.asarray(result.background)
-            weighted = matrix / np.sqrt(np.maximum(np.abs(target), 1.))[:, None]
+            measured = (np.asarray(result.pattern_y) if result.position_refinement.get('scale_weighting') == 'observed-intensity-v1'
+                        else target)
+            weighted = matrix / np.sqrt(np.maximum(np.abs(measured), 1.))[:, None]
             norms = np.linalg.norm(weighted, axis=0)
             error = (normalized_profile_error(weighted / norms) if np.all(norms > 0.) else
                      'A saved phase has no usable calculated intensity; individual mass fractions cannot be separated')

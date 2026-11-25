@@ -6,6 +6,7 @@ from PySide6.QtCore import QRectF
 from PySide6.QtGui import QFont, QPainterPath
 
 from xrd_finder.ui.plot_style import PlotStyle
+from xrd_finder.finder.models import ObservedPeak, PeakAssignment
 
 
 def _half_circle_symbol(side: str) -> QPainterPath:
@@ -294,6 +295,9 @@ def add_peak_coverage_markers(
     phase_peak_sets: list[tuple[str, str, np.ndarray]],
     observed_peak_assignments=None,
     phase_assignment_styles: dict[str, tuple[str, str]] | None = None,
+    positional_marker_candidate=None,
+    weak_marker_candidates=None,
+    phase_marker_levels: dict[str, int] | None = None,
     show_peak_labels: bool = False,
     style: PlotStyle | None = None,
     marker_clearance_pixels: float = 0.0,
@@ -309,6 +313,9 @@ def add_peak_coverage_markers(
             observed_peaks=observed_peak_assignments,
             phase_peak_sets=phase_peak_sets,
             phase_assignment_styles=phase_assignment_styles or {},
+            positional_marker_candidate=positional_marker_candidate,
+            weak_marker_candidates=weak_marker_candidates,
+            phase_marker_levels=phase_marker_levels,
             show_peak_labels=show_peak_labels,
             style=style,
             marker_clearance_pixels=marker_clearance_pixels,
@@ -385,6 +392,189 @@ def add_peak_coverage_markers(
     return explained, int(len(considered_positions))
 
 
+def _positional_marker_lines(candidate, sensitivity, *, all_lines=False):
+    """Prepare display-only reflection evidence for a validated single phase."""
+    if candidate is None:
+        return None
+    fields = ('peak_two_theta', 'peak_intensity', 'peak_h', 'peak_k', 'peak_l')
+    values = [getattr(candidate, field, []) for field in fields]
+    if not values[0] or any(len(value) != len(values[0]) for value in values):
+        return None
+    # The same slider reveals weak reference reflections as well as weak
+    # observed maxima. Its value never changes positional matching tolerance.
+    minimum = np.nextafter(0., 1.) if all_lines else 5.0-4.8*float(np.clip(sensitivity, 0, 100))/100.
+    rows = sorted((tuple(row) for row in zip(*values, strict=True)
+                   if np.isfinite(row[0]) and np.isfinite(row[1]) and row[1] >= minimum),
+                  key=lambda row: row[0])
+    if not rows:
+        return None
+    return candidate, rows, np.asarray([row[0] for row in rows], dtype=float)
+
+
+def _positional_marker_assignment(observed_peak, evidence):
+    if evidence is None:
+        return []
+    candidate, rows, positions = evidence
+    angle = float(observed_peak.two_theta)
+    index = int(np.searchsorted(positions, angle))
+    adjacent = [i for i in (index-1, index) if 0 <= i < len(rows)]
+    nearest = min(adjacent, key=lambda i: abs(positions[i]-angle))
+    row = rows[nearest]
+    delta = angle-float(row[0])
+    # Retain the assignment builder's existing positional window. This is
+    # annotation evidence, not a change to saved assignments or search scores.
+    tolerance = max(.25, min(.75, max(.12, float(getattr(observed_peak, 'fwhm', 0.) or 0.)*1.35)))
+    if abs(delta) > tolerance:
+        return []
+    return [PeakAssignment(candidate_key=candidate.candidate_key,
+        phase_name=candidate.name or candidate.formula or candidate.entry_id,
+        hkl=tuple(int(value) for value in row[2:]), calc_two_theta=float(row[0]),
+        delta_two_theta=delta, intensity_ratio=float(row[1])/100.)]
+
+
+def phase_marker_level(value) -> int:
+    """Read a per-phase display preference; old projects use the standard view."""
+    try:
+        return max(0, min(100, int(value)))
+    except (TypeError, ValueError, OverflowError):
+        return 50
+
+
+def _marker_maxima_catalogue(x, strength, noise_sigma):
+    """Describe experimental maxima throughout the complete angular range.
+
+    Smooth by one sampled point to suppress noise on the sides of large peaks.
+    Prominence, rather than absolute height on a peak's tail, orders additions.
+    This list is never supplied to the finder or saved as scientific evidence.
+    """
+    from scipy.ndimage import gaussian_filter1d
+    from scipy.signal import find_peaks, peak_prominences, peak_widths
+    if len(x) < 3 or len(x) != len(strength):
+        return [], None
+    values = np.where(np.isfinite(strength), strength, 0.)
+    step = _positive_grid_step(x)
+    if step <= 0.:
+        return [], None
+    window = max(3, int(round(.9 / step)) | 1)
+    raw_indices, _ = find_peaks(values)
+    raw_prominences = peak_prominences(values, raw_indices, wlen=window)[0]
+    raw_widths = peak_widths(values, raw_indices, rel_height=.5)[0] * step
+    raw = (raw_indices, raw_prominences, raw_widths)
+    smooth = gaussian_filter1d(values, sigma=1., mode='nearest')
+    indices, properties = find_peaks(smooth, prominence=max(2.5 * noise_sigma, np.finfo(float).eps), wlen=window)
+    widths = peak_widths(smooth, indices, rel_height=.5)[0] * step
+    records = []
+    for index, prominence, width in zip(indices, properties['prominences'], widths):
+        # A tiny ripple on a high tail is not another diffraction maximum.
+        if prominence < max(float(smooth[index]), 0.) * .08:
+            continue
+        records.append((float(prominence), ObservedPeak(float(x[index]),
+            max(float(values[index]), 0.), float(width)), int(index)))
+    return records, raw
+
+
+def _complete_marker_catalogue(*, x, strength, noise_sigma, peak_records,
+                               prepared, evidence):
+    """Describe all phase-supported experimental maxima before filtering.
+
+    One catalogue entry represents one actual local maximum, even when several
+    reflections/phases coincide. Slider values never participate in detection.
+    """
+    detected, raw = _marker_maxima_catalogue(x, strength, noise_sigma)
+    if raw is None:
+        return {}, {}
+    indices, prominences, widths = raw
+    step = _positive_grid_step(x)
+    positions = x[indices]
+    proposals = []
+    def measured_maximum(angle):
+        if not len(indices):
+            return None
+        offset = int(np.searchsorted(positions, angle))
+        adjacent = [i for i in (offset - 1, offset) if 0 <= i < len(indices)]
+        nearest = min(adjacent, key=lambda i: abs(float(positions[i]) - angle))
+        index = int(indices[nearest])
+        prominence = float(prominences[nearest])
+        if (abs(float(x[index]) - angle) > max(.04, step * 2.) or prominence <= 0.
+                or prominence < max(float(strength[index]), 0.) * .08):
+            return None
+        return index, prominence, float(widths[nearest])
+    original_by_maximum = {}
+    for original_index, ((_, peak, _), assignments) in enumerate(zip(peak_records, prepared)):
+        maximum = measured_maximum(peak.two_theta)
+        if maximum is None:
+            continue
+        index, prominence, width = maximum
+        original_by_maximum.setdefault(index, original_index)
+        if assignments:
+            proposals.append((index, prominence, width, assignments))
+    # Include weaker maxima missing from the capped identification peak list.
+    # In a mixture coincident references remain coincident annotations; no
+    # scientific assignment or phase fraction is inferred or modified here.
+    for _prominence, peak, _index in detected:
+        maximum = measured_maximum(peak.two_theta)
+        if maximum is None:
+            continue
+        index, prominence, width = maximum
+        measured_peak = ObservedPeak(float(x[index]), max(float(strength[index]), 0.), width)
+        assignments = {}
+        for item in evidence:
+            for assignment in _positional_marker_assignment(measured_peak, item):
+                assignments[assignment.candidate_key] = assignment
+        if assignments:
+            proposals.append((index, prominence, width, assignments))
+    catalogue, strengths, targets = {}, {}, {}
+    for index, prominence, width, assignments in sorted(proposals, key=lambda row: row[1], reverse=True):
+        target = targets.get(index)
+        if target is None:
+            target = original_by_maximum.get(index)
+            measured_peak = ObservedPeak(float(x[index]), max(float(strength[index]), 0.), width)
+            record = (measured_peak.intensity, measured_peak, index)
+            if target is None:
+                target = len(peak_records)
+                peak_records.append(record)
+                prepared.append({})
+            else:
+                # Replace a local display record, never the saved ObservedPeak.
+                peak_records[target] = record
+            targets[index] = target
+            strengths[target] = prominence
+        for key, assignment in assignments.items():
+            prepared[target].setdefault(key, assignment)
+            if target not in catalogue.setdefault(key, []):
+                catalogue[key].append(target)
+    return catalogue, strengths
+
+
+def _visible_phase_maxima(indices, strengths, level, noise_sigma):
+    """Apply a common height-above-background threshold across the whole scan.
+
+    The logarithmic scale keeps useful control when the strongest peak is
+    orders of magnitude higher than weak lines. 50 retains the standard
+    five-sigma sensitivity; 1 leaves the strongest, 0 hides all, 100 shows all.
+    """
+    level = phase_marker_level(level)
+    if level == 0 or not indices:
+        return set()
+    if level == 100:
+        return set(indices)
+    maximum = max(strengths[index] for index in indices)
+    minimum = min(strengths[index] for index in indices)
+    standard = min(maximum, max(5. * noise_sigma, np.finfo(float).eps))
+    if level < 50:
+        if level == 1:
+            threshold = maximum
+        else:
+            weight = (50. - level) / 49.
+            threshold = float(np.exp((1. - weight) * np.log(standard) + weight * np.log(maximum)))
+    else:
+        weight = (level - 50.) / 50.
+        lower = min(minimum, standard)
+        threshold = float(np.exp((1. - weight) * np.log(standard) + weight * np.log(lower)))
+    threshold = min(threshold, maximum)
+    return {index for index in indices if strengths[index] >= threshold}
+
+
 def add_assignment_markers(
     *,
     plot,
@@ -396,10 +586,17 @@ def add_assignment_markers(
     phase_peak_sets: list[tuple[str, str, np.ndarray]] | None = None,
     phase_assignment_styles: dict[str, tuple[str, str]],
     show_peak_labels: bool,
+    positional_marker_candidate=None,
+    weak_marker_candidates=None,
+    phase_marker_levels: dict[str, int] | None = None,
     style: PlotStyle | None = None,
     marker_clearance_pixels: float = 0.0,
 ) -> tuple[int, int]:
     style = style or PlotStyle()
+    positional_evidence = _positional_marker_lines(positional_marker_candidate, style.marker.weak_peak_sensitivity)
+    weak_candidates = weak_marker_candidates if weak_marker_candidates is not None else [positional_marker_candidate]
+    all_evidence = [item for candidate in weak_candidates
+                    if (item := _positional_marker_lines(candidate, 0, all_lines=True)) is not None]
     # Use the trace height, not its stacked absolute offset, so marker spacing
     # remains consistent for every pattern in multi mode.
     y_span = max(float(np.nanmax(observed_y)) - float(np.nanmin(observed_y)), 1.0)
@@ -416,9 +613,7 @@ def add_assignment_markers(
     ]
     unknown_cutoff = float(np.nanpercentile(peak_strengths, 74)) if peak_strengths else float(np.nanpercentile(observed_y, 74))
     unknown_count = 0
-    coverage_marker_limit = len(observed_peaks)
     explained = 0
-    coverage_marker_positions: list[float] = []
     unknown_marker_positions: list[float] = []
     legend_marker_names: set[str] = set()
     peak_records = []
@@ -432,7 +627,25 @@ def add_assignment_markers(
             peak_height = max(float(observed_y[y_index]) - float(np.nanpercentile(observed_y, 10)), 0.0)
         peak_records.append((peak_height, observed_peak, y_index))
     peak_records = sorted(peak_records, key=lambda item: item[0], reverse=True)
-    for _peak_height, observed_peak, y_index in peak_records:
+    # Build the entire experimental-maxima catalogue independently of sliders.
+    # Scientific assignments/counts remain those of the saved result.
+    prepared = []
+    scientific_peak_count = len(peak_records)
+    for _height, peak, _y_index in peak_records:
+        actual = list(getattr(peak, "assignments", []) or [])
+        explained += bool(actual)
+        standard = actual or _positional_marker_assignment(peak, positional_evidence)
+        prepared.append({str(a.candidate_key): a for a in standard})
+    # Zero-clipping lowers apparent noise. Use the unclipped trace as well so
+    # the catalogue floor and automatic threshold do not follow that artefact.
+    catalogue_noise = max(noise_sigma, _robust_noise_sigma(observed_y))
+    catalogue, strengths = _complete_marker_catalogue(x=x, strength=corrected_strength,
+        noise_sigma=catalogue_noise, peak_records=peak_records,
+        prepared=prepared, evidence=all_evidence)
+    visible = {key: _visible_phase_maxima(indices, strengths,
+                (phase_marker_levels or {}).get(key, 50), catalogue_noise)
+               for key, indices in catalogue.items()}
+    for record_index, (_peak_height, observed_peak, y_index) in enumerate(peak_records):
         obs_x = float(observed_peak.two_theta)
         marker_y = _local_observed_peak_y(
             x,
@@ -442,24 +655,11 @@ def add_assignment_markers(
             float(getattr(observed_peak, "fwhm", 0.0) or 0.0),
             grid_step=grid_step,
         )
-        assignments = list(getattr(observed_peak, "assignments", []) or [])
+        supported = list(prepared[record_index].values())
+        assignments = [a for a in supported
+                       if record_index in visible.get(str(a.candidate_key), set())]
         status = getattr(getattr(observed_peak, "status", ""), "value", getattr(observed_peak, "status", ""))
         if assignments:
-            explained += 1
-            if not _is_significant_peak(x, corrected_strength, y_index, noise_sigma, grid_step=grid_step,
-                                        sensitivity=style.marker.weak_peak_sensitivity):
-                continue
-            peak_fwhm = float(getattr(observed_peak, "fwhm", 0.0) or 0.0)
-            if not _marker_position_available(
-                coverage_marker_positions,
-                obs_x,
-                x=x,
-                fwhm=peak_fwhm,
-                grid_step=grid_step,
-            ):
-                continue
-            if len(coverage_marker_positions) >= coverage_marker_limit:
-                continue
             assignments_by_strength = sorted(
                 assignments,
                 key=lambda assignment: float(getattr(assignment, "intensity_ratio", 0.0)),
@@ -479,9 +679,8 @@ def add_assignment_markers(
                 y=marker_y + phase_marker_offset,
                 colors=assignment_colors,
                 size=phase_marker_size,
-                symbol="d" if status == "overlapping" else style.marker.symbol,
+                symbol="d" if status == "overlapping" and len(assignments) == len(supported) else style.marker.symbol,
             )
-            coverage_marker_positions.append(obs_x)
             if show_peak_labels:
                 label = assignment_marker_label(assignments)
                 if label:
@@ -493,10 +692,9 @@ def add_assignment_markers(
                     text.setPos(obs_x, marker_y + phase_marker_offset + label_offset)
                     plot.addItem(text)
                     plot_layers["peak_labels"].append(text)
-        else:
-            # A nearby reference stick is only a positional hypothesis. It must
-            # not override the fitted model or turn an unexplained peak into a
-            # colored, allegedly explained contribution.
+        elif not supported:
+            # Without an accepted, validated single-phase positional model,
+            # retain the scientific assignment's unknown display unchanged.
             if unknown_count >= 10 or _peak_height < unknown_cutoff:
                 continue
             if not _marker_position_available(
@@ -521,7 +719,7 @@ def add_assignment_markers(
             plot_layers["unknown_peaks"].append(item)
             unknown_marker_positions.append(obs_x)
             unknown_count += 1
-    return explained, int(len(peak_records))
+    return explained, scientific_peak_count
 
 
 def assignment_marker_label(assignments) -> str:

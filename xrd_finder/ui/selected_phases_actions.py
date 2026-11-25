@@ -14,9 +14,6 @@ class PhaseFinderSelectedPhasesActionsMixin:
         if row < 0 or row >= len(self.match_candidates):
             return
         candidate = self.match_candidates[row]
-        bar = getattr(self, 'finder_action_bar', None)
-        if bar is not None:
-            bar.set_phase_colors(self.match_candidates, row)
         self._enrich_candidate_with_structure_info(candidate)
         self._update_compound_card(candidate)
         self._recalculate_match_profile(active_only=True)
@@ -356,6 +353,7 @@ class PhaseFinderSelectedPhasesActionsMixin:
             self._refresh_candidate_score_labels()
         rows = []
         for row, candidate in enumerate(self.match_candidates):
+            self._backfill_candidate_space_group(candidate)
             key = self._candidate_key(candidate)
             iic = self.match_iic.get(key, 0.0)
             iic_text = candidate.get("I/Ic*", "") if iic > 0 else ""
@@ -369,7 +367,11 @@ class PhaseFinderSelectedPhasesActionsMixin:
         self.match_table.set_rows(rows)
         bar = getattr(self, 'finder_action_bar', None)
         if bar is not None:
-            bar.set_phase_colors(self.match_candidates)
+            bar.set_phase_markers(getattr(self, 'active_profile_pattern_id', None), [
+                (self._candidate_key(candidate), self._phase_legend_label(candidate),
+                 self._phase_color(candidate, row), candidate.get('_MarkerLevel', 50))
+                for row, candidate in enumerate(self.match_candidates)
+            ])
         for row, candidate in enumerate(self.match_candidates):
             le_bail = candidate.get('_LeBailMessage', '')
             if le_bail:

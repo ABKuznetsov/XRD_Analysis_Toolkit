@@ -244,6 +244,26 @@ class PhaseFinderPlotViewActionsMixin:
     def _set_active_profile_highlight(self, enabled):
         self._change_plot_appearance(highlight_active_profile=bool(enabled))
 
+    def _set_phase_marker_level(self, pattern_id, key, value):
+        from xrd_finder.ui.peak_marker_renderer import phase_marker_level
+        if not pattern_id:
+            return
+        active = pattern_id == getattr(self, 'active_profile_pattern_id', None)
+        candidates = (self.match_candidates if active else
+                      self.profile_states.get(pattern_id, {}).get('candidates', []))
+        candidate = next((c for c in candidates if self._candidate_key(c) == key), None)
+        value = phase_marker_level(value)
+        if candidate is None or phase_marker_level(candidate.get('_MarkerLevel', 50)) == value:
+            return
+        candidate['_MarkerLevel'] = value
+        if active:
+            self._save_active_profile_state()
+        self.project.touch()
+        self.project_changed.emit()
+        # The display preference is excluded from scientific cache keys.
+        # Redraw saved results without scheduling a fit or invalidating them.
+        self._recalculate_match_profile(auto_zoom=False, refresh_pattern_id=pattern_id)
+
     def _set_weak_marker_sensitivity(self, value):
         self._change_plot_appearance(weak_marker_sensitivity=max(0,min(100,int(value))))
 

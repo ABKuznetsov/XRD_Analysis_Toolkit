@@ -8,11 +8,13 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QKeySequence, QPalette
 from PySide6.QtWidgets import (
     QGridLayout,
+    QHBoxLayout,
     QApplication,
     QHeaderView,
     QFrame,
     QLabel,
     QPushButton,
+    QSpinBox,
     QScrollArea,
     QTableWidget,
     QTableWidgetItem,
@@ -24,7 +26,7 @@ from PySide6.QtWidgets import (
 from xrd_finder.services.ccdc_service import extract_doi
 from xrd_finder.ui.theme import is_dark_theme, theme_colors
 from xrd_finder.ui.formula_display import FormulaDisplayDelegate, formula_html
-from xrd_finder.ui.space_group_display import space_group_html
+from xrd_finder.ui.space_group_display import space_group_html, SpaceGroupDisplayDelegate
 
 
 class CopyableTableWidget(QTableWidget):
@@ -64,6 +66,9 @@ class CopyableTableWidget(QTableWidget):
 
 class CompoundCardWidget(QWidget):
     cellFitRequested = Signal()
+    fractionsRequested = Signal()
+    refinementIterationsChanged = Signal(int)
+    referenceResetRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -76,6 +81,7 @@ class CompoundCardWidget(QWidget):
         self.sample_phase_table: QTableWidget | None = None
         self.atom_table: QTableWidget | None = None
         self.diffraction_table: QTableWidget | None = None
+        self._sample_pattern_id = None
         self._build_ui()
 
     def set_sample(
@@ -84,6 +90,10 @@ class CompoundCardWidget(QWidget):
         phase_rows: list[list[str]] | None = None,
     ) -> None:
         data = self._sample_values(pattern)
+        if phase_rows is not None:
+            data['Sample Phases'] = str(len(phase_rows)) if phase_rows else 'none'
+        self.cell_fit_button.setEnabled(pattern is not None and bool(phase_rows))
+        self.fractions_button.setEnabled(pattern is not None and bool(phase_rows))
         if self.sample_title is not None:
             title = str(data.get("Sample Name", "") or "")
             self.sample_title.setText(title if title else "No sample selected")
@@ -93,8 +103,10 @@ class CompoundCardWidget(QWidget):
                 label.setTextFormat(Qt.TextFormat.PlainText)
             label.setText(text if text else "-")
         self._set_table_rows(self.sample_phase_table, phase_rows)
-        if pattern is not None and self.tabs is not None:
+        pattern_id = getattr(pattern, 'id', None)
+        if pattern is not None and self.tabs is not None and pattern_id != self._sample_pattern_id:
             self.tabs.setCurrentIndex(0)
+        self._sample_pattern_id = pattern_id
 
     def set_candidate(self, candidate: Mapping[str, object] | None) -> None:
         data = dict(candidate or {})
@@ -161,10 +173,33 @@ class CompoundCardWidget(QWidget):
 
         self.sample_title = self._section_title("No sample selected")
         layout.addWidget(self.sample_title)
-        fit_button = QPushButton("Fit cell from indexed peaks")
-        fit_button.setToolTip("Update assigned unit-cell parameters from indexed matched peak shifts.")
-        fit_button.clicked.connect(self.cellFitRequested)
-        layout.addWidget(fit_button)
+        iteration_row = QHBoxLayout()
+        iteration_row.addWidget(QLabel('Le Bail iterations'))
+        self.le_bail_iterations = QSpinBox()
+        self.le_bail_iterations.setRange(1, 100)
+        self.le_bail_iterations.setValue(20)
+        self.le_bail_iterations.setToolTip('Maximum refinement cycles. The calculation can stop earlier on convergence.')
+        self.le_bail_iterations.valueChanged.connect(self.refinementIterationsChanged)
+        iteration_row.addWidget(self.le_bail_iterations)
+        layout.addLayout(iteration_row)
+        self.cell_fit_button = QPushButton("Refine cell and profile (Le Bail)")
+        self.cell_fit_button.setToolTip("Refine this sample's cells, peak shapes and intensities. Calculate structural mass fractions separately below.")
+        self.cell_fit_button.clicked.connect(self.cellFitRequested)
+        refinement_row = QHBoxLayout()
+        refinement_row.addWidget(self.cell_fit_button, 1)
+        self.reference_reset_button = QPushButton('Reset to reference')
+        self.reference_reset_button.setToolTip('Restore this sample’s accepted phase cells from their reference CIFs.')
+        self.reference_reset_button.clicked.connect(self.referenceResetRequested)
+        refinement_row.addWidget(self.reference_reset_button)
+        layout.addLayout(refinement_row)
+        self.fractions_button = QPushButton('Recalculate phase fractions')
+        self.fractions_button.setToolTip('Recalculate the current accepted profile and its estimated crystalline-phase mass fractions.')
+        self.fractions_button.clicked.connect(self.fractionsRequested)
+        layout.addWidget(self.fractions_button)
+        self.sample_status = QLabel('')
+        self.sample_status.setWordWrap(True)
+        self.sample_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.sample_status)
         layout.addWidget(self._section_title("Sample provenance and measurement"))
         layout.addLayout(
             self._field_grid(
@@ -177,7 +212,7 @@ class CompoundCardWidget(QWidget):
                     ("Sample Wavelength", "Wavelength"),
                     ("Sample Units", "Axes"),
                     ("Sample Processing", "Processing"),
-                    ("Sample Phases", "Assigned phases"),
+                    ("Sample Phases", "Accepted phases"),
                 ],
                 target=self.sample_labels,
             )
@@ -191,7 +226,7 @@ class CompoundCardWidget(QWidget):
         self.sample_labels['Sample Notes'] = notes
         layout.addWidget(notes)
 
-        layout.addWidget(self._section_title("Assigned phases"))
+        layout.addWidget(self._section_title("Accepted phases"))
         self.sample_phase_table = self._table(
             [
                 "Phase",
@@ -213,8 +248,10 @@ class CompoundCardWidget(QWidget):
             stretch_columns={0},
         )
         self.sample_phase_table.setMinimumHeight(220)
+        self.sample_phase_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.sample_phase_table.setItemDelegateForColumn(0, FormulaDisplayDelegate(self.sample_phase_table))
         self.sample_phase_table.setItemDelegateForColumn(1, FormulaDisplayDelegate(self.sample_phase_table))
+        self.sample_phase_table.setItemDelegateForColumn(2, SpaceGroupDisplayDelegate(self.sample_phase_table))
         layout.addWidget(self.sample_phase_table, 2)
         layout.addStretch(1)
         return scroll

@@ -34,7 +34,7 @@ class FinderActionBar(QWidget):
     plotColorRequested = Signal(str)
     phaseColorRequested = Signal(int)
     profileHighlightChanged = Signal(bool)
-    weakMarkersChanged = Signal(int)
+    phaseMarkerLevelChanged = Signal(str, str, int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -150,13 +150,13 @@ class FinderActionBar(QWidget):
         self.background_button = self._add_preprocessing_section(
             layout,
             "background",
-            "Background",
+            "Background subtraction",
             "Select an active XRD pattern, then expand this section to estimate background.",
         )
         self.crop_button = self._add_preprocessing_section(
             layout,
             "xrd_crop",
-            "Crop XRD",
+            "Scan range",
             "Select imported XRD patterns, then expand this section to edit crop ranges.",
         )
         zero_body = QWidget()
@@ -165,7 +165,7 @@ class FinderActionBar(QWidget):
         zero_layout.addRow("Refined zero [deg]", self.zero_shift_refined_value)
         zero_layout.addRow("Visual correction [deg]", self.zero_shift_value)
         zero_layout.addRow(self.zero_shift_warning_label)
-        self.zero_shift_section = CollapsibleSection("Zero shift", zero_body, expanded=False)
+        self.zero_shift_section = CollapsibleSection("Zero correction", zero_body, expanded=False)
         self.zero_shift_value.editingFinished.connect(
             lambda: self.manualZeroShiftChanged.emit(self.zero_shift_value.value())
         )
@@ -174,10 +174,10 @@ class FinderActionBar(QWidget):
         peak_search_layout = QFormLayout(peak_search_body)
         peak_search_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         peak_search_layout.addRow("Tolerance [deg 2theta]", self.peak_search_tolerance)
-        layout.addWidget(CollapsibleSection("Peak search", peak_search_body, expanded=False))
-        layout.addWidget(CollapsibleSection('Profile colors', self._colors_section(), expanded=False))
-        layout.addWidget(CollapsibleSection('Peak markers', self._markers_section(), expanded=False))
-        layout.addWidget(self._section_from_layout("Instrument and radiation", instrument_row))
+        layout.addWidget(CollapsibleSection("Peak search tolerance", peak_search_body, expanded=False))
+        layout.addWidget(CollapsibleSection('Curve colors', self._colors_section(), expanded=False))
+        layout.addWidget(CollapsibleSection('Phase peak markers', self._markers_section(), expanded=False))
+        layout.addWidget(self._section_from_layout("Instrument profile", instrument_row))
         layout.addStretch(1)
 
         self.search_input.setPlaceholderText("Formula / elements / phase name")
@@ -197,24 +197,10 @@ class FinderActionBar(QWidget):
             button.clicked.connect(lambda _checked=False, key=field: self.plotColorRequested.emit(key))
             self.plot_color_buttons[field] = button
             layout.addRow(label,button)
-        row = QWidget()
-        row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(0,0,0,0)
-        self.phase_color_combo = QComboBox()
-        self.phase_color_combo.setMinimumContentsLength(8)
-        self.phase_color_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.phase_color_button = QToolButton()
-        self.phase_color_button.setMinimumSize(42,24)
-        self.phase_color_combo.currentIndexChanged.connect(self._sync_phase_color)
-        self.phase_color_button.clicked.connect(lambda: self.phaseColorRequested.emit(self.phase_color_combo.currentIndex()))
-        row_layout.addWidget(self.phase_color_combo,1)
-        row_layout.addWidget(self.phase_color_button)
-        layout.addRow('Phase markers / sticks',row)
         self.profile_highlight_checkbox = QCheckBox('Emphasize active profile')
         self.profile_highlight_checkbox.setChecked(True)
         self.profile_highlight_checkbox.toggled.connect(self.profileHighlightChanged)
         layout.addRow(self.profile_highlight_checkbox)
-        self.set_phase_colors([])
         return widget
 
     @staticmethod
@@ -226,22 +212,77 @@ class FinderActionBar(QWidget):
 
     def _markers_section(self):
         widget = QWidget()
-        form = QFormLayout(widget)
-        row = QWidget()
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0,0,0,0)
-        self.weak_markers_slider = QSlider(Qt.Orientation.Horizontal)
-        self.weak_markers_slider.setRange(0,100)
-        self.weak_markers_slider.setTracking(False)
-        self.weak_markers_slider.setToolTip('Higher values show more weak phase markers. Peak assignments and search results are unchanged.')
-        self.weak_markers_value = QLabel('0%')
-        self.weak_markers_value.setMinimumWidth(34)
-        self.weak_markers_slider.valueChanged.connect(lambda value:self.weak_markers_value.setText(f'{value}%'))
-        self.weak_markers_slider.valueChanged.connect(self.weakMarkersChanged)
-        layout.addWidget(self.weak_markers_slider,1)
-        layout.addWidget(self.weak_markers_value)
-        form.addRow('Weak markers',row)
+        self._phase_markers_layout = QVBoxLayout(widget)
+        self._phase_markers_layout.setContentsMargins(0, 0, 0, 0)
+        self.phase_marker_sliders = {}
+        self.phase_marker_color_buttons = {}
+        self._phase_marker_keys = []
+        self._phase_marker_rows = {}
+        self._phase_marker_pattern_id = None
+        self._phase_marker_placeholder = QLabel('Accept a phase to adjust its peak markers.')
+        self._phase_marker_placeholder.setWordWrap(True)
+        self._phase_markers_layout.addWidget(self._phase_marker_placeholder)
         return widget
+
+    def set_phase_markers(self, pattern_id, entries):
+        from xrd_finder.ui.peak_marker_renderer import phase_marker_level
+        pattern_id = str(pattern_id or '')
+        keys = {entry[0] for entry in entries}
+        changed_pattern = self._phase_marker_pattern_id != pattern_id
+        for key in list(self._phase_marker_rows):
+            if changed_pattern or key not in keys:
+                row, _, _ = self._phase_marker_rows.pop(key)
+                self._phase_markers_layout.removeWidget(row)
+                row.hide()
+                row.deleteLater()
+                del self.phase_marker_sliders[key]
+                del self.phase_marker_color_buttons[key]
+        self._phase_marker_pattern_id = pattern_id
+        self._phase_marker_keys = [entry[0] for entry in entries]
+        self._phase_marker_placeholder.setVisible(not entries)
+        for index, (key, label, color, value) in enumerate(entries):
+            if key not in self._phase_marker_rows:
+                row = QWidget()
+                column = QVBoxLayout(row)
+                column.setContentsMargins(0, 3, 0, 3)
+                column.setSpacing(3)
+                title = QLabel()
+                title.setWordWrap(True)
+                heading = QHBoxLayout()
+                color_button = QToolButton()
+                color_button.setMinimumSize(42, 24)
+                color_button.clicked.connect(lambda _checked=False, p=pattern_id, k=key: self._request_phase_marker_color(p, k))
+                heading.addWidget(color_button)
+                heading.addWidget(title, 1)
+                column.addLayout(heading)
+                controls = QHBoxLayout()
+                slider = QSlider(Qt.Orientation.Horizontal)
+                slider.setRange(0, 100)
+                slider.setTracking(False)
+                slider.setToolTip('Move left to keep the strongest maxima; move right to include weaker ones. 0 hides all, 50 is standard, 100 shows all found phase peaks. Changes display only.')
+                percent = QLabel()
+                percent.setMinimumWidth(36)
+                controls.addWidget(slider, 1)
+                controls.addWidget(percent)
+                column.addLayout(controls)
+                slider.valueChanged.connect(lambda v, text=percent: text.setText(f'{v}%'))
+                slider.valueChanged.connect(lambda v, p=pattern_id, k=key: self.phaseMarkerLevelChanged.emit(p, k, v))
+                self._phase_marker_rows[key] = (row, title, percent)
+                self.phase_marker_sliders[key] = slider
+                self.phase_marker_color_buttons[key] = color_button
+            row, title, percent = self._phase_marker_rows[key]
+            from xrd_finder.ui.formula_display import formula_html
+            title.setText(formula_html(str(label)))
+            self._set_color_button(self.phase_marker_color_buttons[key], color)
+            self.phase_marker_color_buttons[key].setToolTip('Choose phase marker / stick color')
+            slider = self.phase_marker_sliders[key]
+            blocked = slider.blockSignals(True)
+            slider.setValue(phase_marker_level(value))
+            slider.blockSignals(blocked)
+            percent.setText(f'{slider.value()}%')
+            self._phase_markers_layout.removeWidget(row)
+            self._phase_markers_layout.insertWidget(index, row)
+            row.show()
 
     def set_plot_colors(self, settings):
         for field,button in self.plot_color_buttons.items():
@@ -249,26 +290,10 @@ class FinderActionBar(QWidget):
         previous = self.profile_highlight_checkbox.blockSignals(True)
         self.profile_highlight_checkbox.setChecked(settings.highlight_active_profile)
         self.profile_highlight_checkbox.blockSignals(previous)
-        blocked = self.weak_markers_slider.blockSignals(True)
-        self.weak_markers_slider.setValue(settings.weak_marker_sensitivity)
-        self.weak_markers_value.setText(f'{self.weak_markers_slider.value()}%')
-        self.weak_markers_slider.blockSignals(blocked)
 
-    def set_phase_colors(self, candidates, selected_row=None):
-        previous = self.phase_color_combo.currentIndex() if selected_row is None else selected_row
-        blocked = self.phase_color_combo.blockSignals(True)
-        self.phase_color_combo.clear()
-        for candidate in candidates:
-            self.phase_color_combo.addItem(candidate.get('_DisplayName') or candidate.get('Phase') or candidate.get('Entry',''),
-                                           candidate.get('_Color','#808080'))
-        self.phase_color_combo.setCurrentIndex(min(max(previous,0),len(candidates)-1))
-        self.phase_color_combo.blockSignals(blocked)
-        self._sync_phase_color()
-
-    def _sync_phase_color(self, *_args):
-        enabled = self.phase_color_combo.currentIndex() >= 0
-        self.phase_color_button.setEnabled(enabled)
-        self._set_color_button(self.phase_color_button,self.phase_color_combo.currentData() or '#808080')
+    def _request_phase_marker_color(self, pattern_id, key):
+        if pattern_id == self._phase_marker_pattern_id and key in self._phase_marker_keys:
+            self.phaseColorRequested.emit(self._phase_marker_keys.index(key))
 
     def preprocessing_panel_host(self, key: str) -> QWidget | None:
         return self._preprocessing_hosts.get(str(key))

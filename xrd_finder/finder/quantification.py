@@ -98,13 +98,23 @@ def _cif_metadata(path: str, modified_ns: int, size: int) -> tuple[float,float]:
     # Resolve exactly the native setting used for diffraction; a CIF can omit
     # the explicit symmetry-operation loop and still have a nontrivial group.
     read_result=read_native_cif(path)
-    # Collapsing explicitly repeated symmetry mates preserves the occupied
-    # structure; it is not parser recovery or a loss of physical metadata.
+    # These diagnostics preserve a defined occupied structure. An absent
+    # occupancy column has the CIF default 1; an explicit unknown/invalid value
+    # remains recovery and is rejected. Mixed-element sites are checked by the
+    # occupied-cell/composition validators below, not by a blanket warning ban.
+    harmless = {'cif.map.symmetry_expanded_sites_collapsed',
+                'cif.map.coincident_sites_unmerged',
+                'cif.map.symmetry_equivalent_sites_unmerged',
+                # Native occupied orbits, rather than the reported column,
+                # drive both the diffraction intensities and cell mass below.
+                'crystallography.orbit.reported_multiplicity_mismatch'}
     if any(
         getattr(diagnostic.severity, 'value', '') == 'error'
-        or getattr(diagnostic, 'recovery', None) is not None
-        or (getattr(diagnostic.severity, 'value', '') == 'warning'
-            and diagnostic.code != 'cif.map.symmetry_expanded_sites_collapsed')
+        or (not (diagnostic.code == 'cif.map.occupancy_defaulted'
+                 and getattr(diagnostic, 'recovery', None) == '1.0')
+            and (getattr(diagnostic, 'recovery', None) is not None
+                 or (getattr(diagnostic.severity, 'value', '') == 'warning'
+                     and diagnostic.code not in harmless)))
         for diagnostic in read_result.diagnostics
     ):
         raise ValueError('CIF physical metadata required parser recovery')
@@ -134,12 +144,16 @@ def _cif_source_hash(path: str, modified_ns: int, size: int) -> str:
 
 
 def fit_accepted_phases(items, x, target, context, instrument, calculator, *,
-                        refine_sample_broadening=False, observed_peaks=(), diagnostics=None) -> AcceptedPhaseFit | None:
+                        refine_sample_broadening=False, observed_peaks=(), diagnostics=None,
+                        observed_y=None) -> AcceptedPhaseFit | None:
     """Fit accepted structural phases once in physical units.
 
     Keep the fitted columns and coefficients alongside Hill--Howard fractions
     so plotted phase contributions cannot describe a different mixture.
     Cached reference cards require their local CIF for this physical model.
+    Intensity-based weights use the signal before background subtraction:
+    subtracting a fitted background does not remove its counting noise.
+    They remain approximate for smoothed or otherwise transformed intensities.
     """
     from scipy.optimize import nnls
     def unavailable(reason):
@@ -160,6 +174,9 @@ def fit_accepted_phases(items, x, target, context, instrument, calculator, *,
             return unavailable('Observed signal contains non-finite intensities')
         if not np.any(target>0):
             return unavailable('No positive diffraction signal (zero or nonpositive intensity) for quantitative analysis')
+        measured=target if observed_y is None else np.asarray(observed_y,dtype=float)
+        if measured.shape != target.shape or not np.all(np.isfinite(measured)):
+            return unavailable('Measured intensities for profile weights must be finite and match the diffraction signal')
         for phase_index,item in enumerate(items):
             candidate,_structure,_reference,_adjusted,_display,cell_scale,width,eta,estimate=item
             phase_label=candidate.name or candidate.entry_id or candidate.cif_path or 'selected phase'
@@ -181,7 +198,7 @@ def fit_accepted_phases(items, x, target, context, instrument, calculator, *,
             if source_identity in seen_sources:
                 return unavailable(f'{path.name}: identical CIF structures cannot be separated into individual phase fractions')
             seen_sources.add(source_identity)
-            override=estimate.cell if estimate is not None else None
+            override=estimate.cell if estimate is not None else candidate.initial_cell
             if candidate.structure is not None and not candidate.cif_path:
                 # Preserve the sample-linked display model. A CIF supplies
                 # absolute intensities only while its sites/symmetry agree.
@@ -232,7 +249,7 @@ def fit_accepted_phases(items, x, target, context, instrument, calculator, *,
         matrix=np.column_stack(profiles)
         if not np.all(np.isfinite(matrix)) or not np.all(np.isfinite(target)):
             return unavailable('Calculated profiles or observed signal contain non-finite intensities')
-        weights=1./np.sqrt(np.maximum(np.abs(target),1.))
+        weights=1./np.sqrt(np.maximum(np.abs(measured),1.))
         weighted=matrix*weights[:,None]
         norms=np.linalg.norm(weighted,axis=0)
         if not np.all(norms>0):

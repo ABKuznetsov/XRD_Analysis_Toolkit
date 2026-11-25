@@ -234,6 +234,38 @@ def build_finder_candidate_inputs(
     return FinderCandidateBuildResult(finder_candidates, candidate_by_key, needs_index)
 
 
+def positional_marker_candidate(result, candidate_by_key):
+    """A confirmed single phase can annotate positions despite intensity misfit.
+
+    Do not infer ownership in mixtures, missing-phase fits or pending geometry.
+    The returned reference is consumed only by the marker renderer.
+    """
+    geometry = result.position_refinement
+    if (len(result.candidates) != 1 or len(candidate_by_key) != 1
+            or getattr(result, 'candidate_failures', [])
+            or geometry.get('zero_confirmed') is not True or geometry.get('requires_confirmation')):
+        return None
+    candidate = result.candidates[0]
+    return candidate if (candidate.entry_id in candidate_by_key
+                         and np.isfinite(candidate.scale) and candidate.scale > 0.) else None
+
+
+def weak_marker_candidates(result, candidate_by_key):
+    """Fitted positions for weak display annotations, including mixtures.
+
+    The accepted global geometry and a complete fit are required. Coincident
+    phases remain coincident on the figure; scientific assignments stay intact.
+    """
+    geometry = result.position_refinement
+    if (len(result.candidates) != len(candidate_by_key)
+            or getattr(result, 'candidate_failures', [])
+            or geometry.get('zero_confirmed') is not True or geometry.get('requires_confirmation')):
+        return []
+    return [candidate for candidate in result.candidates
+            if candidate.entry_id in candidate_by_key
+            and np.isfinite(candidate.scale) and candidate.scale > 0.]
+
+
 def draw_match_profile_result(
     *,
     result,
@@ -318,6 +350,7 @@ def draw_match_profile_result(
         residual = gaussian_filter1d(residual, sigma=sigma, mode="nearest")
     phase_peak_sets: list[tuple[str, str, np.ndarray]] = []
     phase_assignment_styles: dict[str, tuple[str, str]] = {}
+    phase_marker_levels = {}
 
     match_scales.clear()
     match_quantities.clear()
@@ -336,6 +369,7 @@ def draw_match_profile_result(
         key = candidate_key(candidate)
         color = phase_color(candidate, index)
         phase_label = phase_legend_label(candidate)
+        phase_marker_levels[candidate_result.candidate_key] = candidate.get("_MarkerLevel", 50)
         phase_assignment_styles[str(candidate_result.candidate_key)] = (color, phase_label)
         profile = np.asarray(candidate_result.profile, dtype=float) * intensity_scale
         match_scales[key] = float(candidate_result.scale)
@@ -522,6 +556,9 @@ def draw_match_profile_result(
         getattr(result, "observed_peaks", []),
         phase_assignment_styles,
         show_peak_labels=show_peak_labels,
+        positional_marker_candidate=positional_marker_candidate(result, candidate_by_key),
+        weak_marker_candidates=weak_marker_candidates(result, candidate_by_key),
+        phase_marker_levels=phase_marker_levels,
     )
     _tag_new_layer_items(plot_layers, marker_layer_counts, pattern_id)
     sum_item = plot_profile(

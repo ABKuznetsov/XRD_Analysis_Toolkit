@@ -18,7 +18,7 @@ import time
 from xrd_finder.services.worker_directory import WorkerTemporaryDirectory
 
 LE_BAIL_POLICY = 'accepted-le-bail-2:3cycles:2seconds'
-QUANT_REASON = 'Le Bail adjusts reflection intensities independently; structural mass fractions are unavailable. Turn Le Bail off to restore Quant.'
+QUANT_REASON = 'Le Bail intensities are not mass fractions. Use Recalculate phase fractions for a separate structural calculation with the refined cells.'
 
 
 def le_bail_available() -> bool:
@@ -93,23 +93,26 @@ def _deadline_result(root, baseline, started):
         note = result.position_refinement['le_bail']
         if note['status'] == 'applied':
             note.update(stopped='time_limit', elapsed_seconds=round(time.monotonic()-started,3),
-                message='Le Bail reached the 2 s limit; best completed fit retained. Quant unavailable.')
+                message='Le Bail reached the time limit; best completed fit retained. Quant unavailable.')
             return result
     except (OSError, ValueError, KeyError, EOFError, pickle.UnpicklingError):
         pass
-    return _note(baseline, 'timeout', 'Le Bail reached the 2 s limit; structural fit retained.')
+    return _note(baseline, 'timeout', 'Le Bail reached the time limit; structural fit retained.')
 
 
-def refine_accepted_le_bail(inputs, baseline, *, enabled=True, timeout_seconds=2., cancelled=lambda: False):
+def refine_accepted_le_bail(inputs, baseline, *, enabled=True, timeout_seconds=2., cancelled=lambda: False,
+                           max_cycles=None):
     """Keep the validated structural result on cancellation, limits or failure."""
     if not enabled:
         return baseline
     started = time.monotonic()
-    deadline = started + min(max(float(timeout_seconds), 0.), 2.)
+    if max_cycles is not None and (isinstance(max_cycles, bool) or not isinstance(max_cycles, int) or not 1 <= max_cycles <= 100):
+        raise ValueError('Le Bail iterations must be an integer from 1 to 100.')
+    deadline = started + min(max(float(timeout_seconds), 0.), 600. if max_cycles is not None else 2.)
     if cancelled():
         return _note(baseline, 'cancelled', 'Le Bail cancelled; structural fit retained.')
     if time.monotonic() >= deadline:
-        return _note(baseline, 'timeout', 'Le Bail reached the 2 s limit; structural fit retained.')
+        return _note(baseline, 'timeout', 'Le Bail reached the time limit; structural fit retained.')
     try:
         _cif_paths(inputs, baseline)
         if not le_bail_available():
@@ -122,7 +125,7 @@ def refine_accepted_le_bail(inputs, baseline, *, enabled=True, timeout_seconds=2
                            PYTHONDONTWRITEBYTECODE='1')
         with WorkerTemporaryDirectory(prefix='xrd-le-bail-') as folder:
             root = Path(folder)
-            (root/'input.pickle').write_bytes(pickle.dumps((inputs, baseline, deadline)))
+            (root/'input.pickle').write_bytes(pickle.dumps((inputs, baseline, deadline, max_cycles)))
             process = None
             try:
                 with (root/'stdout').open('wb') as output, (root/'stderr').open('wb') as errors:
@@ -157,15 +160,46 @@ def refine_accepted_le_bail(inputs, baseline, *, enabled=True, timeout_seconds=2
         return _note(baseline, 'unavailable', str(exc))
 
 
-def run_native_le_bail(inputs, baseline, *, checkpoint=None, deadline=None):
+def run_native_le_bail(inputs, baseline, *, checkpoint=None, deadline=None, max_cycles=None):
     """Worker-only native calculation. No user data or instrument is modified."""
     try:
-        return _native_result(inputs, baseline, checkpoint=checkpoint, deadline=deadline)
+        return _native_result(inputs, baseline, checkpoint=checkpoint, deadline=deadline, max_cycles=max_cycles)
     except Exception as exc:
         return _note(baseline, 'unavailable', f'Le Bail: {type(exc).__name__}: {exc}; structural fit retained.')
 
 
-def _native_result(inputs, baseline, *, checkpoint=None, deadline=None):
+def _native_scan_grid(x, zero):
+    import numpy as np
+    from cristma.diffraction import UniformTwoThetaGrid
+    shifted = np.asarray(x, dtype=float)-float(zero)
+    step = float((shifted[-1]-shifted[0])/(len(shifted)-1))
+    if step <= 0. or np.any(np.diff(shifted) <= 0.):
+        raise ValueError('Le Bail needs strictly increasing scan angles.')
+    grid = UniformTwoThetaGrid(float(shifted[0]), float(shifted[-1])+.01*step, step)
+    native_x = np.asarray(grid.values)
+    error = float(np.max(np.abs(native_x-shifted))) if native_x.shape == shifted.shape else math.inf
+    # Text exports may round angles to 0.001 degrees. Keep each measured count
+    # intact; only tolerate sub-step jitter, and interpolate calculated curves
+    # back to the original positions. A truly irregular scan is unsupported.
+    if error > max(1e-7, min(1e-3, step*.05)):
+        raise ValueError('Le Bail needs a uniform scan (only small angle-rounding errors are allowed).')
+    return shifted, grid, native_x, error
+
+
+def _continued_peak_profile(candidate, fallback):
+    from cristma.diffraction import TchProfile, PseudoVoigtProfile
+    saved = candidate.sample_broadening
+    if saved.get('status') != 'le_bail_effective_profile':
+        return fallback
+    parameters = saved.get('parameters', {})
+    if saved.get('model') == 'tch':
+        return TchProfile(**{key:float(parameters[key]) for key in ('u','v','w','x','y')})
+    if saved.get('model') == 'pseudo_voigt':
+        return PseudoVoigtProfile(float(parameters['fwhm_deg']),float(parameters['eta']))
+    raise ValueError('Saved Le Bail peak profile has an unsupported model.')
+
+
+def _native_result(inputs, baseline, *, checkpoint=None, deadline=None, max_cycles=None):
     import numpy as np
     from dataclasses import asdict
     from cristma.diffraction import (LeBailExtractor, LeBailPhase, LeBailRefiner,
@@ -183,18 +217,7 @@ def _native_result(inputs, baseline, *, checkpoint=None, deadline=None):
             and all(np.all(np.isfinite(a)) for a in (x,y,bg,previous))
             and np.all(y >= 0.) and np.all(bg >= 0.) and np.max(y-bg) > 0.):
         raise ValueError('Le Bail needs finite non-negative counts on a grid of 4–30000 points.')
-    shifted = x-float(baseline.global_zero_shift)
-    step = float((shifted[-1]-shifted[0])/(len(shifted)-1))
-    if step <= 0. or np.any(np.diff(shifted) <= 0.):
-        raise ValueError('Le Bail needs strictly increasing scan angles.')
-    grid = UniformTwoThetaGrid(float(shifted[0]), float(shifted[-1])+.01*step, step)
-    native_x = np.asarray(grid.values)
-    rounding_error = float(np.max(np.abs(native_x-shifted))) if native_x.shape == x.shape else math.inf
-    # Printed scan angles can have a tiny rounding jitter. Do not resample counts
-    # or smooth the input; return calculated profiles on the exact original x.
-    # Genuinely nonuniform acquisitions need a nonuniform native backend.
-    if rounding_error > max(1e-7, min(1e-4, step*.01)):
-        raise ValueError('Le Bail needs a uniform scan (only small angle-rounding errors are allowed).')
+    shifted, grid, native_x, rounding_error = _native_scan_grid(x, baseline.global_zero_shift)
     instrument = inputs.instrument_profile
     if instrument is None:
         raise ValueError('Le Bail needs an explicit instrument profile with the measurement radiation.')
@@ -220,6 +243,7 @@ def _native_result(inputs, baseline, *, checkpoint=None, deadline=None):
         profile = (PseudoVoigtProfile(float(effective.resolution.constant_fwhm_deg),
                     max(0., min(1., float(candidate.profile_eta or 0.))))
                    if effective.resolution.model == 'constant_fwhm' else cristma_tch_profile(effective.resolution))
+        profile = _continued_peak_profile(candidate, profile)
         phases.append(LeBailPhase(pid, generator.generate(structure.cell, setting, d_min), profile))
     def convert(native):
         extraction = native.extraction
@@ -237,7 +261,10 @@ def _native_result(inputs, baseline, *, checkpoint=None, deadline=None):
         initial_norm = float(np.linalg.norm(y-previous))
         final_norm = float(np.linalg.norm(y-total))
         if final_norm >= initial_norm*(1.-1e-8):
-            return _note(baseline, 'no_improvement', 'Le Bail did not improve profile agreement; structural fit retained.')
+            return _note(baseline, 'no_improvement', 'Le Bail did not improve profile agreement; previous fit retained.',
+                native_status=native.status.value, cycles=native.cycles,
+                intensity_status=extraction.status.value,
+                rwp_percent=100.*float(np.sqrt(np.sum((y-previous)**2/np.maximum(y,1.))/np.sum(y*y/np.maximum(y,1.)))))
         result = deepcopy(baseline)
         final_cells = dict(native.cells)
         wavelength = float(spectrum.components[0].wavelength_angstrom)
@@ -292,6 +319,9 @@ def _native_result(inputs, baseline, *, checkpoint=None, deadline=None):
             native_status=native.status.value, intensity_iterations=native.total_intensity_iterations,
             grid_rounding_max_deg=round(rounding_error, 9),
             initial_residual_norm=initial_norm, residual_norm=final_norm,
+            rwp_percent=100.*float(np.sqrt(np.sum((y-total)**2/np.maximum(y,1.))/np.sum(y*y/np.maximum(y,1.)))),
+            initial_rwp_percent=100.*float(np.sqrt(np.sum((y-previous)**2/np.maximum(y,1.))/np.sum(y*y/np.maximum(y,1.)))),
+            intensity_status=extraction.status.value,
             diagnostics=[str(d.message) for d in native.diagnostics])
         return refresh_le_bail_peak_evidence(result)
 
@@ -300,8 +330,9 @@ def _native_result(inputs, baseline, *, checkpoint=None, deadline=None):
     # the shared budget permits. A phase-only pass still redistributes intensities
     # jointly: it never fits one phase independently to overlapping raw counts.
     # Three completed native cycles/evaluation and intensity budgets are shared.
-    scopes = [None] + [(p.phase_id,) for p in phases]
-    if len(phases) == 1:
+    explicit = max_cycles is not None
+    scopes = [None] if explicit else [None] + [(p.phase_id,) for p in phases]
+    if len(phases) == 1 and not explicit:
         scopes = [None, None, None]
     best = _note(baseline, 'no_improvement', 'Le Bail did not improve profile agreement; structural fit retained.')
     best_norm = float(np.linalg.norm(y-previous))
@@ -316,12 +347,13 @@ def _native_result(inputs, baseline, *, checkpoint=None, deadline=None):
             stopped = 'iteration_limit'
             break
         try:
-            native = LeBailRefiner(max_cycles=1, max_backtracks=2, metric_strain_bound=.015,
-                max_evaluations=32-evaluations, max_total_iterations=30-iterations,
-                initial_intensity_iterations=min(6 if not steps else 3, 30-iterations),
-                intensity_iterations_per_cycle=2, max_jacobian_values=2000000,
+            native = LeBailRefiner(max_cycles=max_cycles if explicit else 1, max_backtracks=4 if explicit else 2, metric_strain_bound=.015,
+                max_evaluations=max_cycles*32 if explicit else 32-evaluations,
+                max_total_iterations=max_cycles*30+20 if explicit else 30-iterations,
+                initial_intensity_iterations=20 if explicit else min(6 if not steps else 3, 30-iterations),
+                intensity_iterations_per_cycle=5 if explicit else 2, max_jacobian_values=2000000,
                 tch_refine_parameters=('w','x'),
-                extractor=LeBailExtractor(max_iterations=8, max_points=30000, max_profile_values=2000000),
+                extractor=LeBailExtractor(max_iterations=50 if explicit else 8, max_points=30000, max_profile_values=2000000),
                 fwhm_bounds=(.005, upper_width)).refine(tuple(phases), cells, spectrum, grid, y, bg,
                                                       refine_phase_ids=selected)
             candidate = convert(native)
@@ -335,6 +367,8 @@ def _native_result(inputs, baseline, *, checkpoint=None, deadline=None):
         iterations += native.total_intensity_iterations
         evaluations += len(native.trials)
         note = candidate.position_refinement['le_bail']
+        if explicit and note['status'] == 'no_improvement':
+            best = candidate
         steps.append(dict(scope='joint' if selected is None else 'phase',
             phases=[inputs.candidates[int(pid)].entry_id for pid in selected] if selected else [],
             status=note['status'], cycles=native.cycles))
@@ -353,12 +387,32 @@ def _native_result(inputs, baseline, *, checkpoint=None, deadline=None):
             if checkpoint is not None:
                 checkpoint(deepcopy(best))
     note = best.position_refinement['le_bail']
+    if explicit:
+        note['requested_cycles'] = max_cycles
+        note['manual_refinement'] = True
+        note['policy'] = 'accepted-le-bail-manual-1'
+        previous_note = baseline.position_refinement.get('le_bail', {})
+        previous_cycles = int(previous_note.get('total_cycles', previous_note.get('cycles', 0))) if previous_note.get('status') == 'applied' else 0
+        note['previous_cycles'] = previous_cycles
+        note['total_cycles'] = previous_cycles+cycles
+        note['continued_from_previous'] = previous_note.get('status') == 'applied'
+        state = note.get('native_status', note['status'])
+        note['refinement_state'] = state
+        if note['status'] == 'applied':
+            assessment = {'converged':'Converged', 'profile_converged':'Profile stable; reflection intensities not converged',
+                          'stalled':'Improvement stalled', 'max_cycles':'Iteration limit reached; convergence not confirmed'}.get(state, 'Stopped: '+state)
+            note['message'] = (f'Le Bail: {assessment}. Iterations {cycles}/{max_cycles}; '
+                               f'Total {note["total_cycles"]}; Rwp {note["rwp_percent"]:.2f}% (was {note["initial_rwp_percent"]:.2f}%). '
+                               'Recalculate phase fractions separately using the refined cell.')
+        elif note['status'] == 'no_improvement':
+            note['message'] = (f'Le Bail: no further improvement; previous fit retained. Iterations {cycles}/{max_cycles}; '
+                               f'Rwp {note["rwp_percent"]:.2f}%. Solver: {state}.')
     if stopped == 'time_limit':
         if note['status'] != 'applied':
-            best = _note(baseline,'timeout','Le Bail reached the 2 s limit; structural fit retained.')
+            best = _note(baseline,'timeout','Le Bail reached the time limit; structural fit retained.')
             note = best.position_refinement['le_bail']
         else:
-            note['message'] = 'Le Bail reached the 2 s limit; best completed fit retained. Quant unavailable.'
+            note['message'] = 'Le Bail reached the time limit; best completed fit retained. Quant unavailable.'
     note.update(cycles=cycles,intensity_iterations=iterations,evaluations=evaluations,
                 steps=steps,completed_passes=len(steps))
     if stopped:
@@ -381,8 +435,8 @@ def _publish_checkpoint(root, result):
 
 if __name__ == '__main__':
     root = Path(sys.argv[1])
-    inputs, baseline, deadline = pickle.loads((root/'input.pickle').read_bytes())
+    inputs, baseline, deadline, max_cycles = pickle.loads((root/'input.pickle').read_bytes())
     def checkpoint(result):
         _publish_checkpoint(root, result)
-    result = run_native_le_bail(inputs, baseline, checkpoint=checkpoint, deadline=deadline)
+    result = run_native_le_bail(inputs, baseline, checkpoint=checkpoint, deadline=deadline, max_cycles=max_cycles)
     (root/'result.pickle').write_bytes(pickle.dumps(result))
