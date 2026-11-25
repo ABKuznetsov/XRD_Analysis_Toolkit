@@ -10,7 +10,7 @@
 - Calculate structural mass fractions separately with refined cells and zero held fixed; retain the Le Bail result for further refinement and portable project storage.
 - Retain background counting noise in physical scale weights and accept validated CIF composition despite noncritical mapping warnings.
 - Preserve compatible saved calculations across the application update; keep published Match/Gain formulas unchanged.
-- Publish a new Windows version and update manifests so installations of 1.7.3 can detect the update. macOS remains at 1.7.3 and Linux at 1.7.2 pending platform builds.
+- Publish Windows and Linux amd64 installers and update manifests so older installations can detect 1.7.4. macOS remains at 1.7.3 pending its platform build.
 
 ## 1.7.3 - 2026-11-24
 
