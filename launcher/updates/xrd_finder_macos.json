@@ -6,16 +6,16 @@
   "minimum_windows": "10.0",
   "minimum_macos": "13.0",
   "published_at": "2026-11-25",
-  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.4/XRD_Phase_Finder_macOS_1.7.4.pkg",
+  "release_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.4/XRD-macOS.pkg",
   "release_notes_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.4",
   "assets": [
     {
-      "name": "XRD_Phase_Finder_macOS_1.7.4.pkg",
+      "name": "XRD-macOS.pkg",
       "type": "installer",
       "platform": "macos",
-      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.4/XRD_Phase_Finder_macOS_1.7.4.pkg",
-      "sha256": "42ae701a6115449f52e014e1b2ebe809347cd72661f5a2116a28c3de8e753ab3",
-      "size_bytes": 6659749
+      "url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.4/XRD-macOS.pkg",
+      "sha256": "54bab41fd4e41481f0b3577ab034ce46e32b410559c0468167b970a2fd7f2635",
+      "size_bytes": 6662277
     }
   ],
   "summary": [
@@ -25,12 +25,12 @@
     "Reuse compatible saved calculations and offer the 1.7.4 download to existing Windows installations.",
     "Retry interrupted update downloads and resume verified partial transfers; offer a browser fallback."
   ],
-  "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.4/XRD_Phase_Finder_macOS_1.7.4.pkg",
-  "macos_installer_sha256": "42ae701a6115449f52e014e1b2ebe809347cd72661f5a2116a28c3de8e753ab3",
+  "macos_installer_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/download/v1.7.4/XRD-macOS.pkg",
+  "macos_installer_sha256": "54bab41fd4e41481f0b3577ab034ce46e32b410559c0468167b970a2fd7f2635",
   "platform_versions": {
     "macos": "1.7.4"
   },
   "release_page_url": "https://github.com/ABKuznetsov/XRD_Analysis_Toolkit/releases/tag/v1.7.4",
-  "macos_installer_filename": "XRD_Phase_Finder_macOS_1.7.4.pkg",
-  "macos_installer_size_bytes": 6659749
+  "macos_installer_filename": "XRD-macOS.pkg",
+  "macos_installer_size_bytes": 6662277
 }

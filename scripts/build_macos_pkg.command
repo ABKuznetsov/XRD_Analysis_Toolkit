@@ -108,6 +108,7 @@ for required_file in \
     "xrd_finder/ui/analysis_windows.py" \
     "launcher/launch_xrd_finder_preview.command" \
     "launcher/launch_xrd_finder_preview_macos.py" \
+    "launcher/first_run_macos.command" \
     "launcher/setup_sci_env.command" \
     "requirements.txt" \
     "app.json"
@@ -207,6 +208,16 @@ touch "\$APP_BUNDLE" >/dev/null 2>&1 || true
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 if [ -x "\$LSREGISTER" ]; then
     "\$LSREGISTER" -f "\$APP_BUNDLE" >/dev/null 2>&1 || true
+fi
+
+# Offer preparation in the logged-in user's GUI session, never as root.
+# open returns immediately: Python installation must not run inside this
+# package's postinstall process or block completion of the Finder install.
+CONSOLE_USER="\$(/usr/bin/stat -f %Su /dev/console)"
+if [ -n "\$CONSOLE_USER" ] && [ "\$CONSOLE_USER" != "root" ] && [ "\$CONSOLE_USER" != "loginwindow" ]; then
+    CONSOLE_UID="\$(/usr/bin/id -u "\$CONSOLE_USER")"
+    /bin/launchctl asuser "\$CONSOLE_UID" /usr/bin/sudo -H -u "\$CONSOLE_USER" \
+        /usr/bin/open -n "\$APP_BUNDLE" --args --offer-setup >/dev/null 2>&1 || true
 fi
 
 exit 0

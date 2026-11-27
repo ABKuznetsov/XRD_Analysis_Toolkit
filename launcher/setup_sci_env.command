@@ -22,6 +22,53 @@ echo "[$(date)] Starting Sci setup" > "$LOG_FILE"
 echo "Application root: $APP_ROOT" >> "$LOG_FILE"
 echo "Sci root: $SCI_ROOT" >> "$LOG_FILE"
 
+# Pinned universal2 Python.org installer: works on Intel and Apple Silicon.
+# SHA-256 verified against the official Python 3.12.10 macOS download.
+PYTHON_PKG_URL="https://www.python.org/ftp/python/3.12.10/python-3.12.10-macos11.pkg"
+PYTHON_PKG_SHA256="8373e58da4ea146b3eb1c1f9834f19a319440b6b679b06050b1f9ee3237aa8e4"
+
+install_python() {
+    case "${XRD_FINDER_OFFLINE:-}" in
+        1|true|TRUE|yes|YES|on|ON)
+            echo "Offline mode is enabled. Python cannot be downloaded."
+            return 1
+            ;;
+    esac
+    local download_dir
+    download_dir="$(mktemp -d "$SCI_ROOT/python-download.XXXXXX")" || return 1
+    local package="$download_dir/python-3.12.10-macos11.pkg"
+    echo "Downloading Python 3.12.10 from python.org (about 44 MB)..."
+    echo "Downloading Python: $PYTHON_PKG_URL" >> "$LOG_FILE"
+    if ! /usr/bin/curl --fail --location --show-error --retry 3 --retry-all-errors \
+        --connect-timeout 20 --max-time 900 --proto '=https' --proto-redir '=https' \
+        --output "$package" "$PYTHON_PKG_URL"; then
+        echo "Python download failed. Check your connection and run Finder again." | tee -a "$LOG_FILE"
+        rm -rf "$download_dir"
+        return 1
+    fi
+    local actual_sha
+    actual_sha="$(/usr/bin/shasum -a 256 "$package")" || return 1
+    actual_sha="${actual_sha%% *}"
+    if [ "$actual_sha" != "$PYTHON_PKG_SHA256" ]; then
+        echo "Python installer checksum failed. The downloaded file will not be installed." | tee -a "$LOG_FILE"
+        rm -rf "$download_dir"
+        return 1
+    fi
+    echo "Installing Python. macOS will ask for your administrator password."
+    echo "Installing Python 3.12.10" >> "$LOG_FILE"
+    if ! /usr/bin/osascript - "$package" <<'APPLESCRIPT'
+on run argv
+    do shell script "/usr/sbin/installer -pkg " & quoted form of (item 1 of argv) & " -target /" with administrator privileges
+end run
+APPLESCRIPT
+    then
+        echo "Python installation failed or was cancelled. Run Finder again to retry." | tee -a "$LOG_FILE"
+        rm -rf "$download_dir"
+        return 1
+    fi
+    rm -rf "$download_dir"
+}
+
 find_python() {
     for candidate in \
         "/opt/homebrew/bin/python3" \
@@ -60,11 +107,12 @@ install_requirement() {
 
 PYTHON="$(find_python || true)"
 if [ -z "$PYTHON" ]; then
-    echo "Compatible Python was not found."
-    echo "Install Python 3.11 or 3.12 from https://www.python.org/downloads/macos/"
-    echo "or with Homebrew: brew install python@3.12"
-    echo "Python 3.11/3.12 not found." >> "$LOG_FILE"
-    exit 1
+    install_python || exit 1
+    PYTHON="$(find_python || true)"
+    if [ -z "$PYTHON" ]; then
+        echo "Python was installed but could not be started for $SCI_ARCH. See $LOG_FILE" | tee -a "$LOG_FILE"
+        exit 1
+    fi
 fi
 
 echo "Using Python: $PYTHON"
